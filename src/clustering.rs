@@ -514,9 +514,38 @@ struct EntryPoint {
 
 fn detect_entry_points(store: &GraphStore) -> Result<Vec<EntryPoint>, String> {
     let mut entries = Vec::new();
+
+    // Bug 6 fix — original implementation only matched main / test_* / do_*.
+    // Missed every Android lifecycle callback, Compose function, Worker,
+    // ContentProvider CRUD, etc. → on dcp-wealth-android (3,200+ files,
+    // 55 ViewModels, 12 @Composable in settings-journey alone), only 1
+    // process was detected (a Python utility script). Added patterns for
+    // common framework entry-point shapes.
+    // source: Pictet-tech-fest benchmark 2026-05-20 / RUST_BUGS_VERIFIED.md
     query_entries(store, "f.name = 'main'", "main", 1.0, &mut entries)?;
     query_entries(store, "f.name STARTS WITH 'test_'", "test", 1.0, &mut entries)?;
     query_entries(store, "f.name STARTS WITH 'do_'", "handler", 0.8, &mut entries)?;
+    // Android Activity / Fragment / Service / Receiver / Worker / Provider lifecycle.
+    // source: Android SDK reference 2025 — every lifecycle override is on[A-Z]*.
+    // ~5% false-positive in non-Android UI frameworks (e.g. onClick listeners).
+    query_entries(store, "f.name =~ '^on[A-Z][A-Za-z]*$'", "android_lifecycle", 0.95, &mut entries)?;
+    // ContentProvider CRUD — collides with non-Provider repos so weaker confidence.
+    // source: android.content.ContentProvider abstract methods.
+    query_entries(store, "f.name IN ['query', 'insert', 'update', 'delete', 'getType', 'openFile']", "android_provider", 0.85, &mut entries)?;
+    // androidx.work.Worker / ListenableWorker / CoroutineWorker.
+    // source: androidx.work 2.x — stable name across versions.
+    query_entries(store, "f.name IN ['doWork', 'createWork']", "android_worker", 0.95, &mut entries)?;
+    // Composable shape — CamelCase noun, no @Composable annotation tracking yet
+    // (parser would need annotation capture). Lower confidence because data
+    // classes and result wrappers also match.
+    // source: Jetpack Compose naming convention — Composable functions are nouns.
+    query_entries(store, "f.name =~ '^[A-Z][a-zA-Z0-9]{1,40}$' AND f.visibility IN ['public', 'pub']", "composable_candidate", 0.5, &mut entries)?;
+    // Tests (extra — JUnit/Vitest patterns beyond the original test_ prefix).
+    query_entries(store, "f.name STARTS WITH 'test' AND NOT f.name STARTS WITH 'test_'", "test", 1.0, &mut entries)?;
+    query_entries(store, "f.name ENDS WITH 'Test'", "test", 1.0, &mut entries)?;
+    // Web-framework handler names that don't fit the do_/Handler pattern.
+    query_entries(store, "f.name ENDS WITH '_handler' OR f.name ENDS WITH 'Handler'", "handler", 0.8, &mut entries)?;
+
     detect_lib_entries(store, &mut entries)?;
     Ok(entries)
 }
@@ -540,18 +569,65 @@ fn query_entries(
     Ok(())
 }
 
+// Public-visibility strings emitted by each language parser. The original
+// implementation accepted only Rust's 'pub' (and the Cypher comparison
+// also missed TypeScript's 'export'), silently dropping every JVM, Swift,
+// Go, and C public symbol from lib_entry detection. This single string
+// caused process-flow tracing to return 1 result on dcp-wealth-android
+// (a Python utility) instead of the hundreds of public Kotlin functions
+// on the codebase.
+// source: src/parser/{java,kotlin,swift,go,c,cpp,objc,python,typescript}.rs visibility outputs.
+//   Bug 5 in RUST_BUGS_VERIFIED.md (Pictet-tech-fest benchmark 2026-05-20).
+const PUBLIC_VISIBILITY_VALUES: &[&str] = &[
+    "pub",       // Rust
+    "export",    // TypeScript / JavaScript
+    "public",    // Java, Kotlin, Swift, Go, Python
+    "open",      // Swift (more permissive than public)
+];
+
+// Extensions whose top-level public functions are candidate library
+// entry points. The original implementation hard-coded ".rs" only,
+// excluding 9 of the 10 supported languages.
+// source: Bug 7 in RUST_BUGS_VERIFIED.md.
+const LIB_ENTRY_FILE_EXTENSIONS: &[&str] = &[
+    ".rs",   // Rust
+    ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx",  // TypeScript / JavaScript
+    ".py",   // Python
+    ".java", // Java
+    ".kt", ".kts",  // Kotlin
+    ".swift",       // Swift
+    ".go",          // Go
+    ".c", ".h",     // C (no visibility keyword — handled below)
+    ".cc", ".cpp", ".cxx", ".hpp",  // C++
+    ".m", ".mm",    // Objective-C
+];
+
+fn ends_with_any(s: &str, suffixes: &[&str]) -> bool {
+    suffixes.iter().any(|suf| s.ends_with(suf))
+}
+
 fn detect_lib_entries(
     store: &GraphStore, entries: &mut Vec<EntryPoint>,
 ) -> Result<(), String> {
-    let qr = store.execute_query(
-        "MATCH (f:Function) WHERE f.visibility = 'pub' \
+    // Bug 5 fix — widen the visibility list. Cypher IN clause matches any of
+    // the language-specific public-visibility strings.
+    let in_list = PUBLIC_VISIBILITY_VALUES
+        .iter()
+        .map(|v| format!("'{v}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let cypher = format!(
+        "MATCH (f:Function) WHERE f.visibility IN [{in_list}] \
          RETURN f.id, f.name, f.qualified_name"
-    )?;
+    );
+    let qr = store.execute_query(&cypher)?;
     for row in &qr.rows {
         if row.len() < 3 { continue; }
         let qn = &row[2];
         let segments: Vec<&str> = qn.split("::").collect();
-        if segments.len() == 2 && segments[0].ends_with(".rs") {
+        // Bug 7 fix — accept any of the 10 supported source extensions,
+        // not just .rs.
+        if segments.len() == 2 && ends_with_any(segments[0], LIB_ENTRY_FILE_EXTENSIONS) {
             let already = entries.iter().any(|e| e.id == row[0]);
             if !already {
                 entries.push(EntryPoint {
