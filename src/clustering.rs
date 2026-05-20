@@ -547,6 +547,17 @@ fn detect_entry_points(store: &GraphStore) -> Result<Vec<EntryPoint>, String> {
     query_entries(store, "f.name ENDS WITH '_handler' OR f.name ENDS WITH 'Handler'", "handler", 0.8, &mut entries)?;
 
     detect_lib_entries(store, &mut entries)?;
+
+    // Dedupe by id: multiple patterns may match the same function (e.g.
+    // `KeyboardFocusHandler` matches both the composable-CamelCase and the
+    // *Handler suffix patterns). Keep the first occurrence — patterns are
+    // ordered above by descending specificity, so the most accurate `kind`
+    // label wins.
+    // source: persist_processes — Process node id must be unique, lbug
+    //   enforces a primary-key uniqueness constraint that fires before insert.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    entries.retain(|e| seen.insert(e.id.clone()));
+
     Ok(entries)
 }
 
