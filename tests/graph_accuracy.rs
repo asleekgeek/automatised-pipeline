@@ -2064,6 +2064,254 @@ fn fixture_get_methodology_graph_py() -> Fixture {
 }
 
 // ---------------------------------------------------------------------------
+// Category: server-transport — HTTP servers, route dispatch, bootstrap.
+// New stress: very large functions (http_standalone_graph._kick_background_build
+// has 247 call sites in one body); empty-body class with multi-inheritance.
+// ---------------------------------------------------------------------------
+
+fn fixture_http_standalone_graph_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "http_standalone_graph.py",
+        category: "server-transport",
+        rel_path: "server/http_standalone_graph.py",
+        file_prefix: "server/http_standalone_graph.py",
+        imports: &[
+            ("__future__::annotations", 26),
+            ("os", 28),
+            ("sys", 29),
+            ("threading", 30),
+            ("time", 31),
+            ("traceback", 32),
+            ("mcp_server::server::http_standalone_state::CONVERSATIONS_CACHE_TTL", 34),
+            ("mcp_server::server::http_standalone_state::get_cached_conversations_state", 34),
+            ("mcp_server::server::http_standalone_state::set_cached_conversations_state", 34),
+        ],
+        constants: &[("PHASES", 78)],
+        functions: &[
+            ("parse_graph_query", 106, 7),
+            ("parse_discussion_params", 127, 7),
+            ("extract_domain_hub_ids", 148, 4),
+            ("_compute_memory_vitals", 159, 12),
+            ("_session_counts_from_profiles", 183, 3),
+            ("_roster_fingerprint", 191, 6),
+            ("get_build_progress", 209, 3),
+            ("_set_progress", 217, 1),
+            ("_register_phase", 240, 2),
+            ("get_phase_payload", 250, 5),
+            ("_phase_deps_satisfied", 262, 2),
+            ("_mark_phase_ready", 273, 2),
+            ("_kick_background_build", 284, 247), // largest function in corpus
+            ("get_graph_response", 975, 10),
+            ("_get_cached_conversations", 1046, 4),
+            ("build_discussions_response", 1058, 9),
+            ("_find_session_file", 1093, 4),
+            ("build_discussion_detail", 1110, 12),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_kick_background_build", "_mark_phase_ready"),
+            ("_kick_background_build", "_phase_deps_satisfied"),
+            ("_kick_background_build", "_register_phase"),
+            ("_kick_background_build", "_roster_fingerprint"),
+            ("_kick_background_build", "_set_progress"),
+            ("_kick_background_build", "extract_domain_hub_ids"),
+            ("build_discussion_detail", "_find_session_file"),
+            ("build_discussion_detail", "_get_cached_conversations"),
+            ("build_discussions_response", "_get_cached_conversations"),
+            ("build_discussions_response", "parse_discussion_params"),
+            ("get_graph_response", "_kick_background_build"),
+            ("get_graph_response", "_roster_fingerprint"),
+            ("get_graph_response", "get_build_progress"),
+            ("get_graph_response", "parse_graph_query"),
+        ],
+    })
+}
+
+fn fixture_http_standalone_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "http_standalone.py",
+        category: "server-transport",
+        rel_path: "server/http_standalone.py",
+        file_prefix: "server/http_standalone.py",
+        imports: &[
+            ("__future__::annotations", 19),
+            ("argparse", 21),
+            ("json", 22),
+            ("os", 23),
+            ("sys", 24),
+            ("threading", 25),
+            ("time", 26),
+            ("http::server::BaseHTTPRequestHandler", 27),
+            ("http::server::HTTPServer", 27),
+            ("pathlib::Path", 28),
+            ("socketserver::ThreadingMixIn", 29),
+            ("mcp_server::server::http_common::_apply_cors_headers", 31),
+            ("mcp_server::server::http_security::enforce_same_origin_write", 32),
+            ("mcp_server::server::http_security::validate_host_header", 32),
+            ("mcp_server::server::http_standalone_endpoints::serve_discussion_detail", 36),
+            ("mcp_server::server::http_standalone_endpoints::serve_discussions", 36),
+            ("mcp_server::server::http_standalone_endpoints::serve_file_diff", 36),
+            ("mcp_server::server::http_standalone_endpoints::serve_graph", 36),
+            ("mcp_server::server::http_standalone_endpoints::serve_sankey", 36),
+            ("mcp_server::server::http_standalone_endpoints::serve_static", 36),
+            ("mcp_server::server::http_standalone_state::IDLE_TIMEOUT", 44),
+            ("mcp_server::server::http_standalone_state::seconds_since_last_request", 44),
+            ("mcp_server::server::http_standalone_state::touch", 44),
+            ("mcp_server::server::http_standalone_wiki::serve_wiki_db", 49),
+            ("mcp_server::server::http_standalone_wiki::serve_wiki_export", 49),
+            ("mcp_server::server::http_standalone_wiki::serve_wiki_list", 49),
+            ("mcp_server::server::http_standalone_wiki::serve_wiki_page", 49),
+            ("mcp_server::server::http_standalone_wiki::serve_wiki_projects", 49),
+            ("mcp_server::server::http_standalone_wiki::serve_wiki_save", 49),
+        ],
+        constants: &[("_WIKI_DB_OPS", 108)],
+        functions: &[
+            ("_idle_watchdog", 65, 4),
+            ("_get_ui_root", 78, 5),
+            ("_get_store", 99, 2),
+            ("_route_unified_get", 120, 53),
+            ("_build_unified_handler", 241, 22),
+            ("_bind_server", 298, 1),
+            ("_announce", 309, 5),
+            ("_auto_enable_ap", 316, 32),
+            ("main", 434, 14),
+        ],
+        classes: &[ExpectedClassInput {
+            name: "_ThreadedHTTPServer",
+            line: 59,
+            bases: &["ThreadingMixIn", "HTTPServer"], // dropped (BUG #9)
+            methods: &[], // empty class body
+        }],
+        resolved_calls: &[
+            ("_build_unified_handler", "_route_unified_get"),
+            ("main", "_announce"),
+            ("main", "_auto_enable_ap"),
+            ("main", "_bind_server"),
+            ("main", "_build_unified_handler"),
+            ("main", "_get_store"),
+            ("main", "_get_ui_root"),
+        ],
+    })
+}
+
+fn fixture_http_launcher_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "http_launcher.py",
+        category: "server-transport",
+        rel_path: "server/http_launcher.py",
+        file_prefix: "server/http_launcher.py",
+        imports: &[
+            ("__future__::annotations", 8),
+            ("json", 10),
+            ("os", 11),
+            ("shutil", 12),
+            ("subprocess", 13),
+            ("sys", 14),
+            ("urllib::request", 15), // `import urllib.request`
+            ("pathlib::Path", 16),
+        ],
+        constants: &[("PORTS", 21)],
+        functions: &[
+            ("_kill_port", 26, 7),
+            ("_detect_dev_source", 51, 13),
+            ("_find_ap_binary", 99, 6),
+            ("_ensure_ap_graph", 123, 25),
+            ("_sync_dev_source", 211, 6),
+            ("_probe_port", 244, 2),
+            ("launch_server", 255, 17),
+            ("open_in_browser", 328, 3),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_ensure_ap_graph", "_find_ap_binary"),
+            ("launch_server", "_detect_dev_source"),
+            ("launch_server", "_ensure_ap_graph"),
+            ("launch_server", "_kill_port"),
+            ("launch_server", "_probe_port"),
+            ("launch_server", "_sync_dev_source"),
+        ],
+    })
+}
+
+fn fixture_http_dashboard_data_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "http_dashboard_data.py",
+        category: "server-transport",
+        rel_path: "server/http_dashboard_data.py",
+        file_prefix: "server/http_dashboard_data.py",
+        imports: &[
+            ("__future__::annotations", 7),
+            ("json", 9),
+            ("datetime::datetime", 10),
+            ("datetime::timezone", 10),
+        ],
+        constants: &[],
+        functions: &[
+            ("build_dashboard_data", 13, 22),
+            ("_safe_call", 52, 1),
+            ("build_stats", 60, 18),
+            ("format_memory", 94, 52),
+            ("format_entity", 135, 5),
+            ("format_relationship", 146, 14),
+            ("format_schema", 162, 8),
+            ("build_engram_data", 175, 6),
+            ("parse_tags", 193, 3),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("build_dashboard_data", "_safe_call"),
+            ("build_dashboard_data", "build_engram_data"),
+            ("build_dashboard_data", "build_stats"),
+            ("build_dashboard_data", "format_entity"),
+            ("build_dashboard_data", "format_memory"),
+            ("build_dashboard_data", "format_relationship"),
+            ("build_dashboard_data", "format_schema"),
+            ("format_memory", "parse_tags"),
+        ],
+    })
+}
+
+fn fixture_visualize_bootstrap_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "visualize_bootstrap.py",
+        category: "server-transport",
+        rel_path: "server/visualize_bootstrap.py",
+        file_prefix: "server/visualize_bootstrap.py",
+        imports: &[
+            ("__future__::annotations", 26),
+            ("os", 28),
+            ("shutil", 29),
+            ("subprocess", 30),
+            ("sys", 31),
+            ("pathlib::Path", 32),
+        ],
+        constants: &[
+            ("PORT", 34),
+            ("_SYNC_SUBTREES", 90),
+            ("_SYNC_FILES", 101),
+        ],
+        functions: &[
+            ("_is_cortex_root", 37, 3),
+            ("_find_dev_source", 45, 6),
+            ("_cache_roots", 56, 9),
+            ("_sync", 109, 9),
+            ("_kill_port", 145, 7),
+            ("_spawn_server", 165, 6),
+            ("main", 193, 6),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_find_dev_source", "_is_cortex_root"),
+            ("_sync", "_cache_roots"),
+            ("main", "_find_dev_source"),
+            ("main", "_kill_port"),
+            ("main", "_spawn_server"),
+            ("main", "_sync"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Per-fixture runner
 // ---------------------------------------------------------------------------
 //
@@ -2396,6 +2644,51 @@ fn handlers_get_methodology_graph_py() {
     run_fixture(
         "get_methodology_graph_py",
         fixture_get_methodology_graph_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn server_transport_http_standalone_graph_py() {
+    run_fixture(
+        "http_standalone_graph_py",
+        fixture_http_standalone_graph_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn server_transport_http_standalone_py() {
+    run_fixture(
+        "http_standalone_py",
+        fixture_http_standalone_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn server_transport_http_launcher_py() {
+    run_fixture(
+        "http_launcher_py",
+        fixture_http_launcher_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn server_transport_http_dashboard_data_py() {
+    run_fixture(
+        "http_dashboard_data_py",
+        fixture_http_dashboard_data_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn server_transport_visualize_bootstrap_py() {
+    run_fixture(
+        "visualize_bootstrap_py",
+        fixture_visualize_bootstrap_py(),
         Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
