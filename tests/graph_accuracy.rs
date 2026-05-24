@@ -2312,6 +2312,505 @@ fn fixture_visualize_bootstrap_py() -> Fixture {
 }
 
 // ---------------------------------------------------------------------------
+// Category: hooks — lifecycle/event handlers, mostly stdlib + JSON-stdin.
+// ---------------------------------------------------------------------------
+
+fn fixture_session_lifecycle_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "session_lifecycle.py",
+        category: "hooks",
+        rel_path: "hooks/session_lifecycle.py",
+        file_prefix: "hooks/session_lifecycle.py",
+        imports: &[
+            ("__future__::annotations", 34),
+            ("json", 36),
+            ("sys", 37),
+            ("datetime::datetime", 38),
+            ("datetime::timezone", 38),
+            ("typing::Any", 39),
+        ],
+        constants: &[
+            ("_LOG_PREFIX", 66),
+            ("MAX_SESSION_LOG_ENTRIES", 69),
+        ],
+        functions: &[
+            ("_log", 72, 1),
+            ("_resolve_domain", 77, 8),
+            ("_run_consolidation", 103, 12),
+            ("_build_session_entry", 154, 13),
+            ("_append_session", 171, 3),
+            ("process_event", 180, 19),
+            ("main", 220, 8),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_run_consolidation", "_log"),
+            ("main", "_log"),
+            ("main", "process_event"),
+            ("process_event", "_append_session"),
+            ("process_event", "_build_session_entry"),
+            ("process_event", "_log"),
+            ("process_event", "_resolve_domain"),
+            ("process_event", "_run_consolidation"),
+        ],
+    })
+}
+
+fn fixture_session_start_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "session_start.py",
+        category: "hooks",
+        rel_path: "hooks/session_start.py",
+        file_prefix: "hooks/session_start.py",
+        imports: &[
+            ("__future__::annotations", 19),
+            ("json", 21),
+            ("os", 22),
+            ("subprocess", 23),
+            ("sys", 24),
+            ("pathlib::Path", 25),
+        ],
+        constants: &[
+            ("_DATABASE_URL", 29),
+            ("_HOT_LIMIT", 30),
+            ("_MIN_HEAT", 31),
+            ("_ANCHOR_LIMIT", 32),
+            ("_PLUGIN_ROOT", 33),
+            ("_CONSOLIDATE_TTL_HOURS", 599),
+        ],
+        functions: &[
+            ("_log", 36, 1),
+            ("_has_sentence_transformers", 40, 0),
+            ("_short", 50, 3),
+            ("_try_setup_db", 58, 11),
+            ("_connect_pg", 85, 2),
+            ("_fetch_anchors", 101, 14),
+            ("_fetch_team_decisions", 139, 7),
+            ("_fetch_hot_memories", 178, 11),
+            ("_count_pending_curations", 206, 16),
+            ("_fetch_checkpoint", 264, 16),
+            ("_count_memories", 299, 2),
+            ("_count_session_files", 308, 7),
+            ("_detect_external_sources", 323, 25),
+            ("_auto_backfill", 373, 6),
+            ("_format_checkpoint_section", 404, 13),
+            ("_build_context", 426, 27),
+            ("_build_cold_start_message", 508, 28),
+            ("_auto_wire_pipeline", 575, 6),
+            ("_maybe_background_consolidate", 604, 26),
+            ("_maybe_background_reanalyze", 694, 22),
+            ("_lookup_cached_graph_path", 756, 9),
+            ("main", 788, 32),
+            ("_print_external_sources", 881, 9),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_auto_backfill", "_log"),
+            ("_auto_wire_pipeline", "_log"),
+            ("_build_cold_start_message", "_auto_backfill"),
+            ("_build_cold_start_message", "_log"),
+            ("_build_context", "_format_checkpoint_section"),
+            ("_build_context", "_has_sentence_transformers"),
+            ("_build_context", "_short"),
+            ("_connect_pg", "_log"),
+            ("_lookup_cached_graph_path", "_connect_pg"),
+            ("_maybe_background_consolidate", "_log"),
+            ("_maybe_background_reanalyze", "_log"),
+            ("_maybe_background_reanalyze", "_lookup_cached_graph_path"),
+            ("_print_external_sources", "_detect_external_sources"),
+            ("_print_external_sources", "_log"),
+            ("_try_setup_db", "_log"),
+            ("main", "_auto_wire_pipeline"),
+            ("main", "_build_cold_start_message"),
+            ("main", "_build_context"),
+            ("main", "_connect_pg"),
+            ("main", "_count_memories"),
+            ("main", "_count_pending_curations"),
+            ("main", "_count_session_files"),
+            ("main", "_fetch_anchors"),
+            ("main", "_fetch_checkpoint"),
+            ("main", "_fetch_hot_memories"),
+            ("main", "_fetch_team_decisions"),
+            ("main", "_log"),
+            ("main", "_maybe_background_consolidate"),
+            ("main", "_maybe_background_reanalyze"),
+            ("main", "_print_external_sources"),
+            ("main", "_try_setup_db"),
+        ],
+    })
+}
+
+fn fixture_post_tool_capture_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "post_tool_capture.py",
+        category: "hooks",
+        rel_path: "hooks/post_tool_capture.py",
+        file_prefix: "hooks/post_tool_capture.py",
+        imports: &[
+            ("__future__::annotations", 16),
+            ("json", 18),
+            ("sys", 19),
+            ("typing::Any", 20),
+        ],
+        constants: &[
+            ("_LOG_PREFIX", 22),
+            ("_HIGH_VALUE_TOOLS", 25),
+            ("_LIGHT_VALUE_TOOLS", 40),
+            ("_CONDITIONAL_TOOLS", 48),
+            ("_MIN_OUTPUT_LENGTH", 54),
+            ("_HIGH_VALUE_PATTERNS", 65),
+            ("_CASCADE_INTERVAL", 321),
+        ],
+        functions: &[
+            ("_log", 93, 1),
+            ("_should_capture", 97, 2),
+            ("_reference_line", 124, 10),
+            ("_build_memory_content", 151, 7),
+            ("_build_tags", 188, 6),
+            ("_normalize_output", 214, 28),
+            ("_load_remember", 275, 5),
+            ("_store_memory", 293, 9),
+            ("_maybe_run_cascade", 325, 5),
+            ("process_event", 348, 12),
+            ("main", 372, 8),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_build_memory_content", "_reference_line"),
+            ("_maybe_run_cascade", "_log"),
+            ("_store_memory", "_load_remember"),
+            ("_store_memory", "_log"),
+            ("main", "_log"),
+            ("main", "process_event"),
+            ("process_event", "_build_memory_content"),
+            ("process_event", "_build_tags"),
+            ("process_event", "_log"),
+            ("process_event", "_maybe_run_cascade"),
+            ("process_event", "_normalize_output"),
+            ("process_event", "_should_capture"),
+            ("process_event", "_store_memory"),
+        ],
+    })
+}
+
+fn fixture_compaction_checkpoint_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "compaction_checkpoint.py",
+        category: "hooks",
+        rel_path: "hooks/compaction_checkpoint.py",
+        file_prefix: "hooks/compaction_checkpoint.py",
+        imports: &[
+            ("__future__::annotations", 32),
+            ("json", 34),
+            ("sys", 35),
+            ("typing::Any", 36),
+        ],
+        constants: &[("_LOG_PREFIX", 38)],
+        functions: &[
+            ("_log", 41, 1),
+            ("process_event", 46, 15),
+            ("main", 94, 7),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("main", "_log"),
+            ("main", "process_event"),
+            ("process_event", "_log"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Category: tests — pytest test files with TestXxx classes.
+// New stress: many classes, each with many test_* methods (no inheritance).
+// ---------------------------------------------------------------------------
+
+fn fixture_test_sparse_dictionary_py() -> Fixture {
+    let mut f = build_core_fixture(&CoreFixtureInputs {
+        name: "test_sparse_dictionary.py",
+        category: "tests",
+        rel_path: "tests_py/core/test_sparse_dictionary.py",
+        file_prefix: "tests_py/core/test_sparse_dictionary.py",
+        imports: &[
+            ("mcp_server::core::sparse_dictionary::build_seed_dictionary", 3),
+            ("mcp_server::core::sparse_dictionary::learn_dictionary", 3),
+            ("mcp_server::core::sparse_dictionary::encode_session", 3),
+            ("mcp_server::core::sparse_dictionary::label_feature", 3),
+            ("mcp_server::core::sparse_dictionary_activation::SIGNAL_NAMES", 9),
+            ("mcp_server::core::sparse_dictionary_activation::D", 9),
+            ("mcp_server::core::sparse_dictionary_activation::extract_session_activation", 9),
+            ("mcp_server::core::sparse_dictionary_learning::omp", 14),
+            ("mcp_server::shared::linear_algebra::norm", 15),
+            ("mcp_server::shared::linear_algebra::normalize", 15),
+        ],
+        constants: &[],
+        functions: &[
+            ("_make_conv", 18, 1),
+            ("_make_conversations", 33, 2),
+        ],
+        classes: &[
+            ExpectedClassInput { name: "TestSignalNames", line: 37, bases: &[], methods: &[
+                ("test_has_27_dimensions", 38, 1),
+                ("test_no_duplicates", 42, 3),
+            ]},
+            ExpectedClassInput { name: "TestExtractSessionActivation", line: 46, bases: &[], methods: &[
+                ("test_returns_27d_vector", 47, 3),
+                ("test_all_values_finite", 51, 3),
+                ("test_tool_ratios_sum_to_1", 57, 4),
+                ("test_handles_empty_conversation", 64, 2),
+                ("test_burst_indicator_for_short_sessions", 68, 2),
+                ("test_exploration_indicator_for_high_turns", 72, 2),
+            ]},
+            ExpectedClassInput { name: "TestBuildSeedDictionary", line: 77, bases: &[], methods: &[
+                ("test_valid_structure", 78, 2),
+                ("test_all_atoms_unit_vectors", 86, 3),
+                ("test_features_have_labels_and_descriptions", 92, 4),
+            ]},
+            ExpectedClassInput { name: "TestOmp", line: 100, bases: &[], methods: &[
+                ("test_returns_empty_for_zero_signal", 101, 4),
+                ("test_finds_correct_single_atom", 106, 6),
+                ("test_respects_sparsity_constraint", 113, 6),
+                ("test_reconstructs_signal_with_low_error", 123, 4),
+            ]},
+            ExpectedClassInput { name: "TestLearnDictionary", line: 130, bases: &[], methods: &[
+                ("test_returns_seed_for_few_sessions", 131, 2),
+                ("test_returns_seed_for_null", 137, 1),
+                ("test_learns_for_10_plus_sessions", 141, 2),
+                ("test_all_learned_atoms_unit_vectors", 155, 4),
+                ("test_features_have_auto_generated_labels", 162, 4),
+            ]},
+            ExpectedClassInput { name: "TestEncodeSession", line: 170, bases: &[], methods: &[
+                ("test_returns_sparse_activation", 171, 5),
+                ("test_respects_sparsity", 178, 4),
+                ("test_weights_are_nonzero", 183, 5),
+            ]},
+            ExpectedClassInput { name: "TestLabelFeature", line: 197, bases: &[], methods: &[
+                ("test_generates_meaningful_label", 198, 4),
+                ("test_handles_zero_direction", 206, 1),
+            ]},
+        ],
+        resolved_calls: &[("_make_conversations", "_make_conv")],
+    });
+    // Method → top-level Function calls (resolver emits Calls_Method_Function).
+    // Each (class, method, callee) tuple becomes one deduped Calls edge.
+    let method_to_fn: &[(&str, &str, &str)] = &[
+        ("TestEncodeSession", "test_respects_sparsity", "_make_conv"),
+        ("TestEncodeSession", "test_returns_sparse_activation", "_make_conv"),
+        ("TestEncodeSession", "test_weights_are_nonzero", "_make_conv"),
+        ("TestExtractSessionActivation", "test_all_values_finite", "_make_conv"),
+        ("TestExtractSessionActivation", "test_burst_indicator_for_short_sessions", "_make_conv"),
+        ("TestExtractSessionActivation", "test_exploration_indicator_for_high_turns", "_make_conv"),
+        ("TestExtractSessionActivation", "test_returns_27d_vector", "_make_conv"),
+        ("TestExtractSessionActivation", "test_tool_ratios_sum_to_1", "_make_conv"),
+        ("TestLearnDictionary", "test_all_learned_atoms_unit_vectors", "_make_conversations"),
+        ("TestLearnDictionary", "test_features_have_auto_generated_labels", "_make_conversations"),
+        ("TestLearnDictionary", "test_learns_for_10_plus_sessions", "_make_conversations"),
+        ("TestLearnDictionary", "test_returns_seed_for_few_sessions", "_make_conversations"),
+    ];
+    let prefix = "tests_py/core/test_sparse_dictionary.py";
+    for (i, (cls, m, fn_)) in method_to_fn.iter().enumerate() {
+        f.edges.push(ExpectedEdge {
+            kind: "Calls",
+            from_qn: format!("{prefix}::{cls}::{m}::callsite::__m2fn__::{i}"),
+            to_qn: format!("{prefix}::{fn_}"),
+        });
+    }
+    f
+}
+
+fn fixture_test_text_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "test_text.py",
+        category: "tests",
+        rel_path: "tests_py/shared/test_text.py",
+        file_prefix: "tests_py/shared/test_text.py",
+        imports: &[
+            ("mcp_server::shared::text::STOPWORDS", 3),
+            ("mcp_server::shared::text::TECHNICAL_SHORT_TERMS", 3),
+            ("mcp_server::shared::text::extract_keywords", 3),
+            ("mcp_server::shared::text::extract_keywords_array", 3),
+        ],
+        constants: &[],
+        functions: &[],
+        classes: &[
+            ExpectedClassInput { name: "TestExtractKeywords", line: 11, bases: &[], methods: &[
+                ("test_returns_empty_set_for_empty_string", 12, 3),
+                ("test_returns_empty_set_for_none", 17, 2),
+                ("test_handles_unicode_text_without_crashing", 20, 2),
+                ("test_extracts_technical_abbreviations", 24, 1),
+                ("test_handles_mixed_case_by_lowercasing", 29, 1),
+                ("test_passes_words_longer_than_6_characters", 35, 1),
+                ("test_filters_out_short_non_technical_words", 41, 2),
+                ("test_handles_long_text", 45, 1),
+                ("test_deduplicates_keywords", 53, 2),
+            ]},
+            ExpectedClassInput { name: "TestExtractKeywordsArray", line: 60, bases: &[], methods: &[
+                ("test_returns_a_list", 61, 2),
+                ("test_returns_empty_list_for_empty_string", 65, 3),
+                ("test_contains_same_elements_as_extract_keywords", 70, 4),
+            ]},
+            ExpectedClassInput { name: "TestStopwordsFiltering", line: 79, bases: &[], methods: &[
+                ("test_excludes_common_stopwords_from_results", 80, 1),
+                ("test_stopwords_set_contains_common_english_words", 86, 0),
+            ]},
+            ExpectedClassInput { name: "TestTechnicalShortTerms", line: 94, bases: &[], methods: &[
+                ("test_includes_known_short_technical_terms", 95, 0),
+                ("test_extract_keywords_picks_up_technical_short_terms", 99, 1),
+                ("test_technical_short_terms_is_frozenset", 105, 2),
+            ]},
+        ],
+        resolved_calls: &[],
+    })
+}
+
+fn fixture_test_recall_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "test_recall.py",
+        category: "tests",
+        rel_path: "tests_py/handlers/test_recall.py",
+        file_prefix: "tests_py/handlers/test_recall.py",
+        imports: &[
+            ("asyncio", 3),
+            // aliased: handler as recall_handler
+            ("recall_handler", 5),
+            ("_wrrf_fuse", 6),
+            ("remember_handler", 7),
+        ],
+        constants: &[],
+        functions: &[],
+        classes: &[
+            ExpectedClassInput { name: "TestWRRFFuse", line: 10, bases: &[], methods: &[
+                ("test_single_signal", 11, 2),
+                ("test_multiple_signals_boost_overlap", 21, 1),
+                ("test_zero_weight_ignored", 34, 2),
+                ("test_empty_signals", 43, 1),
+            ]},
+            ExpectedClassInput { name: "TestRecallHandler", line: 48, bases: &[], methods: &[
+                ("test_no_query_returns_empty", 49, 2),
+                ("test_empty_query_returns_empty", 54, 2),
+                ("test_recall_stored_memory", 58, 4),
+                ("test_recall_response_shape", 85, 7),
+                ("test_domain_scoped_recall", 101, 6),
+                ("test_global_memory_visible_across_domains", 131, 6),
+            ]},
+            ExpectedClassInput { name: "TestRecallReturnsDict", line: 167, bases: &[], methods: &[
+                ("test_handler_direct_returns_dict", 170, 3),
+                ("test_safe_handler_returns_dict", 177, 4),
+            ]},
+        ],
+        resolved_calls: &[],
+    })
+}
+
+fn fixture_test_brain_index_store_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "test_brain_index_store.py",
+        category: "tests",
+        rel_path: "tests_py/infrastructure/test_brain_index_store.py",
+        file_prefix: "tests_py/infrastructure/test_brain_index_store.py",
+        imports: &[("mcp_server::infrastructure::brain_index_store::load_brain_index", 3)],
+        constants: &[],
+        functions: &[],
+        classes: &[ExpectedClassInput {
+            name: "TestLoadBrainIndex", line: 6, bases: &[],
+            methods: &[("test_returns_valid_structure", 7, 5)],
+        }],
+        resolved_calls: &[],
+    })
+}
+
+fn fixture_test_http_server_py() -> Fixture {
+    let mut f = build_core_fixture(&CoreFixtureInputs {
+        name: "test_http_server.py",
+        category: "tests",
+        rel_path: "tests_py/server/test_http_server.py",
+        file_prefix: "tests_py/server/test_http_server.py",
+        imports: &[
+            ("json", 3),
+            ("io::BytesIO", 4),
+            ("unittest::mock::patch", 5),
+            ("unittest::mock::MagicMock", 5),
+            // `import mcp_server.server.http_server as http_mod` — aliased plain
+            ("http_mod", 7),
+            ("mcp_server::server::http_server::start_ui_server", 8),
+            ("mcp_server::server::http_server::shutdown_server", 8),
+            ("mcp_server::server::http_server::_reset_idle_timer", 8),
+        ],
+        constants: &[],
+        functions: &[("_reset_module_state", 15, 1)],
+        classes: &[
+            ExpectedClassInput { name: "TestResetIdleTimer", line: 23, bases: &[], methods: &[
+                ("setup_method", 24, 1),
+                ("teardown_method", 27, 1),
+                ("test_creates_daemon_timer", 30, 3),
+                ("test_cancels_previous_timer", 38, 5),
+                ("test_timer_duration_is_600", 48, 4),
+                ("test_shutdown_callback_clears_active_server", 56, 7),
+                ("test_shutdown_callback_noop_if_no_server", 75, 5),
+                ("test_shutdown_callback_prints_message", 91, 8),
+            ]},
+            ExpectedClassInput { name: "TestStartUiServer", line: 107, bases: &[], methods: &[
+                ("setup_method", 108, 1),
+                ("teardown_method", 111, 1),
+                ("test_reuses_existing_server", 114, 4),
+                ("test_reads_html_from_custom_path", 131, 11),
+                ("test_raises_on_missing_html_file", 162, 2),
+                ("test_starts_server_on_port_3456_first", 169, 8),
+                ("test_falls_back_to_port_0_on_oserror", 190, 9),
+                ("test_raises_if_both_ports_fail", 211, 5),
+                ("test_server_thread_is_daemon", 224, 11),
+                ("test_sets_active_server_state", 245, 9),
+                ("test_prints_startup_message", 265, 10),
+            ]},
+            ExpectedClassInput { name: "TestShutdownServer", line: 283, bases: &[], methods: &[
+                ("setup_method", 284, 1),
+                ("teardown_method", 287, 1),
+                ("test_shutdown_active_server", 290, 3),
+                ("test_shutdown_cancels_timer", 297, 4),
+                ("test_shutdown_noop_when_no_server", 305, 1),
+                ("test_shutdown_cancels_timer_even_without_server", 312, 3),
+            ]},
+            ExpectedClassInput { name: "TestHandlerBehavior", line: 321, bases: &[], methods: &[
+                ("setup_method", 324, 1),
+                ("teardown_method", 327, 1),
+                ("_create_handler_class", 330, 8),
+                ("_make_handler", 357, 5),
+                ("test_get_root_returns_html", 373, 6),
+                ("test_get_graph_returns_json", 388, 7),
+                ("test_get_sets_no_cache", 402, 4),
+                ("test_do_options_returns_204", 412, 4),
+                ("test_log_message_suppressed", 423, 3),
+                ("test_send_header_cors_is_noop", 429, 3),
+                ("test_get_resets_idle_timer", 435, 5),
+            ]},
+        ],
+        resolved_calls: &[],
+    });
+    // Method → top-level Function calls: setup_method/teardown_method on each
+    // of the 4 test classes calls _reset_module_state. Dedupes per (caller, target),
+    // so 8 distinct method→fn pairs = 8 Calls edges.
+    let method_to_fn: &[(&str, &str, &str)] = &[
+        ("TestHandlerBehavior", "setup_method", "_reset_module_state"),
+        ("TestHandlerBehavior", "teardown_method", "_reset_module_state"),
+        ("TestResetIdleTimer", "setup_method", "_reset_module_state"),
+        ("TestResetIdleTimer", "teardown_method", "_reset_module_state"),
+        ("TestShutdownServer", "setup_method", "_reset_module_state"),
+        ("TestShutdownServer", "teardown_method", "_reset_module_state"),
+        ("TestStartUiServer", "setup_method", "_reset_module_state"),
+        ("TestStartUiServer", "teardown_method", "_reset_module_state"),
+    ];
+    let prefix = "tests_py/server/test_http_server.py";
+    for (i, (cls, m, fn_)) in method_to_fn.iter().enumerate() {
+        f.edges.push(ExpectedEdge {
+            kind: "Calls",
+            from_qn: format!("{prefix}::{cls}::{m}::callsite::__m2fn__::{i}"),
+            to_qn: format!("{prefix}::{fn_}"),
+        });
+    }
+    f
+}
+
+// ---------------------------------------------------------------------------
 // Per-fixture runner
 // ---------------------------------------------------------------------------
 //
@@ -2692,3 +3191,16 @@ fn server_transport_visualize_bootstrap_py() {
         Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
+
+// hooks (4 — note: hooks category has only 4 modules in Cortex)
+#[test] fn hooks_session_lifecycle_py() { run_fixture("session_lifecycle_py", fixture_session_lifecycle_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test] fn hooks_session_start_py() { run_fixture("session_start_py", fixture_session_start_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test] fn hooks_post_tool_capture_py() { run_fixture("post_tool_capture_py", fixture_post_tool_capture_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test] fn hooks_compaction_checkpoint_py() { run_fixture("compaction_checkpoint_py", fixture_compaction_checkpoint_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+
+// tests (5)
+#[test] fn tests_sparse_dictionary_py() { run_fixture("ts_sparse_dictionary_py", fixture_test_sparse_dictionary_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test] fn tests_text_py() { run_fixture("ts_text_py", fixture_test_text_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test] fn tests_recall_py() { run_fixture("ts_recall_py", fixture_test_recall_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test] fn tests_brain_index_store_py() { run_fixture("ts_brain_index_store_py", fixture_test_brain_index_store_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test] fn tests_http_server_py() { run_fixture("ts_http_server_py", fixture_test_http_server_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
