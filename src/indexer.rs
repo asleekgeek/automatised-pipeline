@@ -360,7 +360,7 @@ fn index_single_file(
     let lang = Language::from_extension(ext)
         .ok_or_else(|| format!("unsupported file extension: {ext}"))?;
     let parsed = parser::parse_file(&source, rel_path, lang)?;
-    insert_parsed_nodes(store, &parsed.nodes, label_by_qn)?;
+    insert_parsed_nodes(store, &parsed.nodes, label_by_qn, lang.as_str())?;
     insert_parsed_edges(store, &parsed.refs, label_by_qn)?;
     Ok(())
 }
@@ -373,6 +373,7 @@ fn insert_parsed_nodes(
     store: &GraphStore,
     nodes: &[parser::ExtractedNode],
     label_by_qn: &mut HashMap<String, String>,
+    language: &str,
 ) -> Result<(), String> {
     // Group nodes by label so we can bulk-insert each label's batch in one
     // (or a few, chunked) Cypher CREATE ..., ..., ... statements.
@@ -393,7 +394,7 @@ fn insert_parsed_nodes(
             continue;
         }
         label_by_qn.insert(node.qualified_name.clone(), node.label.clone());
-        let props = build_node_properties(node);
+        let props = build_node_properties(node, language);
         by_label.entry(node.label.clone()).or_default().push(props);
     }
     for (label, count) in &dropped_dups {
@@ -409,7 +410,11 @@ fn insert_parsed_nodes(
 
 /// Builds the full property list for a node, mapping ExtractedNode fields
 /// to the schema columns defined in graph_store.rs node_table_ddl().
-fn build_node_properties(node: &parser::ExtractedNode) -> Vec<(String, String)> {
+///
+/// source: Spike B' BUG #5 fix — `language` is appended for every
+/// symbol-bearing label (anything that isn't File / Directory) so consumers
+/// can filter by language without re-parsing.
+fn build_node_properties(node: &parser::ExtractedNode, language: &str) -> Vec<(String, String)> {
     let mut props = vec![("id".to_string(), cypher_str(&node.qualified_name))];
     if has_name_col(&node.label) {
         props.push(("name".to_string(), cypher_str(&node.name)));
@@ -425,7 +430,20 @@ fn build_node_properties(node: &parser::ExtractedNode) -> Vec<(String, String)> 
         props.push(("visibility".to_string(), cypher_str(&node.visibility)));
     }
     append_label_properties(&mut props, node);
+    if has_language_col(&node.label) {
+        props.push(("language".to_string(), cypher_str(language)));
+    }
     props
+}
+
+/// True for every symbol-bearing node label (everything carrying source-code
+/// semantics). File and Directory are excluded — they cross language boundaries.
+fn has_language_col(label: &str) -> bool {
+    matches!(
+        label,
+        "Function" | "Method" | "Struct" | "Enum" | "Variant" | "Trait"
+            | "Field" | "Constant" | "TypeAlias" | "Import" | "CallSite"
+    )
 }
 
 /// Maps parser extra properties to schema columns by label.

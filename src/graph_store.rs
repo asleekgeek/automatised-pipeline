@@ -488,31 +488,42 @@ fn node_table_ddl() -> Vec<String> {
         ddl_node(NODE_DIRECTORY, "id STRING, path STRING, name STRING"),
         ddl_node(NODE_FILE, "id STRING, path STRING, name STRING, extension STRING, size_bytes INT64"),
         ddl_node(NODE_MODULE, "id STRING, name STRING, qualified_name STRING"),
+        // source: Spike B' BUG #5 fix — every symbol-bearing node gets a
+        // `language` STRING column populated by the indexer from the file's
+        // extension (python/rust/typescript). Previously every symbol came
+        // back with `language: None` in the JSON dump.
         ddl_node(NODE_FUNCTION,
             "id STRING, name STRING, qualified_name STRING, \
-             start_line INT64, end_line INT64, visibility STRING, is_async BOOLEAN"),
+             start_line INT64, end_line INT64, visibility STRING, is_async BOOLEAN, \
+             language STRING"),
         ddl_node(NODE_METHOD,
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, is_async BOOLEAN, \
-             receiver_type STRING"),
+             receiver_type STRING, language STRING"),
         ddl_node(NODE_STRUCT,
             "id STRING, name STRING, qualified_name STRING, \
-             start_line INT64, end_line INT64, visibility STRING"),
+             start_line INT64, end_line INT64, visibility STRING, language STRING"),
         ddl_node(NODE_ENUM,
             "id STRING, name STRING, qualified_name STRING, \
-             start_line INT64, end_line INT64, visibility STRING"),
-        ddl_node(NODE_VARIANT, "id STRING, name STRING, qualified_name STRING"),
+             start_line INT64, end_line INT64, visibility STRING, language STRING"),
+        ddl_node(NODE_VARIANT,
+            "id STRING, name STRING, qualified_name STRING, language STRING"),
         ddl_node(NODE_TRAIT,
             "id STRING, name STRING, qualified_name STRING, \
-             start_line INT64, end_line INT64, visibility STRING"),
+             start_line INT64, end_line INT64, visibility STRING, language STRING"),
         ddl_node(NODE_FIELD,
-            "id STRING, name STRING, type_annotation STRING, visibility STRING"),
+            "id STRING, name STRING, type_annotation STRING, visibility STRING, \
+             language STRING"),
         ddl_node(NODE_CONSTANT,
-            "id STRING, name STRING, qualified_name STRING, type_annotation STRING"),
+            "id STRING, name STRING, qualified_name STRING, type_annotation STRING, \
+             language STRING"),
         ddl_node(NODE_TYPE_ALIAS,
-            "id STRING, name STRING, qualified_name STRING, target_type STRING"),
-        ddl_node(NODE_IMPORT, "id STRING, path STRING, alias STRING, is_glob BOOLEAN"),
-        ddl_node(NODE_CALL_SITE, "id STRING, callee_name STRING, line INT64, col INT64"),
+            "id STRING, name STRING, qualified_name STRING, target_type STRING, \
+             language STRING"),
+        ddl_node(NODE_IMPORT,
+            "id STRING, path STRING, alias STRING, is_glob BOOLEAN, language STRING"),
+        ddl_node(NODE_CALL_SITE,
+            "id STRING, callee_name STRING, line INT64, col INT64, language STRING"),
         // 3c Community + Process — source: stages/stage-3c.md §4.1
         ddl_node(NODE_COMMUNITY,
             "id STRING, name STRING, algorithm STRING, \
