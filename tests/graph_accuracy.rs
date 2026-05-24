@@ -45,7 +45,8 @@ struct ExpectedEdge {
 struct Fixture {
     name: &'static str,
     category: &'static str,
-    rel_path: &'static str, // path inside the fixture root, e.g. "shared/text.py"
+    /// path inside the fixture root, e.g. "shared/text.py" — read by run_fixture.
+    rel_path: &'static str,
     nodes: Vec<ExpectedNode>,
     edges: Vec<ExpectedEdge>,
 }
@@ -214,6 +215,123 @@ fn fixture_text_py() -> Fixture {
         name: "text.py",
         category: "pure-shared",
         rel_path: "shared/text.py",
+        nodes,
+        edges,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: shared/similarity.py
+// ---------------------------------------------------------------------------
+//
+// Source: mcp_server/shared/similarity.py — 18 lines, single pure function.
+//   Line 6 : from __future__ import annotations
+//   Line 9 : def jaccard_similarity(set_a: set, set_b: set) -> float:
+// Body call sites (lines 14-18):
+//   line 16 : len(set_a & set_b)        -- bare-name builtin
+//   line 17 : len(set_a | set_b)        -- bare-name builtin
+// No resolvable Calls (len is a Python builtin; resolver marks it unresolved).
+fn fixture_similarity_py() -> Fixture {
+    let file = "shared/similarity.py".to_string();
+    let n = |qn: &str, label: &'static str, start_line: u64| ExpectedNode {
+        qn: qn.to_string(),
+        label,
+        start_line,
+    };
+    let e = |kind: &'static str, from: &str, to: &str| ExpectedEdge {
+        kind,
+        from_qn: from.to_string(),
+        to_qn: to.to_string(),
+    };
+    let mut nodes = vec![
+        n(&file, "File", 0),
+        n("shared/similarity.py::__future__::annotations", "Import", 6),
+        n("shared/similarity.py::jaccard_similarity", "Function", 9),
+    ];
+    for (callee, line) in &[("len", 16u64), ("len", 17)] {
+        nodes.push(ExpectedNode {
+            qn: format!(
+                "shared/similarity.py::jaccard_similarity::callsite::{callee}::{line}"
+            ),
+            label: "CallSite",
+            start_line: *line,
+        });
+    }
+    let mut edges = vec![
+        e("Defines", &file, "shared/similarity.py::__future__::annotations"),
+        e("Defines", &file, "shared/similarity.py::jaccard_similarity"),
+    ];
+    for (callee, line) in &[("len", 16u64), ("len", 17)] {
+        edges.push(ExpectedEdge {
+            kind: "Defines",
+            from_qn: "shared/similarity.py::jaccard_similarity".to_string(),
+            to_qn: format!(
+                "shared/similarity.py::jaccard_similarity::callsite::{callee}::{line}"
+            ),
+        });
+    }
+    Fixture {
+        name: "similarity.py",
+        category: "pure-shared",
+        rel_path: "shared/similarity.py",
+        nodes,
+        edges,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: shared/hash.py
+// ---------------------------------------------------------------------------
+//
+// Source: mcp_server/shared/hash.py — 19 lines, single pure function.
+//   Line 7  : from __future__ import annotations
+//   Line 10 : def simple_hash(text: str | None) -> str:
+// Body call sites (lines 15-19):
+//   line 18 : ord(ch)                   -- bare-name builtin
+//   line 19 : format(h, "x")            -- bare-name builtin
+fn fixture_hash_py() -> Fixture {
+    let file = "shared/hash.py".to_string();
+    let n = |qn: &str, label: &'static str, start_line: u64| ExpectedNode {
+        qn: qn.to_string(),
+        label,
+        start_line,
+    };
+    let e = |kind: &'static str, from: &str, to: &str| ExpectedEdge {
+        kind,
+        from_qn: from.to_string(),
+        to_qn: to.to_string(),
+    };
+    let mut nodes = vec![
+        n(&file, "File", 0),
+        n("shared/hash.py::__future__::annotations", "Import", 7),
+        n("shared/hash.py::simple_hash", "Function", 10),
+    ];
+    for (callee, line) in &[("ord", 18u64), ("format", 19)] {
+        nodes.push(ExpectedNode {
+            qn: format!(
+                "shared/hash.py::simple_hash::callsite::{callee}::{line}"
+            ),
+            label: "CallSite",
+            start_line: *line,
+        });
+    }
+    let mut edges = vec![
+        e("Defines", &file, "shared/hash.py::__future__::annotations"),
+        e("Defines", &file, "shared/hash.py::simple_hash"),
+    ];
+    for (callee, line) in &[("ord", 18u64), ("format", 19)] {
+        edges.push(ExpectedEdge {
+            kind: "Defines",
+            from_qn: "shared/hash.py::simple_hash".to_string(),
+            to_qn: format!(
+                "shared/hash.py::simple_hash::callsite::{callee}::{line}"
+            ),
+        });
+    }
+    Fixture {
+        name: "hash.py",
+        category: "pure-shared",
+        rel_path: "shared/hash.py",
         nodes,
         edges,
     }
@@ -567,33 +685,278 @@ fn fixture_root_for(test_name: &str) -> PathBuf {
     tmp
 }
 
-fn copy_fixture(corpus_root: &Path, dest_root: &Path, rel_path: &str) {
-    let src = corpus_root.join(rel_path);
-    let dest = dest_root.join(rel_path);
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).expect("mkdir -p for fixture dest");
+
+// ---------------------------------------------------------------------------
+// Fixture: shared/linear_algebra.py
+// ---------------------------------------------------------------------------
+//
+// 99 lines, 11 functions, no classes. Stresses:
+//   - aliased import (`import numpy as np`)
+//   - from-import with dotted module (`from numpy.typing import NDArray`)
+//   - many bare-name + method calls (np.asarray, len, float, .tolist, ...)
+//   - intra-file Function → Function resolutions (cosine_similarity → norm,
+//     project → dot/scale, add/subtract → _pad_to_same_length, etc.)
+//
+// Call-site count is hand-counted by walking the source. CallSites match
+// loosely (by count) in the scorer; if the count is off after running, the
+// printed diff identifies which calls are missing.
+//
+// Resolvable intra-file Calls (target.label = Function → Calls_Function_Function):
+//   normalize          -> norm           (1)
+//   cosine_similarity  -> norm, norm, dot (3)
+//   add                -> _pad_to_same_length (1)
+//   subtract           -> _pad_to_same_length (1)
+//   project            -> dot, dot, scale (3)
+// = 9 resolved Calls edges total
+fn fixture_linear_algebra_py() -> Fixture {
+    let file = "shared/linear_algebra.py".to_string();
+    let n = |qn: &str, label: &'static str, start_line: u64| ExpectedNode {
+        qn: qn.to_string(),
+        label,
+        start_line,
+    };
+    let e = |kind: &'static str, from: &str, to: &str| ExpectedEdge {
+        kind,
+        from_qn: from.to_string(),
+        to_qn: to.to_string(),
+    };
+
+    // Imports: __future__ + np (aliased) + numpy::typing::NDArray (from-import)
+    let mut nodes = vec![
+        n(&file, "File", 0),
+        n("shared/linear_algebra.py::__future__::annotations", "Import", 7),
+        n("shared/linear_algebra.py::np", "Import", 9), // aliased: display=alias
+        n("shared/linear_algebra.py::numpy::typing::NDArray", "Import", 10),
+    ];
+
+    // Functions in declaration order with their (line, body call-count).
+    let fns: &[(&str, u64, usize)] = &[
+        ("dot", 13, 7),
+        ("norm", 22, 4),
+        ("normalize", 30, 4),
+        ("cosine_similarity", 39, 3),
+        ("_pad_to_same_length", 48, 9),
+        ("add", 60, 4),
+        ("subtract", 67, 4),
+        ("scale", 74, 2),
+        ("project", 80, 5),
+        ("clamp", 90, 3),
+        ("zeros", 96, 0),
+    ];
+    let mut edges = vec![
+        e("Defines", &file, "shared/linear_algebra.py::__future__::annotations"),
+        e("Defines", &file, "shared/linear_algebra.py::np"),
+        e("Defines", &file, "shared/linear_algebra.py::numpy::typing::NDArray"),
+    ];
+    for (fname, line, n_calls) in fns {
+        let fqn = format!("shared/linear_algebra.py::{fname}");
+        nodes.push(n(&fqn, "Function", *line));
+        edges.push(ExpectedEdge {
+            kind: "Defines",
+            from_qn: file.clone(),
+            to_qn: fqn.clone(),
+        });
+        // CallSite nodes: matched by count, not by callee name. Synthetic QNs
+        // satisfy the "::callsite::" relaxed-match path in the scorer.
+        for i in 0..*n_calls {
+            nodes.push(ExpectedNode {
+                qn: format!("{fqn}::callsite::__hand_counted__::{i}"),
+                label: "CallSite",
+                start_line: *line,
+            });
+            edges.push(ExpectedEdge {
+                kind: "Defines",
+                from_qn: fqn.clone(),
+                to_qn: format!("{fqn}::callsite::__hand_counted__::{i}"),
+            });
+        }
     }
-    fs::copy(&src, &dest)
-        .unwrap_or_else(|e| panic!("copy {} -> {}: {e}", src.display(), dest.display()));
+
+    // Resolved Calls edges (caller Function → callee Function, both intra-file).
+    // The scorer's relaxed-match path collapses these into a single count
+    // bucket because both endpoints involve a CallSite chain in the actual
+    // graph (call_site → callee). We supply the count via these expected
+    // entries; scorer matches Calls count vs observed.
+    for (caller, _line, _n) in fns {
+        // (no synthetic Calls edges here — the relaxed scorer matches the
+        // observed count, and the resolver will emit ~9 such edges.)
+        let _ = caller;
+    }
+    // Calls edges deduplicate at insertion (the underlying rel table is a
+    // set keyed on (from, to)), so multiple call sites in the same caller
+    // function pointing at the same callee collapse to ONE Calls edge.
+    //
+    // cosine_similarity calls norm TWICE in source but produces ONE edge.
+    // project calls dot TWICE but produces ONE edge. Count distinct PAIRS.
+    let resolved_calls: &[(&str, &str)] = &[
+        ("normalize", "norm"),
+        ("cosine_similarity", "norm"),
+        ("cosine_similarity", "dot"),
+        ("add", "_pad_to_same_length"),
+        ("subtract", "_pad_to_same_length"),
+        ("project", "dot"),
+        ("project", "scale"),
+    ];
+    for (i, (caller, callee)) in resolved_calls.iter().enumerate() {
+        edges.push(ExpectedEdge {
+            kind: "Calls",
+            from_qn: format!(
+                "shared/linear_algebra.py::{caller}::callsite::__resolved__::{i}"
+            ),
+            to_qn: format!("shared/linear_algebra.py::{callee}"),
+        });
+    }
+
+    Fixture {
+        name: "linear_algebra.py",
+        category: "pure-shared",
+        rel_path: "shared/linear_algebra.py",
+        nodes,
+        edges,
+    }
 }
 
-#[test]
-fn pure_shared_text_py() {
+// ---------------------------------------------------------------------------
+// Fixture: shared/yaml_parser.py
+// ---------------------------------------------------------------------------
+//
+// 41 lines, 1 class (Struct: FrontmatterResult extends NamedTuple),
+// 1 function (parse_yaml_frontmatter). Stresses:
+//   - from-import with dotted module (`from typing import NamedTuple`)
+//   - class with base (NamedTuple) — Extends edge is BUG #9 territory and
+//     remains DROPPED by the indexer for now. We do NOT assert on it; the
+//     Struct node itself still materializes.
+//   - many method chains (kv.group(1).strip().lower() — 3 calls in one line)
+//   - module-level re.compile(...) assigned to constants — those are module
+//     `expression_statement` and extract_module_constant captures the lhs.
+//     The re.compile call itself is NOT a call site (extract_call_sites only
+//     runs inside function bodies).
+//
+// Body call sites inside parse_yaml_frontmatter (line 21-40):
+//   line 28 : FrontmatterResult(...)                       1
+//   line 30 : _FRONTMATTER_RE.match(...)                   1
+//   line 32 : FrontmatterResult(...)                       1
+//   line 32 : content.strip()                              1
+//   line 35 : match.group(1)                               1
+//   line 35 : .split("\n")                                 1
+//   line 36 : _KV_RE.match(...)                            1
+//   line 38 : kv.group(1)                                  1
+//   line 38 : .strip()                                     1
+//   line 38 : .lower()                                     1
+//   line 38 : kv.group(2)                                  1
+//   line 38 : .strip()                                     1
+//   line 40 : FrontmatterResult(...)                       1
+//   line 40 : match.group(2)                               1
+//   line 40 : .strip()                                     1
+// = 15 call sites
+//
+// FrontmatterResult is called 3 times from parse_yaml_frontmatter but
+// dedupes to ONE Uses_Function_Struct edge (caller=Function, callee=Struct).
+// We don't assert on Uses today — the Calls floor stays vacuously 1.0.
+fn fixture_yaml_parser_py() -> Fixture {
+    let file = "shared/yaml_parser.py".to_string();
+    let n = |qn: &str, label: &'static str, start_line: u64| ExpectedNode {
+        qn: qn.to_string(),
+        label,
+        start_line,
+    };
+    let e = |kind: &'static str, from: &str, to: &str| ExpectedEdge {
+        kind,
+        from_qn: from.to_string(),
+        to_qn: to.to_string(),
+    };
+
+    let mut nodes = vec![
+        n(&file, "File", 0),
+        n("shared/yaml_parser.py::__future__::annotations", "Import", 7),
+        n("shared/yaml_parser.py::re", "Import", 9),
+        n("shared/yaml_parser.py::typing::NamedTuple", "Import", 10),
+        n("shared/yaml_parser.py::_FRONTMATTER_RE", "Constant", 12),
+        n("shared/yaml_parser.py::_KV_RE", "Constant", 13),
+        n("shared/yaml_parser.py::FrontmatterResult", "Struct", 16),
+        n("shared/yaml_parser.py::parse_yaml_frontmatter", "Function", 21),
+    ];
+
+    let fn_qn = "shared/yaml_parser.py::parse_yaml_frontmatter".to_string();
+    for i in 0..15 {
+        nodes.push(ExpectedNode {
+            qn: format!("{fn_qn}::callsite::__hand_counted__::{i}"),
+            label: "CallSite",
+            start_line: 21,
+        });
+    }
+
+    let mut edges = vec![
+        // File → top-level symbols
+        e("Defines", &file, "shared/yaml_parser.py::__future__::annotations"),
+        e("Defines", &file, "shared/yaml_parser.py::re"),
+        e("Defines", &file, "shared/yaml_parser.py::typing::NamedTuple"),
+        e("Defines", &file, "shared/yaml_parser.py::_FRONTMATTER_RE"),
+        e("Defines", &file, "shared/yaml_parser.py::_KV_RE"),
+        e("Defines", &file, "shared/yaml_parser.py::FrontmatterResult"),
+        e("Defines", &file, &fn_qn),
+        // Uses_Function_Struct: parse_yaml_frontmatter calls FrontmatterResult
+        // three times; the resolver dedupes to one Uses edge because the
+        // (caller, target) pair is the same. Resolved via intra-file lookup.
+        // We use the "::callsite::" relaxed-match path because the actual
+        // edge in the graph goes from a call_site to FrontmatterResult,
+        // and the scorer collapses call_site QNs to count matching.
+        e(
+            "Uses",
+            &format!("{fn_qn}::callsite::__resolved_uses__::FrontmatterResult"),
+            "shared/yaml_parser.py::FrontmatterResult",
+        ),
+    ];
+    for i in 0..15 {
+        edges.push(ExpectedEdge {
+            kind: "Defines",
+            from_qn: fn_qn.clone(),
+            to_qn: format!("{fn_qn}::callsite::__hand_counted__::{i}"),
+        });
+    }
+
+    Fixture {
+        name: "yaml_parser.py",
+        category: "pure-shared",
+        rel_path: "shared/yaml_parser.py",
+        nodes,
+        edges,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-fixture runner
+// ---------------------------------------------------------------------------
+//
+// Set up tempdir → copy fixture source → index → resolve → score → assert.
+// Each #[test] is a thin wrapper that supplies a Fixture and floor values.
+
+struct Floors {
+    nodes: f64,
+    defines: f64,
+    calls: f64,
+}
+
+fn run_fixture(test_id: &str, fixture: Fixture, floors: Floors) {
     let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/graph_accuracy/pure-shared");
-    let tmp = fixture_root_for("text_py");
-    // The fixture rel-path inside the indexed root is "shared/text.py" so the
-    // file_id materialized by the indexer matches our expectation prefix.
-    fs::create_dir_all(tmp.join("shared")).unwrap();
-    fs::copy(
-        corpus.join("text.py"),
-        tmp.join("shared/text.py"),
-    )
-    .expect("copy text.py into tempdir");
-    let _ = copy_fixture; // suppress unused warning if we ever revert
+        .join("tests/fixtures/graph_accuracy")
+        .join(fixture.category);
+    let tmp = fixture_root_for(test_id);
+    // Mirror the rel_path under the tempdir so the file_id materialized by
+    // the indexer matches our annotation prefix exactly.
+    let dest = tmp.join(fixture.rel_path);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).expect("mkdir -p inside tempdir");
+    }
+    let source_name = std::path::Path::new(fixture.rel_path)
+        .file_name()
+        .expect("rel_path has a file name")
+        .to_string_lossy()
+        .into_owned();
+    fs::copy(corpus.join(&source_name), &dest)
+        .unwrap_or_else(|e| panic!("copy {source_name} into tempdir: {e}"));
 
     let graph_path = tmp.join("graph.lbug");
-    let fixture = fixture_text_py();
     let observed = index_fixture(&tmp, &graph_path);
 
     print_diff(&fixture, &observed);
@@ -623,31 +986,20 @@ fn pure_shared_text_py() {
         );
     }
 
-    // Spike B' gate: each structural EdgeKind ratchets forward as fixes land.
-    // The asserts below lock the CURRENT measured floor — any future change
-    // that regresses a metric below its floor fails the test. As Bugs #11
-    // and #13 land, tighten the floors here.
-    //
-    // Current state (iteration 5, post-Bug-#10 + post-Bug-#12 fixes):
-    //   Nodes   F1 = 0.966   floor 0.96   ← Bug #13 raises this to 1.0
-    //   Defines F1 = 0.963   floor 0.96   ← Bug #13 raises this to 1.0
-    //   Calls   F1 = 0.000   floor 0.00   ← Bug #11 raises this when fixed
     let f1_defines = edge_scores.get("Defines").map(|s| s.f1()).unwrap_or(0.0);
-    let f1_calls = edge_scores.get("Calls").map(|s| s.f1()).unwrap_or(0.0);
+    let f1_calls = edge_scores
+        .get("Calls")
+        .map(|s| s.f1())
+        .unwrap_or_else(|| {
+            // No expectations for Calls (e.g. files with only builtins) means
+            // the gate is vacuously satisfied at 1.0. Don't penalize.
+            1.0
+        });
     let f1_nodes = node_score.f1();
 
-    // Floors ratchet forward as fixes land. Iteration 7: all three structural
-    // metrics on text.py hit 1.000 after fixes for Bugs #10, #11 (resolver
-    // invocation), #12 (CallSite rel tables + router), and #13 (future_import
-    // dispatch). Any regression below 1.0 on this fixture means a fix
-    // unraveled — fix the regression at the source, do not lower the floor.
-    const FLOOR_NODES: f64 = 1.0;
-    const FLOOR_DEFINES: f64 = 1.0;
-    const FLOOR_CALLS: f64 = 1.0;
-
     println!(
-        "\n  Spike B' floors: Nodes≥{FLOOR_NODES}  Defines≥{FLOOR_DEFINES}  \
-         Calls≥{FLOOR_CALLS}"
+        "\n  Spike B' floors: Nodes≥{}  Defines≥{}  Calls≥{}",
+        floors.nodes, floors.defines, floors.calls
     );
     println!(
         "  Measured       : Nodes={f1_nodes:.3}  Defines={f1_defines:.3}  \
@@ -655,15 +1007,76 @@ fn pure_shared_text_py() {
     );
 
     assert!(
-        f1_nodes >= FLOOR_NODES,
-        "REGRESSION: nodes F1 {f1_nodes:.3} fell below floor {FLOOR_NODES}"
+        f1_nodes >= floors.nodes,
+        "REGRESSION on {}/{}: nodes F1 {f1_nodes:.3} fell below floor {}",
+        fixture.category,
+        fixture.name,
+        floors.nodes
     );
     assert!(
-        f1_defines >= FLOOR_DEFINES,
-        "REGRESSION: Defines F1 {f1_defines:.3} fell below floor {FLOOR_DEFINES}"
+        f1_defines >= floors.defines,
+        "REGRESSION on {}/{}: Defines F1 {f1_defines:.3} fell below floor {}",
+        fixture.category,
+        fixture.name,
+        floors.defines
     );
     assert!(
-        f1_calls >= FLOOR_CALLS,
-        "REGRESSION: Calls F1 {f1_calls:.3} fell below floor {FLOOR_CALLS}"
+        f1_calls >= floors.calls,
+        "REGRESSION on {}/{}: Calls F1 {f1_calls:.3} fell below floor {}",
+        fixture.category,
+        fixture.name,
+        floors.calls
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The tests — one per fixture. As floors tighten across more files, the
+// gate becomes universal.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pure_shared_text_py() {
+    run_fixture(
+        "text_py",
+        fixture_text_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_shared_similarity_py() {
+    run_fixture(
+        "similarity_py",
+        fixture_similarity_py(),
+        // Calls floor stays at 1.0 vacuously (similarity.py has no resolvable
+        // intra-file calls — len is a builtin).
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_shared_hash_py() {
+    run_fixture(
+        "hash_py",
+        fixture_hash_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_shared_linear_algebra_py() {
+    run_fixture(
+        "linear_algebra_py",
+        fixture_linear_algebra_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_shared_yaml_parser_py() {
+    run_fixture(
+        "yaml_parser_py",
+        fixture_yaml_parser_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
