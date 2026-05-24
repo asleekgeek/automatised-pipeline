@@ -3261,3 +3261,86 @@ fn server_transport_visualize_bootstrap_py() {
         Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
+
+/// Multi-file fixture for BUG #2 validation: file_a imports symbols from
+/// file_b and calls them. The resolver should emit cross-file Imports edges
+/// (file_a's Import nodes → file_b's Function nodes) and cross-file Calls
+/// edges (file_a::main's call_sites → file_b::helper, file_b::square).
+///
+/// This test bypasses run_fixture because run_fixture's corpus layout
+/// assumes one file per fixture. Multi-file uses a subdir under the
+/// synthetic/ corpus root.
+#[test]
+fn synthetic_multi_file_imports() {
+    let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/graph_accuracy/synthetic/multi_file");
+    let tmp = fixture_root_for("multi_file");
+    fs::copy(corpus.join("file_a.py"), tmp.join("file_a.py"))
+        .expect("copy file_a.py");
+    fs::copy(corpus.join("file_b.py"), tmp.join("file_b.py"))
+        .expect("copy file_b.py");
+
+    let graph_path = tmp.join("graph.lbug");
+    let observed = index_fixture(&tmp, &graph_path);
+
+    println!("\n===== multi_file_imports diagnostic =====");
+    println!("observed nodes by label:");
+    let mut by_label: BTreeMap<&String, usize> = BTreeMap::new();
+    for label in observed.nodes.values() {
+        *by_label.entry(label).or_default() += 1;
+    }
+    for (label, count) in &by_label {
+        println!("  {label:<12} {count}");
+    }
+    println!("\nobserved edges by kind:");
+    for (kind, set) in &observed.edges_by_kind {
+        println!("  {kind:<20} {}", set.len());
+        if kind == "Imports" || kind == "Calls" {
+            for (from, to) in set {
+                println!("    {from}  ->  {to}");
+            }
+        }
+    }
+
+    // BUG #2 floor: at minimum, the resolver must emit ≥1 Imports edge
+    // pointing FROM file_a's symbol/file/import-node TO a symbol in file_b
+    // (not back to file_a). This is the "cross-file linkage" the audit
+    // identified as missing.
+    let imports = observed
+        .edges_by_kind
+        .get("Imports")
+        .cloned()
+        .unwrap_or_default();
+    let cross_file_imports = imports
+        .iter()
+        .filter(|(from, to)| {
+            (from.contains("file_a") && to.contains("file_b"))
+                || (from.contains("file_b") && to.contains("file_a"))
+        })
+        .count();
+    println!("\ncross-file Imports edges: {cross_file_imports}");
+
+    // Calls — file_a::main calls helper + square, both in file_b. Both
+    // should resolve to Calls_Function_Function (or similar) cross-file.
+    let calls = observed
+        .edges_by_kind
+        .get("Calls")
+        .cloned()
+        .unwrap_or_default();
+    let cross_file_calls = calls
+        .iter()
+        .filter(|(from, to)| {
+            from.contains("file_a") && to.contains("file_b")
+        })
+        .count();
+    println!("cross-file Calls edges    : {cross_file_calls}");
+
+    assert!(
+        cross_file_imports >= 1,
+        "BUG #2 regression: expected ≥1 cross-file Imports edge from file_a → file_b, got {cross_file_imports}"
+    );
+    assert!(
+        cross_file_calls >= 2,
+        "expected ≥2 cross-file Calls edges (helper + square), got {cross_file_calls}"
+    );
+}

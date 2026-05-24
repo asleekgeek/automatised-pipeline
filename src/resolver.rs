@@ -867,9 +867,14 @@ fn build_file_import_map(store: &GraphStore) -> Result<HashMap<String, Vec<Strin
 // ---------------------------------------------------------------------------
 
 fn is_external_crate(path: &str) -> bool {
-    // External crates/packages: std::, core::, or any path not starting with
-    // crate:: / self:: / super:: that doesn't look like a relative path.
-    // Also treats common Python stdlib and Node.js built-ins as external.
+    // External crates/packages: std::, core::, or known stdlib prefixes.
+    // source: Spike B' BUG #2 fix — the previous catch-all
+    // `!first_segment.is_empty() && !... && !contains('/')` treated EVERY
+    // unknown import as external (e.g., `from file_b import helper` → "file_b"
+    // → unknown but ≠ "crate" → considered external → resolve_one_import
+    // returned an UnresolvedRef without trying). That blocked all cross-file
+    // imports between sibling modules. Now we only mark as external when the
+    // prefix is explicitly known.
     let known_external = [
         // Rust
         "std", "core", "alloc", "serde", "serde_json",
@@ -879,21 +884,21 @@ fn is_external_crate(path: &str) -> bool {
         "os", "sys", "io", "re", "json", "typing", "collections",
         "pathlib", "functools", "itertools", "abc", "dataclasses",
         "logging", "unittest", "asyncio", "math", "datetime",
+        "__future__", "hashlib", "subprocess", "threading", "time",
+        "argparse", "shutil", "traceback", "contextlib", "urllib",
+        "http", "socketserver",
         // Node built-ins
-        "fs", "path", "http", "https", "crypto", "util", "events",
+        "fs", "path", "https", "crypto", "util", "events",
         "stream", "child_process", "net", "url", "buffer",
     ];
     let first_segment = path.split("::").next().unwrap_or(path);
     if first_segment == "crate" || first_segment == "self" || first_segment == "super" {
         return false;
     }
-    // Relative imports (starting with .) are internal
     if first_segment.starts_with('.') {
-        return false;
+        return false; // relative import — internal
     }
     known_external.iter().any(|ext| first_segment == *ext)
-        || (!first_segment.is_empty() && first_segment != "crate"
-            && !first_segment.contains('/'))
 }
 
 fn normalize_import_path(path: &str) -> String {
