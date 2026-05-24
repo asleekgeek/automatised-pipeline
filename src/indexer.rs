@@ -471,6 +471,11 @@ fn append_label_properties(props: &mut Vec<(String, String)>, node: &parser::Ext
         "TypeAlias" => {
             props.push(("target_type".to_string(), cypher_str(&find("target_type"))));
         }
+        // source: Spike B' BUG #9 — bases CSV emitted by parser/python.rs
+        // for class/struct/trait/enum nodes; consumed by resolver.resolve_extends.
+        "Struct" | "Enum" | "Trait" => {
+            props.push(("bases".to_string(), cypher_str(&find("bases"))));
+        }
         "Import" => {
             props.push(("path".to_string(), cypher_str(&find("path"))));
             props.push(("alias".to_string(), cypher_str(&find("alias"))));

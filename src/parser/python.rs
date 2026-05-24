@@ -214,6 +214,14 @@ fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let qn = qual(scope, &name);
     let visibility = python_visibility(&name);
 
+    // source: Spike B' BUG #9 — emit base-class names as a CSV property on
+    // the Struct node so the resolver can later look them up in the symbol
+    // index and produce resolved Extends_Struct_Struct edges. We collect them
+    // here BEFORE calling extract_base_classes (which still emits Extends
+    // refs that the indexer drops — kept only for downstream code that
+    // greps for them).
+    let bases_csv = collect_base_names(ctx.source, node);
+
     ctx.nodes.push(ExtractedNode {
         label: LABEL_STRUCT.to_string(),
         name: name.clone(),
@@ -221,7 +229,7 @@ fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str) {
         start_line: node.start_position().row as u64 + 1,
         end_line: node.end_position().row as u64 + 1,
         visibility,
-        properties: vec![],
+        properties: vec![("bases".to_string(), bases_csv)],
     });
     ctx.refs.push(ExtractedRef {
         kind: "Defines".to_string(),
@@ -229,13 +237,37 @@ fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str) {
         to_qualified_name: qn.clone(),
     });
 
-    // Extract base classes (superclass_list is the "superclasses" field)
+    // Extract base classes (superclass_list is the "superclasses" field).
+    // These Extends refs are still emitted for backward compatibility but
+    // the indexer drops them — the property above is the source of truth.
     extract_base_classes(ctx, node, &qn);
 
     // Recurse into class body for methods and nested classes
     if let Some(body) = node.child_by_field_name("body") {
         extract_top_level(ctx, body, &qn, Some(&qn));
     }
+}
+
+/// Returns comma-separated base-class names (`identifier` and `attribute`
+/// children of the superclasses field). Attribute access like `typing.NamedTuple`
+/// is preserved verbatim — the resolver looks up by the last segment.
+fn collect_base_names(source: &str, class_node: Node) -> String {
+    let superclasses = match class_node.child_by_field_name("superclasses") {
+        Some(s) => s,
+        None => return String::new(),
+    };
+    let mut names = Vec::new();
+    let mut cursor = superclasses.walk();
+    for child in superclasses.children(&mut cursor) {
+        let kind = child.kind();
+        if kind == "identifier" || kind == "attribute" {
+            let text = node_text(source, child);
+            if !text.is_empty() {
+                names.push(text);
+            }
+        }
+    }
+    names.join(",")
 }
 
 fn extract_base_classes(ctx: &mut ExtractCtx, class_node: Node, class_qn: &str) {

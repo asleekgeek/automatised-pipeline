@@ -629,42 +629,95 @@ fn match_struct_to_traits(
 // source: stages/stage-3b.md §5.4
 // ---------------------------------------------------------------------------
 
-fn resolve_extends(store: &GraphStore, _idx: &SymbolIndex) -> PhaseResult {
-    let qr = store.execute_query("MATCH (t:Trait) RETURN t.id, t.name")?;
+/// Resolves the `bases` CSV property on every Struct/Enum/Trait node, looks
+/// each base name up in the symbol index, and emits the matching
+/// Extends_X_Y edge. Names that resolve to an Import node (cross-file base)
+/// are left unresolved — multi-file indexing surfaces those naturally.
+///
+/// source: Spike B' BUG #9 fix — previously a no-op stub that just counted
+/// pre-existing edges. The parser writes bases to the node property; this
+/// function does the deferred name→QN resolution that the indexer can't
+/// perform (the indexer routes by labels via label_by_qn, but base names
+/// aren't QNs yet at insert time).
+fn resolve_extends(store: &GraphStore, idx: &SymbolIndex) -> PhaseResult {
     let mut resolved = 0u64;
-    let total = 0u64;
-    let unresolved = Vec::new();
+    let mut total = 0u64;
+    let mut unresolved = Vec::new();
 
-    // The supertraits are stored as Extends refs in the parser output,
-    // but they reference raw trait names (not qualified). We need to
-    // check if the indexer persisted them as edges. If not, resolve from
-    // the trait node properties (if supertraits column exists).
-    // Since we added supertraits extraction to the parser and the Trait DDL
-    // doesn't have a supertraits column, the data flows through ExtractedRef
-    // entries with kind="Extends". The indexer's resolve_edge_table doesn't
-    // handle "Extends" kind, so those refs were dropped during 3a indexing.
-    // Resolution must handle this differently.
-
-    // The Extends refs from the parser have from_qualified_name = trait_qn
-    // and to_qualified_name = raw supertrait name (e.g., "Display").
-    // Since these weren't persisted, we can't read them from the graph.
-    // We'll rely on re-parsing or on a simpler approach: the trait_bounds
-    // field of the tree-sitter AST. But the resolver shouldn't re-parse.
-
-    // Pragmatic approach: query the graph for any hints. Since Extends refs
-    // are now in the parser output, we need the indexer to handle them.
-    // Let's check if any Extends edges exist already.
-    let ext_qr = store.execute_query(
-        "MATCH (a:Trait)-[r:Extends_Trait_Trait]->(b:Trait) RETURN count(r)"
-    );
-    if let Ok(r) = ext_qr {
-        if !r.rows.is_empty() {
-            let count: u64 = r.rows[0][0].parse().unwrap_or(0);
-            resolved = count;
+    for (label, table_self) in &[
+        ("Struct", "Extends_Struct_Struct"),
+        ("Enum", "Extends_Enum_Enum"),
+        ("Trait", "Extends_Trait_Trait"),
+    ] {
+        let q = format!("MATCH (s:{label}) RETURN s.id, s.bases");
+        let qr = match store.execute_query(&q) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for row in &qr.rows {
+            if row.len() < 2 {
+                continue;
+            }
+            let child_qn = &row[0];
+            let bases_csv = &row[1];
+            if bases_csv.is_empty() || bases_csv == "Null(String)" {
+                continue;
+            }
+            for raw_base in bases_csv.split(',') {
+                let raw_base = raw_base.trim();
+                if raw_base.is_empty() {
+                    continue;
+                }
+                total += 1;
+                // Look up by last `.`-separated segment so `typing.NamedTuple`
+                // resolves on `NamedTuple` if present. Cortex uses `::` in QNs
+                // but base names came from source so they may carry `.`.
+                let lookup = raw_base.rsplit('.').next().unwrap_or(raw_base);
+                let candidates = match idx.by_name.get(lookup) {
+                    Some(v) => v,
+                    None => {
+                        unresolved.push(UnresolvedRef {
+                            kind: "Extends".to_string(),
+                            from_id: child_qn.clone(),
+                            target_text: raw_base.to_string(),
+                            reason: "no_target_in_corpus".to_string(),
+                        });
+                        continue;
+                    }
+                };
+                // Prefer same-label matches (Struct→Struct, etc.) over
+                // cross-label (Struct→Trait) for symmetry with self_table.
+                let preferred = candidates.iter().find(|c| c.label == *label);
+                let target = match preferred {
+                    Some(t) => t,
+                    None => match candidates.first() {
+                        Some(t) => t,
+                        None => continue,
+                    },
+                };
+                let rel_table = if target.label == *label {
+                    table_self.to_string()
+                } else {
+                    format!("Extends_{label}_{}", target.label)
+                };
+                if !crate::graph_store::is_known_rel_table(&rel_table) {
+                    unresolved.push(UnresolvedRef {
+                        kind: "Extends".to_string(),
+                        from_id: child_qn.clone(),
+                        target_text: raw_base.to_string(),
+                        reason: format!("no_rel_table_for_{label}_to_{}", target.label),
+                    });
+                    continue;
+                }
+                // Direct insert — Extends doesn't go through EdgeBuffer because
+                // it's a single edge per resolved pair (no dedup beyond what
+                // the rel table provides).
+                let _ = store.insert_edge(&rel_table, child_qn, &target.id, &[]);
+                resolved += 1;
+            }
         }
     }
 
-    drop(qr);
     Ok((resolved, total, unresolved))
 }
 

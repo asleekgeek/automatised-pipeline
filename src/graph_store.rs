@@ -442,6 +442,10 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     ("Implements_Enum_Trait", NODE_ENUM, NODE_TRAIT),
     // Extends — source: stages/stage-3b.md §2, §3
     ("Extends_Trait_Trait", NODE_TRAIT, NODE_TRAIT),
+    // source: Spike B' BUG #9 fix — Python class inheritance (Cortex uses
+    // Struct label for Python classes); resolved by resolve_extends.
+    ("Extends_Struct_Struct", NODE_STRUCT, NODE_STRUCT),
+    ("Extends_Enum_Enum", NODE_ENUM, NODE_ENUM),
     // Uses — source: stages/stage-3b.md §2, §3
     ("Uses_Function_Struct", NODE_FUNCTION, NODE_STRUCT),
     ("Uses_Function_Enum", NODE_FUNCTION, NODE_ENUM),
@@ -500,17 +504,27 @@ fn node_table_ddl() -> Vec<String> {
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, is_async BOOLEAN, \
              receiver_type STRING, language STRING"),
+        // source: Spike B' BUG #9 fix — `bases STRING` column carries a CSV
+        // of unresolved base-class names emitted by the parser. The resolver
+        // reads this in resolve_extends, looks each name up in the symbol
+        // index, and emits the resolved Extends_X_Y edges. Indexer can't
+        // route Extends refs directly because their to_qualified_name is a
+        // raw NAME (e.g., "Animal"), not a QN — name→QN resolution happens
+        // server-side in the resolver pass after all nodes are indexed.
         ddl_node(NODE_STRUCT,
             "id STRING, name STRING, qualified_name STRING, \
-             start_line INT64, end_line INT64, visibility STRING, language STRING"),
+             start_line INT64, end_line INT64, visibility STRING, language STRING, \
+             bases STRING"),
         ddl_node(NODE_ENUM,
             "id STRING, name STRING, qualified_name STRING, \
-             start_line INT64, end_line INT64, visibility STRING, language STRING"),
+             start_line INT64, end_line INT64, visibility STRING, language STRING, \
+             bases STRING"),
         ddl_node(NODE_VARIANT,
             "id STRING, name STRING, qualified_name STRING, language STRING"),
         ddl_node(NODE_TRAIT,
             "id STRING, name STRING, qualified_name STRING, \
-             start_line INT64, end_line INT64, visibility STRING, language STRING"),
+             start_line INT64, end_line INT64, visibility STRING, language STRING, \
+             bases STRING"),
         ddl_node(NODE_FIELD,
             "id STRING, name STRING, type_annotation STRING, visibility STRING, \
              language STRING"),
@@ -644,15 +658,25 @@ const COLS_FILE: ColTypes = &[
     ("name", LogicalType::String), ("extension", LogicalType::String),
     ("size_bytes", LogicalType::Int64),
 ];
-const COLS_NAMED_QN: ColTypes = &[
+// source: Spike B' BUG #5 + #9 — every symbol-bearing label gets a
+// `language` String column; Struct/Enum/Trait additionally gain `bases`.
+// Module intentionally has no language (it's a logical aggregation, not
+// source); it still uses COLS_MODULE which keeps the pre-Spike-B' shape.
+const COLS_MODULE: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
+];
+const COLS_VARIANT: ColTypes = &[
+    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("qualified_name", LogicalType::String),
+    ("language", LogicalType::String),
 ];
 const COLS_FUNCTION: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("visibility", LogicalType::String), ("is_async", LogicalType::Bool),
+    ("language", LogicalType::String),
 ];
 const COLS_METHOD: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
@@ -660,35 +684,43 @@ const COLS_METHOD: ColTypes = &[
     ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("visibility", LogicalType::String), ("is_async", LogicalType::Bool),
     ("receiver_type", LogicalType::String),
+    ("language", LogicalType::String),
 ];
 const COLS_TYPEDECL: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("visibility", LogicalType::String),
+    ("language", LogicalType::String),
+    ("bases", LogicalType::String),
 ];
 const COLS_FIELD: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("type_annotation", LogicalType::String),
     ("visibility", LogicalType::String),
+    ("language", LogicalType::String),
 ];
 const COLS_CONSTANT: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("type_annotation", LogicalType::String),
+    ("language", LogicalType::String),
 ];
 const COLS_TYPE_ALIAS: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("target_type", LogicalType::String),
+    ("language", LogicalType::String),
 ];
 const COLS_IMPORT: ColTypes = &[
     ("id", LogicalType::String), ("path", LogicalType::String),
     ("alias", LogicalType::String), ("is_glob", LogicalType::Bool),
+    ("language", LogicalType::String),
 ];
 const COLS_CALL_SITE: ColTypes = &[
     ("id", LogicalType::String), ("callee_name", LogicalType::String),
     ("line", LogicalType::Int64), ("col", LogicalType::Int64),
+    ("language", LogicalType::String),
 ];
 const COLS_COMMUNITY: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
@@ -710,7 +742,8 @@ fn node_column_types(label: &str) -> Result<ColTypes, String> {
     match label {
         NODE_DIRECTORY => Ok(COLS_DIRECTORY),
         NODE_FILE => Ok(COLS_FILE),
-        NODE_MODULE | NODE_VARIANT => Ok(COLS_NAMED_QN),
+        NODE_MODULE => Ok(COLS_MODULE),
+        NODE_VARIANT => Ok(COLS_VARIANT),
         NODE_FUNCTION => Ok(COLS_FUNCTION),
         NODE_METHOD => Ok(COLS_METHOD),
         NODE_STRUCT | NODE_ENUM | NODE_TRAIT => Ok(COLS_TYPEDECL),

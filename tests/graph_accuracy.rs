@@ -2811,6 +2811,54 @@ fn fixture_test_http_server_py() -> Fixture {
 }
 
 // ---------------------------------------------------------------------------
+// Category: synthetic — hand-crafted fixtures for specific bug scenarios
+// not present in real Cortex source. intra_inheritance.py validates BUG #9
+// (resolver must emit Extends_Struct_Struct for intra-file class inheritance).
+// ---------------------------------------------------------------------------
+
+fn fixture_intra_inheritance_py() -> Fixture {
+    let mut f = build_core_fixture(&CoreFixtureInputs {
+        name: "intra_inheritance.py",
+        category: "synthetic",
+        rel_path: "synthetic/intra_inheritance.py",
+        file_prefix: "synthetic/intra_inheritance.py",
+        imports: &[("__future__::annotations", 9)],
+        constants: &[],
+        functions: &[],
+        classes: &[
+            ExpectedClassInput {
+                name: "Animal", line: 12, bases: &[],
+                methods: &[("speak", 13, 0)],
+            },
+            ExpectedClassInput {
+                name: "Dog", line: 17, bases: &["Animal"],
+                methods: &[("speak", 18, 0)],
+            },
+            ExpectedClassInput {
+                name: "Puppy", line: 22, bases: &["Dog"],
+                methods: &[("speak", 23, 0)],
+            },
+        ],
+        resolved_calls: &[],
+    });
+    // Two Extends_Struct_Struct edges expected after BUG #9 fix:
+    //   Dog → Animal
+    //   Puppy → Dog
+    let file_prefix = "synthetic/intra_inheritance.py";
+    f.edges.push(ExpectedEdge {
+        kind: "Extends",
+        from_qn: format!("{file_prefix}::Dog"),
+        to_qn: format!("{file_prefix}::Animal"),
+    });
+    f.edges.push(ExpectedEdge {
+        kind: "Extends",
+        from_qn: format!("{file_prefix}::Puppy"),
+        to_qn: format!("{file_prefix}::Dog"),
+    });
+    f
+}
+
+// ---------------------------------------------------------------------------
 // Per-fixture runner
 // ---------------------------------------------------------------------------
 //
@@ -3204,3 +3252,12 @@ fn server_transport_visualize_bootstrap_py() {
 #[test] fn tests_recall_py() { run_fixture("ts_recall_py", fixture_test_recall_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
 #[test] fn tests_brain_index_store_py() { run_fixture("ts_brain_index_store_py", fixture_test_brain_index_store_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
 #[test] fn tests_http_server_py() { run_fixture("ts_http_server_py", fixture_test_http_server_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+
+// synthetic — purpose-built fixtures for specific bug scenarios
+#[test] fn synthetic_intra_inheritance_py() {
+    run_fixture(
+        "intra_inheritance_py",
+        fixture_intra_inheritance_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
