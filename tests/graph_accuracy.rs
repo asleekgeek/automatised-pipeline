@@ -925,6 +925,391 @@ fn fixture_yaml_parser_py() -> Fixture {
 }
 
 // ---------------------------------------------------------------------------
+// Fixture: core/persona_vector.py
+// ---------------------------------------------------------------------------
+//
+// 194 lines, 9 functions, 1 constant, 6 imports (one multi-name from-import).
+// First pure-core fixture — exercises cross-module imports that stay
+// unresolved in single-file isolation (mcp_server.shared.linear_algebra
+// has no in-scope file, so the resolver can't link `add`, `scale`, etc.).
+//
+// Call counts per function (AST-derived ground truth):
+//   _clamp                       :  2
+//   _normalize_signal            :  0
+//   _compute_behavioral_dims     : 26
+//   build_persona_vector         :  8
+//   persona_to_array             :  1
+//   persona_distance             :  3
+//   persona_drift                :  8
+//   compose_personas             : 11
+//   steer_context                :  7
+// = 66 CallSites total
+//
+// Intra-file resolved Calls (deduplicated PAIRS):
+//   _compute_behavioral_dims -> _normalize_signal
+//   _compute_behavioral_dims -> _clamp
+//   build_persona_vector     -> _compute_behavioral_dims
+//   persona_distance         -> persona_to_array
+//   persona_drift            -> persona_to_array
+//   compose_personas         -> persona_to_array
+//   compose_personas         -> _clamp
+// = 7 Calls_Function_Function edges
+fn fixture_persona_vector_py() -> Fixture {
+    let file = "core/persona_vector.py".to_string();
+    let n = |qn: &str, label: &'static str, start_line: u64| ExpectedNode {
+        qn: qn.to_string(),
+        label,
+        start_line,
+    };
+    let e = |kind: &'static str, from: &str, to: &str| ExpectedEdge {
+        kind,
+        from_qn: from.to_string(),
+        to_qn: to.to_string(),
+    };
+
+    let imports = &[
+        ("__future__::annotations", 7u64),
+        ("typing::Any", 9),
+        ("mcp_server::shared::linear_algebra::add", 11),
+        ("mcp_server::shared::linear_algebra::cosine_similarity", 11),
+        ("mcp_server::shared::linear_algebra::scale", 11),
+        ("mcp_server::shared::linear_algebra::zeros", 11),
+    ];
+    let fns: &[(&str, u64, usize)] = &[
+        ("_clamp", 26, 2),
+        ("_normalize_signal", 30, 0),
+        ("_compute_behavioral_dims", 41, 26),
+        ("build_persona_vector", 77, 8),
+        ("persona_to_array", 91, 1),
+        ("persona_distance", 95, 3),
+        ("persona_drift", 99, 8),
+        ("compose_personas", 137, 11),
+        ("steer_context", 155, 7),
+    ];
+    let constants = &[("PERSONA_DIMENSIONS", 13u64)];
+
+    let mut nodes = vec![n(&file, "File", 0)];
+    let mut edges = vec![];
+    for (path, line) in imports {
+        let qn = format!("core/persona_vector.py::{path}");
+        nodes.push(n(&qn, "Import", *line));
+        edges.push(e("Defines", &file, &qn));
+    }
+    for (name, line) in constants {
+        let qn = format!("core/persona_vector.py::{name}");
+        nodes.push(n(&qn, "Constant", *line));
+        edges.push(e("Defines", &file, &qn));
+    }
+    for (fname, line, n_calls) in fns {
+        let fqn = format!("core/persona_vector.py::{fname}");
+        nodes.push(n(&fqn, "Function", *line));
+        edges.push(ExpectedEdge {
+            kind: "Defines",
+            from_qn: file.clone(),
+            to_qn: fqn.clone(),
+        });
+        for i in 0..*n_calls {
+            nodes.push(ExpectedNode {
+                qn: format!("{fqn}::callsite::__hand_counted__::{i}"),
+                label: "CallSite",
+                start_line: *line,
+            });
+            edges.push(ExpectedEdge {
+                kind: "Defines",
+                from_qn: fqn.clone(),
+                to_qn: format!("{fqn}::callsite::__hand_counted__::{i}"),
+            });
+        }
+    }
+
+    // Resolved intra-file Calls (deduplicated pairs).
+    let resolved_calls: &[(&str, &str)] = &[
+        ("_compute_behavioral_dims", "_normalize_signal"),
+        ("_compute_behavioral_dims", "_clamp"),
+        ("build_persona_vector", "_compute_behavioral_dims"),
+        ("persona_distance", "persona_to_array"),
+        ("persona_drift", "persona_to_array"),
+        ("compose_personas", "persona_to_array"),
+        ("compose_personas", "_clamp"),
+    ];
+    for (i, (caller, callee)) in resolved_calls.iter().enumerate() {
+        edges.push(ExpectedEdge {
+            kind: "Calls",
+            from_qn: format!(
+                "core/persona_vector.py::{caller}::callsite::__resolved__::{i}"
+            ),
+            to_qn: format!("core/persona_vector.py::{callee}"),
+        });
+    }
+
+    Fixture {
+        name: "persona_vector.py",
+        category: "pure-core",
+        rel_path: "core/persona_vector.py",
+        nodes,
+        edges,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared builder for pure-core fixtures (reduce boilerplate)
+// ---------------------------------------------------------------------------
+
+struct CoreFixtureInputs {
+    name: &'static str,
+    rel_path: &'static str,
+    file_prefix: &'static str, // file ID prefix, e.g. "core/profile_builder.py"
+    imports: &'static [(&'static str, u64)],       // (qual_suffix, line)
+    constants: &'static [(&'static str, u64)],     // (name, line)
+    functions: &'static [(&'static str, u64, usize)], // (name, line, call_count)
+    resolved_calls: &'static [(&'static str, &'static str)], // (caller, callee) DEDUPLICATED
+}
+
+fn build_core_fixture(inp: &CoreFixtureInputs) -> Fixture {
+    let file = inp.file_prefix.to_string();
+    let mut nodes = vec![ExpectedNode {
+        qn: file.clone(),
+        label: "File",
+        start_line: 0,
+    }];
+    let mut edges: Vec<ExpectedEdge> = vec![];
+
+    let push_node = |nodes: &mut Vec<ExpectedNode>, qn: String, label: &'static str, line: u64| {
+        nodes.push(ExpectedNode { qn, label, start_line: line });
+    };
+    let push_edge = |edges: &mut Vec<ExpectedEdge>, kind: &'static str, from: String, to: String| {
+        edges.push(ExpectedEdge { kind, from_qn: from, to_qn: to });
+    };
+
+    for (path, line) in inp.imports {
+        let qn = format!("{}::{}", inp.file_prefix, path);
+        push_node(&mut nodes, qn.clone(), "Import", *line);
+        push_edge(&mut edges, "Defines", file.clone(), qn);
+    }
+    for (name, line) in inp.constants {
+        let qn = format!("{}::{}", inp.file_prefix, name);
+        push_node(&mut nodes, qn.clone(), "Constant", *line);
+        push_edge(&mut edges, "Defines", file.clone(), qn);
+    }
+    for (fname, line, n_calls) in inp.functions {
+        let fqn = format!("{}::{}", inp.file_prefix, fname);
+        push_node(&mut nodes, fqn.clone(), "Function", *line);
+        push_edge(&mut edges, "Defines", file.clone(), fqn.clone());
+        for i in 0..*n_calls {
+            let cs_qn = format!("{fqn}::callsite::__hand_counted__::{i}");
+            push_node(&mut nodes, cs_qn.clone(), "CallSite", *line);
+            push_edge(&mut edges, "Defines", fqn.clone(), cs_qn);
+        }
+    }
+    for (i, (caller, callee)) in inp.resolved_calls.iter().enumerate() {
+        push_edge(
+            &mut edges,
+            "Calls",
+            format!("{}::{}::callsite::__resolved__::{i}", inp.file_prefix, caller),
+            format!("{}::{}", inp.file_prefix, callee),
+        );
+    }
+
+    Fixture {
+        name: inp.name,
+        category: "pure-core",
+        rel_path: inp.rel_path,
+        nodes,
+        edges,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: core/profile_builder.py
+// ---------------------------------------------------------------------------
+// 164 lines, 6 functions, 3 constants, 5 imports. Top-level orchestrator
+// with apply_session_update fanning out to 5 helpers.
+fn fixture_profile_builder_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "profile_builder.py",
+        rel_path: "core/profile_builder.py",
+        file_prefix: "core/profile_builder.py",
+        imports: &[
+            ("__future__::annotations", 8),
+            ("datetime::datetime", 10),
+            ("datetime::timezone", 10),
+            ("mcp_server::core::persona_vector::build_persona_vector", 12),
+            ("mcp_server::core::style_classifier_ema::update_style_ema", 13),
+        ],
+        constants: &[
+            ("_BURST_THRESHOLD_MS", 19),
+            ("_EXPLORATION_THRESHOLD_TURNS", 20),
+            ("_EMA_ALPHA", 21),
+        ],
+        functions: &[
+            ("_update_session_shape", 24, 0),
+            ("_update_tool_preferences", 50, 6),
+            ("_build_style_observation", 75, 7),
+            ("_update_persona_vector", 111, 10),
+            ("_update_counts_and_metadata", 126, 6),
+            ("apply_session_update", 134, 13),
+        ],
+        resolved_calls: &[
+            ("apply_session_update", "_build_style_observation"),
+            ("apply_session_update", "_update_counts_and_metadata"),
+            ("apply_session_update", "_update_persona_vector"),
+            ("apply_session_update", "_update_session_shape"),
+            ("apply_session_update", "_update_tool_preferences"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: core/style_classifier.py
+// ---------------------------------------------------------------------------
+// 311 lines. Felder-Silverman classifier with many private helpers and the
+// public classify_style entry. Heaviest call graph in pure-core (87 sites,
+// 20 intra-file Function→Function resolutions).
+fn fixture_style_classifier_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "style_classifier.py",
+        rel_path: "core/style_classifier.py",
+        file_prefix: "core/style_classifier.py",
+        imports: &[
+            ("__future__::annotations", 10),
+            ("re", 12), // plain `import re`
+            ("typing::Any", 13),
+        ],
+        constants: &[
+            ("ABSTRACT_KEYWORDS", 15),
+            ("CONCRETE_KEYWORDS", 36),
+            ("PLANNING_KEYWORDS", 56),
+            ("TRIAL_KEYWORDS", 72),
+            ("_TEST_RE", 86),
+        ],
+        functions: &[
+            ("_count_tool", 92, 6),
+            ("_total_tool_calls", 101, 4),
+            ("_count_keywords", 106, 2),
+            ("_non_linearity_score", 113, 11),
+            ("_clamp", 124, 2),
+            ("_score_active_reflective", 128, 13),
+            ("_score_sensing_intuitive", 169, 10),
+            ("_score_sequential_global", 195, 10),
+            ("_classify_problem_decomposition", 229, 9),
+            ("_classify_exploration_style", 254, 4),
+            ("_classify_verification_behavior", 274, 9),
+            ("classify_style", 301, 7),
+        ],
+        resolved_calls: &[
+            ("_classify_exploration_style", "_total_tool_calls"),
+            ("_classify_problem_decomposition", "_count_keywords"),
+            ("_classify_problem_decomposition", "_count_tool"),
+            ("_classify_verification_behavior", "_count_tool"),
+            ("_score_active_reflective", "_clamp"),
+            ("_score_active_reflective", "_count_keywords"),
+            ("_score_active_reflective", "_count_tool"),
+            ("_score_active_reflective", "_total_tool_calls"),
+            ("_score_sensing_intuitive", "_clamp"),
+            ("_score_sensing_intuitive", "_count_keywords"),
+            ("_score_sequential_global", "_clamp"),
+            ("_score_sequential_global", "_count_keywords"),
+            ("_score_sequential_global", "_non_linearity_score"),
+            ("_score_sequential_global", "_total_tool_calls"),
+            ("classify_style", "_classify_exploration_style"),
+            ("classify_style", "_classify_problem_decomposition"),
+            ("classify_style", "_classify_verification_behavior"),
+            ("classify_style", "_score_active_reflective"),
+            ("classify_style", "_score_sensing_intuitive"),
+            ("classify_style", "_score_sequential_global"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: core/sparse_dictionary.py
+// ---------------------------------------------------------------------------
+// 257 lines. 5 functions, 2 constants, 10 imports including aliased ones
+// (`initialize_atoms as _initialize_atoms`, `update_dictionary as
+// _update_dictionary`). Aliased imports use the ALIAS as display_name in
+// the QN, so the Import node is `..::_initialize_atoms` not the original.
+fn fixture_sparse_dictionary_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "sparse_dictionary.py",
+        rel_path: "core/sparse_dictionary.py",
+        file_prefix: "core/sparse_dictionary.py",
+        imports: &[
+            ("__future__::annotations", 8),
+            ("typing::Any", 10),
+            ("mcp_server::core::sparse_dictionary_activation::SIGNAL_NAMES", 12),
+            ("mcp_server::core::sparse_dictionary_activation::D", 12),
+            ("mcp_server::core::sparse_dictionary_activation::extract_session_activation", 12),
+            // Aliased: display_name = alias
+            ("_initialize_atoms", 17),
+            ("mcp_server::core::sparse_dictionary_learning::omp", 20),
+            ("_update_dictionary", 23),
+            ("mcp_server::shared::linear_algebra::norm", 26),
+            ("mcp_server::shared::linear_algebra::normalize", 26),
+            ("mcp_server::shared::linear_algebra::zeros", 26),
+        ],
+        constants: &[
+            ("_SEED_FEATURES", 32),
+            ("_SIGNAL_LABELS", 179),
+        ],
+        functions: &[
+            ("_build_seed_feature", 101, 7),
+            ("build_seed_dictionary", 123, 4),
+            ("learn_dictionary", 143, 13),
+            ("label_feature", 210, 9),
+            ("encode_session", 242, 5),
+        ],
+        resolved_calls: &[
+            ("build_seed_dictionary", "_build_seed_feature"),
+            ("learn_dictionary", "build_seed_dictionary"),
+            ("learn_dictionary", "label_feature"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: core/cognitive_map.py
+// ---------------------------------------------------------------------------
+// 300 lines. 9 functions (Successor Representation graph builder + 2D
+// projection). `import math` and `from collections import defaultdict`
+// are stdlib imports that won't resolve to any in-scope file.
+fn fixture_cognitive_map_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "cognitive_map.py",
+        rel_path: "core/cognitive_map.py",
+        file_prefix: "core/cognitive_map.py",
+        imports: &[
+            ("__future__::annotations", 13),
+            ("math", 15), // plain `import math`
+            ("collections::defaultdict", 16),
+            ("typing::Any", 17),
+        ],
+        constants: &[
+            ("_SR_DISCOUNT", 22),
+            ("_CO_ACCESS_WINDOW_HOURS", 25),
+            ("_MAX_NAVIGATE_DEPTH", 28),
+        ],
+        functions: &[
+            ("build_co_access_graph", 34, 5),
+            ("_parse_iso_timestamp", 69, 3),
+            ("_link_nearby_memories", 82, 6),
+            ("build_temporal_co_access", 106, 5),
+            ("compute_sr_scores", 128, 8),
+            ("_enqueue_neighbors", 169, 4),
+            ("navigate_from", 189, 3),
+            ("_spring_relax", 235, 6),
+            ("project_to_2d", 263, 11),
+        ],
+        resolved_calls: &[
+            ("_link_nearby_memories", "_parse_iso_timestamp"),
+            ("build_temporal_co_access", "_link_nearby_memories"),
+            ("build_temporal_co_access", "_parse_iso_timestamp"),
+            ("navigate_from", "_enqueue_neighbors"),
+            ("project_to_2d", "_spring_relax"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Per-fixture runner
 // ---------------------------------------------------------------------------
 //
@@ -1077,6 +1462,51 @@ fn pure_shared_yaml_parser_py() {
     run_fixture(
         "yaml_parser_py",
         fixture_yaml_parser_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_core_persona_vector_py() {
+    run_fixture(
+        "persona_vector_py",
+        fixture_persona_vector_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_core_profile_builder_py() {
+    run_fixture(
+        "profile_builder_py",
+        fixture_profile_builder_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_core_style_classifier_py() {
+    run_fixture(
+        "style_classifier_py",
+        fixture_style_classifier_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_core_sparse_dictionary_py() {
+    run_fixture(
+        "sparse_dictionary_py",
+        fixture_sparse_dictionary_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn pure_core_cognitive_map_py() {
+    run_fixture(
+        "cognitive_map_py",
+        fixture_cognitive_map_py(),
         Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
