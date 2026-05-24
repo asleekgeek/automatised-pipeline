@@ -1063,7 +1063,20 @@ struct CoreFixtureInputs {
     imports: &'static [(&'static str, u64)],       // (qual_suffix, line)
     constants: &'static [(&'static str, u64)],     // (name, line)
     functions: &'static [(&'static str, u64, usize)], // (name, line, call_count)
+    classes: &'static [ExpectedClassInput],
     resolved_calls: &'static [(&'static str, &'static str)], // (caller, callee) DEDUPLICATED
+}
+
+/// A class expectation: the class itself (Struct node, Defines edge from file),
+/// plus its methods (Method nodes, HasMethod edges from the class). Bases
+/// are tracked for documentation but NOT asserted on (BUG #9 — Extends
+/// edges are dropped by the indexer.resolve_edge_table pass).
+struct ExpectedClassInput {
+    name: &'static str,
+    line: u64,
+    #[allow(dead_code)] // documents the schema; not enforced until BUG #9 fix
+    bases: &'static [&'static str],
+    methods: &'static [(&'static str, u64, usize)], // (method_name, line, n_calls)
 }
 
 fn build_core_fixture(inp: &CoreFixtureInputs) -> Fixture {
@@ -1100,6 +1113,23 @@ fn build_core_fixture(inp: &CoreFixtureInputs) -> Fixture {
             let cs_qn = format!("{fqn}::callsite::__hand_counted__::{i}");
             push_node(&mut nodes, cs_qn.clone(), "CallSite", *line);
             push_edge(&mut edges, "Defines", fqn.clone(), cs_qn);
+        }
+    }
+    for cls in inp.classes {
+        let class_qn = format!("{}::{}", inp.file_prefix, cls.name);
+        push_node(&mut nodes, class_qn.clone(), "Struct", cls.line);
+        push_edge(&mut edges, "Defines", file.clone(), class_qn.clone());
+        for (mname, mline, n_calls) in cls.methods {
+            let mqn = format!("{class_qn}::{mname}");
+            push_node(&mut nodes, mqn.clone(), "Method", *mline);
+            // HasMethod: Struct → Method
+            push_edge(&mut edges, "HasMethod", class_qn.clone(), mqn.clone());
+            for i in 0..*n_calls {
+                let cs_qn = format!("{mqn}::callsite::__hand_counted__::{i}");
+                push_node(&mut nodes, cs_qn.clone(), "CallSite", *mline);
+                // Defines: Method → CallSite (BUG #12 fix added this table)
+                push_edge(&mut edges, "Defines", mqn.clone(), cs_qn);
+            }
         }
     }
     for (i, (caller, callee)) in inp.resolved_calls.iter().enumerate() {
@@ -1151,6 +1181,7 @@ fn fixture_profile_builder_py() -> Fixture {
             ("_update_counts_and_metadata", 126, 6),
             ("apply_session_update", 134, 13),
         ],
+        classes: &[],
         resolved_calls: &[
             ("apply_session_update", "_build_style_observation"),
             ("apply_session_update", "_update_counts_and_metadata"),
@@ -1199,6 +1230,7 @@ fn fixture_style_classifier_py() -> Fixture {
             ("_classify_verification_behavior", 274, 9),
             ("classify_style", 301, 7),
         ],
+        classes: &[],
         resolved_calls: &[
             ("_classify_exploration_style", "_total_tool_calls"),
             ("_classify_problem_decomposition", "_count_keywords"),
@@ -1262,6 +1294,7 @@ fn fixture_sparse_dictionary_py() -> Fixture {
             ("label_feature", 210, 9),
             ("encode_session", 242, 5),
         ],
+        classes: &[],
         resolved_calls: &[
             ("build_seed_dictionary", "_build_seed_feature"),
             ("learn_dictionary", "build_seed_dictionary"),
@@ -1304,6 +1337,7 @@ fn fixture_cognitive_map_py() -> Fixture {
             ("_spring_relax", 235, 6),
             ("project_to_2d", 263, 11),
         ],
+        classes: &[],
         resolved_calls: &[
             ("_link_nearby_memories", "_parse_iso_timestamp"),
             ("build_temporal_co_access", "_link_nearby_memories"),
@@ -1349,6 +1383,7 @@ fn fixture_hierarchical_predictive_coding_py() -> Fixture {
             ("_aggregate_novelty", 134, 4),
             ("compute_hierarchical_novelty", 149, 6),
         ],
+        classes: &[],
         resolved_calls: &[
             ("_aggregate_novelty", "_compute_ach_weights"),
             ("compute_hierarchical_novelty", "_aggregate_novelty"),
@@ -1379,6 +1414,7 @@ fn fixture_dual_store_cls_py() -> Fixture {
             ("classify_memory", 62, 9),
             ("auto_weight", 96, 6),
         ],
+        classes: &[],
         resolved_calls: &[],
     })
 }
@@ -1408,6 +1444,7 @@ fn fixture_causal_graph_py() -> Fixture {
             ("find_causal_chain", 252, 9),
             ("find_common_causes", 291, 9),
         ],
+        classes: &[],
         resolved_calls: &[
             ("_build_skeleton", "compute_conditional_independence"),
             ("_find_conditionally_independent_edges", "compute_conditional_independence"),
@@ -1447,6 +1484,7 @@ fn fixture_consolidation_engine_py() -> Fixture {
             ("summarize_action_group", 184, 14),
             ("should_reclassify", 222, 6),
         ],
+        classes: &[],
         resolved_calls: &[
             ("_process_patterns", "_try_abstract_pattern"),
             ("_try_abstract_pattern", "_collect_common_tags"),
@@ -1490,12 +1528,332 @@ fn fixture_replay_py() -> Fixture {
             ("_aggregate_results", 190, 7),
             ("describe_replay_result", 227, 2),
         ],
+        classes: &[],
         resolved_calls: &[
             ("_build_candidate_sequences", "_build_single_sequence"),
             ("run_swr_replay", "_aggregate_results"),
             ("run_swr_replay", "_build_candidate_sequences"),
             ("run_swr_replay", "_build_temporal_candidates"),
             ("run_swr_replay", "_select_seeds"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Category: infrastructure — I/O modules with heavy external deps.
+// New stresses: classes with methods (Struct + HasMethod), multi-inheritance
+// (Bug #9 territory), async methods, large plain-import surfaces.
+// ---------------------------------------------------------------------------
+
+fn fixture_file_io_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "file_io.py",
+        category: "infrastructure",
+        rel_path: "infrastructure/file_io.py",
+        file_prefix: "infrastructure/file_io.py",
+        imports: &[
+            ("__future__::annotations", 8),
+            ("json", 10),
+            ("os", 11),
+            ("sys", 12),
+            ("pathlib::Path", 13),
+            ("typing::Any", 14),
+        ],
+        constants: &[],
+        functions: &[
+            ("read_json", 17, 5),
+            ("write_json", 28, 4),
+            ("read_text_file", 35, 4),
+            ("ensure_dir", 46, 2),
+            ("list_dir", 51, 6),
+            ("stat_file", 64, 2),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("write_json", "ensure_dir"),
+        ],
+    })
+}
+
+fn fixture_embedding_engine_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "embedding_engine.py",
+        category: "infrastructure",
+        rel_path: "infrastructure/embedding_engine.py",
+        file_prefix: "infrastructure/embedding_engine.py",
+        imports: &[
+            ("__future__::annotations", 23),
+            ("hashlib", 25),
+            ("logging", 26),
+            ("collections::OrderedDict", 27),
+            ("typing::Any", 28),
+            // `import numpy as np` — aliased plain import → display = "np"
+            ("np", 30),
+        ],
+        constants: &[],
+        functions: &[
+            ("get_embedding_engine", 41, 2),
+            ("reset_embedding_engine", 52, 0),
+        ],
+        classes: &[ExpectedClassInput {
+            name: "EmbeddingEngine",
+            line: 58,
+            bases: &[],
+            methods: &[
+                ("__init__", 71, 1),
+                ("_cache_key", 90, 3),
+                ("model_name", 105, 0),
+                ("dimensions", 109, 0),
+                ("available", 113, 0),
+                ("_detect_device", 129, 6),
+                ("_resolve_device", 144, 3),
+                ("_fallback_to_cpu", 163, 2),
+                ("_ensure_model", 175, 10),
+                ("_trigger_background_install", 224, 6),
+                ("_encode_vec", 262, 9),
+                ("encode", 281, 7),
+                ("encode_batch", 308, 12),
+                ("similarity", 334, 9),
+                ("to_list", 347, 2),
+                ("from_list", 353, 2),
+                ("_normalize", 359, 1),
+                ("_fallback_encode", 365, 17),
+            ],
+        }],
+        // No intra-file Function→Function calls — all calls go to methods of
+        // the singleton via the get_embedding_engine factory.
+        resolved_calls: &[],
+    })
+}
+
+fn fixture_mcp_client_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "mcp_client.py",
+        category: "infrastructure",
+        rel_path: "infrastructure/mcp_client.py",
+        file_prefix: "infrastructure/mcp_client.py",
+        imports: &[
+            ("__future__::annotations", 7),
+            ("asyncio", 9),
+            ("json", 10),
+            ("sys", 11),
+            ("typing::Any", 12),
+            ("mcp_server::errors::McpConnectionError", 14),
+        ],
+        constants: &[
+            ("CLIENT_INFO", 16),
+            ("PROTOCOL_VERSION", 17),
+        ],
+        functions: &[],
+        classes: &[ExpectedClassInput {
+            name: "MCPClient",
+            line: 20,
+            bases: &[],
+            methods: &[
+                ("__init__", 21, 4),
+                ("connect", 47, 7),
+                ("_spawn_process", 72, 13),
+                ("_perform_handshake", 132, 11),
+                ("call", 167, 7),
+                ("list_tools", 193, 1),
+                ("server_info", 197, 0),
+                ("protocol_version", 201, 0),
+                ("connected", 205, 0),
+                ("idle", 209, 2),
+                ("close", 213, 9),
+                ("_send", 244, 10),
+                ("_notify", 278, 3),
+                ("_touch_activity", 284, 2),
+                ("_read_loop", 290, 26),
+                ("_stderr_loop", 363, 8),
+                ("_open_stderr_log", 392, 8),
+                ("_idle_loop", 413, 3),
+            ],
+        }],
+        resolved_calls: &[],
+    })
+}
+
+fn fixture_pg_store_py() -> Fixture {
+    let mut f = build_core_fixture(&CoreFixtureInputs {
+        name: "pg_store.py",
+        category: "infrastructure",
+        rel_path: "infrastructure/pg_store.py",
+        file_prefix: "infrastructure/pg_store.py",
+        imports: &[
+            ("__future__::annotations", 17),
+            ("json", 19),
+            ("logging", 20),
+            ("os", 21),
+            ("contextlib::contextmanager", 22),
+            ("datetime::datetime", 23),
+            ("datetime::timezone", 23),
+            ("typing::Any", 24),
+            ("typing::Iterator", 24),
+            ("np", 26), // aliased: import numpy as np
+            ("psycopg", 27),
+            ("pgvector::psycopg::register_vector", 28),
+            ("psycopg::rows::dict_row", 29),
+            ("psycopg_pool::ConnectionPool", 30),
+            ("mcp_server::infrastructure::pg_schema::get_all_ddl", 32),
+            ("mcp_server::infrastructure::pg_store_auxiliary::PgAuxiliaryMixin", 33),
+            ("mcp_server::infrastructure::pg_store_entities::PgEntityMixin", 34),
+            ("mcp_server::infrastructure::pg_store_queries::PgQueryMixin", 35),
+            ("mcp_server::infrastructure::pg_store_relationships::PgRelationshipMixin", 36),
+            ("mcp_server::infrastructure::pg_store_rules::PgRuleMixin", 37),
+            ("mcp_server::infrastructure::pg_store_stats::PgStatsMixin", 38),
+        ],
+        constants: &[],
+        functions: &[
+            ("_get_database_url", 43, 2),
+            ("_now_iso", 96, 2),
+        ],
+        classes: &[
+            ExpectedClassInput {
+                name: "_MaterializedCursor",
+                line: 53,
+                bases: &[],
+                methods: &[
+                    ("__init__", 66, 1),
+                    ("fetchone", 75, 1),
+                    ("fetchall", 82, 1),
+                    ("rowcount", 88, 0),
+                    ("__iter__", 91, 1),
+                ],
+            },
+            // Resolver-emitted edges from this fixture (auto-derived per file):
+            //  - Uses_Method_Struct: PgMemoryStore method → _MaterializedCursor
+            //    (line 297: return _MaterializedCursor(cur)). The resolver
+            //    routes Function|Method → Struct calls as Uses_*, not Calls_*.
+            //  - Calls_Method_Function: PgMemoryStore method → top-level _now_iso
+            //    (lines 321/343: _now_iso() bound to the top-level Function
+            //    because `_now_iso` matches the top-level by name; dedupes).
+            // We add these as relaxed-match Calls/Uses expectations so the
+            // scorer counts them correctly.
+            ExpectedClassInput {
+                name: "PgMemoryStore",
+                line: 100,
+                // 6-base multi-inheritance. BUG #9 means these Extends edges
+                // never reach the graph today.
+                bases: &[
+                    "PgEntityMixin", "PgRelationshipMixin", "PgQueryMixin",
+                    "PgRuleMixin", "PgStatsMixin", "PgAuxiliaryMixin",
+                ],
+                methods: &[
+                    ("__init__", 110, 5),
+                    ("_create_connection", 123, 1),
+                    ("_configure_pool_connection", 129, 1),
+                    ("_open_interactive_pool", 138, 2),
+                    ("_open_batch_pool", 154, 2),
+                    ("interactive_pool", 171, 1),
+                    ("batch_pool", 182, 1),
+                    ("acquire_interactive", 193, 2),
+                    ("acquire_batch", 210, 2),
+                    ("_deallocate_all", 220, 1),
+                    ("_reconnect", 232, 3),
+                    ("_execute", 241, 4),
+                    ("_execute_on_conn", 268, 8),
+                    ("_init_schema", 299, 5),
+                    ("has_vec", 315, 0),
+                    ("_now_iso", 320, 1),
+                    ("_bytes_to_vector", 326, 1),
+                    ("_vector_to_bytes", 333, 2),
+                    ("insert_memory", 341, 35),
+                    ("get_memory", 412, 3),
+                    ("update_memory_heat", 420, 1),
+                    ("bump_heat_raw", 431, 5),
+                    ("get_homeostatic_factor", 454, 3),
+                    ("set_homeostatic_factor", 475, 5),
+                    ("update_memories_heat_batch", 492, 7),
+                    ("update_memory_importance", 517, 2),
+                    ("update_memory_access", 524, 2),
+                    ("update_memory_metamemory", 532, 2),
+                    ("get_user_mood", 555, 3),
+                    ("get_user_mood_state", 574, 4),
+                    ("set_user_mood", 595, 8),
+                    ("delete_memory", 621, 2),
+                    ("set_memory_protected", 626, 2),
+                    ("mark_memory_stale", 633, 2),
+                    ("recall_memories", 641, 9),
+                    ("search_fts", 689, 2),
+                    ("search_vectors", 700, 3),
+                    ("update_memory_compression", 717, 4),
+                    ("_normalize_memory_row", 744, 8),
+                    ("spread_activation_memories", 781, 2),
+                    ("get_hot_embeddings", 802, 3),
+                    ("get_embeddings_for_memories", 821, 6),
+                    ("get_temporal_co_access", 845, 2),
+                    ("close", 863, 3),
+                ],
+            },
+        ],
+        resolved_calls: &[],
+    });
+    // Post-build: resolver also emits cross-class/cross-kind edges that the
+    // builder's resolved_calls doesn't model directly. Add them as relaxed
+    // CallSite-bearing expectations so the scorer counts them as TP.
+    f.edges.push(ExpectedEdge {
+        kind: "Uses",
+        from_qn:
+            "infrastructure/pg_store.py::PgMemoryStore::_open_interactive_pool::callsite::__uses__::0"
+                .to_string(),
+        to_qn: "infrastructure/pg_store.py::_MaterializedCursor".to_string(),
+    });
+    f.edges.push(ExpectedEdge {
+        kind: "Calls",
+        from_qn:
+            "infrastructure/pg_store.py::PgMemoryStore::insert_memory::callsite::__resolved__::0"
+                .to_string(),
+        to_qn: "infrastructure/pg_store.py::_now_iso".to_string(),
+    });
+    f
+}
+
+fn fixture_scanner_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "scanner.py",
+        category: "infrastructure",
+        rel_path: "infrastructure/scanner.py",
+        file_prefix: "infrastructure/scanner.py",
+        imports: &[
+            ("__future__::annotations", 8),
+            ("json", 10),
+            ("sys", 11),
+            ("datetime::datetime", 12),
+            ("datetime::timezone", 12),
+            ("pathlib::Path", 13),
+            ("typing::Any", 14),
+            ("mcp_server::infrastructure::config::CLAUDE_DIR", 16),
+            ("mcp_server::infrastructure::file_io::list_dir", 17),
+            ("mcp_server::infrastructure::file_io::read_text_file", 17),
+            ("mcp_server::infrastructure::file_io::stat_file", 17),
+            ("mcp_server::infrastructure::scanner_parse::build_conversation_record", 18),
+            ("mcp_server::infrastructure::scanner_parse::extract_message_stats", 18),
+            ("mcp_server::infrastructure::scanner_parse::extract_metadata_fields", 18),
+            ("mcp_server::shared::yaml_parser::parse_yaml_frontmatter", 23),
+        ],
+        constants: &[
+            ("HEAD_BYTES", 25),
+            ("TAIL_BYTES", 26),
+        ],
+        functions: &[
+            ("_parse_jsonl_lines", 29, 3),
+            ("read_head_tail", 43, 17),
+            ("iter_tool_uses", 72, 14),
+            ("_format_timestamp", 114, 4),
+            ("_parse_memory_file", 126, 10),
+            ("discover_all_memories", 153, 7),
+            ("_parse_conversation_file", 189, 4),
+            ("discover_conversations", 208, 10),
+            ("group_by_project", 250, 2),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_parse_conversation_file", "read_head_tail"),
+            ("_parse_memory_file", "_format_timestamp"),
+            ("discover_all_memories", "_parse_memory_file"),
+            ("discover_conversations", "_parse_conversation_file"),
+            ("read_head_tail", "_parse_jsonl_lines"),
         ],
     })
 }
@@ -1743,6 +2101,51 @@ fn core_with_deps_replay_py() {
     run_fixture(
         "replay_py",
         fixture_replay_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn infrastructure_file_io_py() {
+    run_fixture(
+        "file_io_py",
+        fixture_file_io_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn infrastructure_scanner_py() {
+    run_fixture(
+        "scanner_py",
+        fixture_scanner_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn infrastructure_embedding_engine_py() {
+    run_fixture(
+        "embedding_engine_py",
+        fixture_embedding_engine_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn infrastructure_mcp_client_py() {
+    run_fixture(
+        "mcp_client_py",
+        fixture_mcp_client_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn infrastructure_pg_store_py() {
+    run_fixture(
+        "pg_store_py",
+        fixture_pg_store_py(),
         Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
