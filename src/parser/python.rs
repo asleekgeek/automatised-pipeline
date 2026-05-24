@@ -22,6 +22,12 @@ const TS_FUNCTION_DEF: &str = "function_definition";
 const TS_CLASS_DEF: &str = "class_definition";
 const TS_IMPORT_STMT: &str = "import_statement";
 const TS_IMPORT_FROM: &str = "import_from_statement";
+// source: Spike B' BUG #13 — tree-sitter-python gives `from __future__ import
+// X` its own node kind (Python treats __future__ specially because it must
+// appear before any other code). Without this constant the dispatcher in
+// extract_top_level fell through `_ => {}` and silently dropped every
+// future-import in the corpus.
+const TS_FUTURE_IMPORT: &str = "future_import_statement";
 const TS_DECORATED_DEF: &str = "decorated_definition";
 const TS_EXPRESSION_STMT: &str = "expression_statement";
 const TS_ASSIGNMENT: &str = "assignment";
@@ -107,6 +113,10 @@ fn extract_top_level(
             TS_CLASS_DEF => extract_class(ctx, child, scope),
             TS_IMPORT_STMT => extract_import(ctx, child, scope),
             TS_IMPORT_FROM => extract_import_from(ctx, child, scope),
+            // source: Spike B' BUG #13 — route __future__ imports through the
+            // same emit path. They have no module_name field (module is
+            // implicitly __future__), so extract_future_import hardcodes it.
+            TS_FUTURE_IMPORT => extract_future_import(ctx, child, scope),
             TS_DECORATED_DEF => extract_decorated(ctx, child, scope, enclosing_class),
             TS_EXPRESSION_STMT => {
                 // Check for module-level constant assignments
@@ -306,6 +316,46 @@ fn extract_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     }
 }
 
+/// Handles `from __future__ import X [as Y][, Z ...]`. Tree-sitter-python
+/// gives this its own node kind (`future_import_statement`) distinct from
+/// the generic `import_from_statement`, so it needs its own routing — see
+/// BUG #13. The module name is implicit (always `__future__`). Imported
+/// names appear as direct identifier/dotted_name/aliased_import children.
+fn extract_future_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+    let module_name = "__future__".to_string();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "identifier" | "dotted_name" => {
+                let name = node_text(ctx.source, child);
+                // Skip the literal `__future__` token if tree-sitter emits it
+                // as an identifier child (depends on grammar version).
+                if name == "__future__" || name.is_empty() {
+                    continue;
+                }
+                let full_path = format!("{module_name}::{name}");
+                emit_import(ctx, scope, &full_path, "", false, node);
+            }
+            "aliased_import" => {
+                let name_node = child.child_by_field_name("name");
+                let alias_node = child.child_by_field_name("alias");
+                let name = name_node
+                    .map(|n| node_text(ctx.source, n))
+                    .unwrap_or_default();
+                let alias = alias_node
+                    .map(|n| node_text(ctx.source, n))
+                    .unwrap_or_default();
+                if name.is_empty() {
+                    continue;
+                }
+                let full_path = format!("{module_name}::{name}");
+                emit_import(ctx, scope, &full_path, &alias, false, node);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn extract_import_from(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     // `from foo import bar` / `from foo import *` / `from foo import bar as b`
     let module_name = node.child_by_field_name("module_name")
@@ -455,10 +505,14 @@ fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     if callee.is_empty() {
         return;
     }
-    // Skip method calls (x.foo()) for now — same as Rust parser scope
-    if callee.contains('.') {
-        return;
-    }
+    // source: Spike B' BUG #10 fix. Previously skipped any callee containing
+    // '.' as a known limitation, which dropped every method call (self.foo,
+    // module.func, obj.attr) — the bulk of real Python call edges. We now
+    // emit a CallSite node for every call_expression regardless of whether
+    // the callee is a bare identifier or an attribute access. The resolver
+    // decides whether it can resolve the target; unresolved targets stay as
+    // call_sites with no Calls edge until BUG #11 is also fixed (see
+    // resolver.rs resolve_calls).
     let line = node.start_position().row as u64 + 1;
     let col = node.start_position().column as u64;
     // Chained calls (f()()) share start_byte because the outer call's

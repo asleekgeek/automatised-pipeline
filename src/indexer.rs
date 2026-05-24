@@ -529,10 +529,18 @@ fn resolve_defines_table(
     to_qn: &str,
     label_by_qn: &HashMap<String, String>,
 ) -> Option<String> {
-    let from_label = lookup_label_among(from_qn, label_by_qn, &["File", "Module"])?;
+    // source: Spike B' BUG #12 fix — added Function/Method to from-candidates
+    // and CallSite to to-candidates. Previously the parser-emitted
+    // `Defines: Function → CallSite` edges were silently dropped here because
+    // the whitelist excluded both endpoints. CallSite nodes were orphans.
+    let from_label = lookup_label_among(
+        from_qn,
+        label_by_qn,
+        &["File", "Module", "Function", "Method"],
+    )?;
     let to_candidates = &[
         "Function", "Struct", "Enum", "Trait", "Constant",
-        "TypeAlias", "Module", "Import",
+        "TypeAlias", "Module", "Import", "CallSite",
     ];
     let to_label = lookup_label_among(to_qn, label_by_qn, to_candidates)?;
     let table = format!("Defines_{from_label}_{to_label}");

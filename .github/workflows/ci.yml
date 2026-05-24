@@ -1,0 +1,58 @@
+name: CI
+
+# Runs on every push to main and every pull request. The Spike B' graph
+# accuracy gate lives in tests/graph_accuracy.rs and is part of the standard
+# `cargo test` invocation — if any structural EdgeKind F1 regresses below
+# the locked floor (nodes ≥ 0.96, Defines ≥ 0.96 as of iteration 5), this
+# job fails. As Bugs #11 and #13 land the floor tightens automatically.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs when a new commit lands on the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: cargo test (graph accuracy gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache the cargo target dir keyed on Cargo.lock. Saves ~minutes per
+      # run because tree-sitter + tantivy + lbug are heavy to recompile.
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # The graph_accuracy test is the Spike B' gate. Its asserts ratchet
+      # forward as fixes land — current floor is nodes/Defines ≥ 0.96 on
+      # tests/fixtures/graph_accuracy/pure-shared/text.py.
+      - name: Run graph accuracy gate
+        run: cargo test --test graph_accuracy -- --nocapture
+
+      # Full suite (stage3a-d integrations, etc.). Kept separate so a
+      # graph-accuracy regression fails the build with a clear signal even
+      # if other tests are broken for unrelated reasons.
+      - name: Run full test suite
+        run: cargo test

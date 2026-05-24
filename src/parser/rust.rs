@@ -801,7 +801,10 @@ fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
         None => return,
     };
     let callee = node_text(ctx.source, func_node);
-    if callee.is_empty() || callee.contains('.') {
+    // source: Spike B' BUG #10 fix — was `callee.contains('.')` which dropped
+    // every method call (obj.method, etc.). Now extract all call_expression
+    // nodes; resolver decides what can be resolved.
+    if callee.is_empty() {
         return;
     }
     let line = node.start_position().row as u64 + 1;

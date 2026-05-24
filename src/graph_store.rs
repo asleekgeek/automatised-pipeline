@@ -427,6 +427,16 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     ("Calls_Function_Method", NODE_FUNCTION, NODE_METHOD),
     ("Calls_Method_Function", NODE_METHOD, NODE_FUNCTION),
     ("Calls_Method_Method", NODE_METHOD, NODE_METHOD),
+    // source: Spike B' BUG #12 fix — the parser emits a Defines edge from
+    // Function/Method to a CallSite (parser/python.rs:485) but no rel table
+    // existed for it, so every insert silently dropped. CallSite nodes were
+    // orphans in the graph. Adding these tables restores the linkage.
+    ("Defines_Function_CallSite", NODE_FUNCTION, NODE_CALL_SITE),
+    ("Defines_Method_CallSite", NODE_METHOD, NODE_CALL_SITE),
+    // CallSite → callee — emitted by resolver when the callee resolves.
+    ("Calls_CallSite_Function", NODE_CALL_SITE, NODE_FUNCTION),
+    ("Calls_CallSite_Method", NODE_CALL_SITE, NODE_METHOD),
+    ("Calls_CallSite_StdlibSymbol", NODE_CALL_SITE, NODE_STDLIB_SYMBOL),
     // Implements — source: stages/stage-3b.md §2, §3
     ("Implements_Struct_Trait", NODE_STRUCT, NODE_TRAIT),
     ("Implements_Enum_Trait", NODE_ENUM, NODE_TRAIT),
