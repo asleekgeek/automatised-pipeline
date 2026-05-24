@@ -569,6 +569,22 @@ fn is_resolution_rel(name: &str) -> bool {
         || name.starts_with("Uses_")
 }
 
+/// Structural edges from the parser (Defines, HasMethod, HasField,
+/// HasVariant) are ground-truth AST facts. After Spike B' BUG #4 fix
+/// they also carry confidence + resolution_method so downstream
+/// consumers see uniform provenance across all edge kinds — structural
+/// edges default to (1.0, "direct-ast") at insert time.
+///
+/// source: Spike B' BUG #4 — audited ap_graph.json had confidence/reason
+/// = None on all 67,427 edges including structural ones. Adding the
+/// columns + populating defaults at emit time fixes that uniformly.
+fn is_structural_provenance_rel(name: &str) -> bool {
+    name.starts_with("Defines_")
+        || name.starts_with("HasMethod_")
+        || name.starts_with("HasField_")
+        || name.starts_with("HasVariant_")
+}
+
 fn is_entrypoint_rel(name: &str) -> bool {
     name.starts_with("EntryPointOf_")
 }
@@ -581,8 +597,12 @@ fn rel_table_ddl() -> Vec<String> {
     REL_TABLES
         .iter()
         .map(|(name, from, to)| {
-            if is_resolution_rel(name) {
-                // source: stages/stage-3b.md §2 — confidence + resolution_method
+            if is_resolution_rel(name) || is_structural_provenance_rel(name) {
+                // resolution_rel: stages/stage-3b.md §2.
+                // structural_provenance: Spike B' BUG #4 — Defines/HasMethod
+                // now also carry (confidence, resolution_method) populated
+                // by the indexer as (1.0, "direct-ast") for ground-truth
+                // AST facts.
                 format!(
                     "CREATE REL TABLE IF NOT EXISTS {name}(\
                      FROM {from} TO {to}, \
@@ -761,7 +781,7 @@ fn node_column_types(label: &str) -> Result<ColTypes, String> {
 /// Returns the declared property schema for an edge table. Empty for
 /// untyped rel tables. source: rel_table_ddl() in this module.
 fn edge_column_types(rel_table: &str) -> ColTypes {
-    if is_resolution_rel(rel_table) {
+    if is_resolution_rel(rel_table) || is_structural_provenance_rel(rel_table) {
         &[
             ("confidence", LogicalType::Double),
             ("resolution_method", LogicalType::String),

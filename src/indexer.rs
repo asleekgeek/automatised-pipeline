@@ -515,10 +515,28 @@ fn insert_parsed_edges(
             Some(t) => t,
             None => continue,
         };
+        // source: Spike B' BUG #4 — structural edges (Defines_*, HasMethod_*,
+        // HasField_*, HasVariant_*) now carry (confidence=1.0,
+        // resolution_method="direct-ast") so downstream consumers see uniform
+        // provenance across structural and resolution edges. The column
+        // schema for these tables was added in graph_store.rs::rel_table_ddl
+        // via is_structural_provenance_rel().
+        let props: Vec<(String, String)> = if table_name.starts_with("Defines_")
+            || table_name.starts_with("HasMethod_")
+            || table_name.starts_with("HasField_")
+            || table_name.starts_with("HasVariant_")
+        {
+            vec![
+                ("confidence".to_string(), "1.0".to_string()),
+                ("resolution_method".to_string(), cypher_str("direct-ast")),
+            ]
+        } else {
+            Vec::new()
+        };
         by_table.entry(table_name).or_default().push((
             edge_ref.from_qualified_name.clone(),
             edge_ref.to_qualified_name.clone(),
-            Vec::new(),
+            props,
         ));
     }
     for (table, edges) in &by_table {
