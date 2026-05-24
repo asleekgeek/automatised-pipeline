@@ -1,0 +1,331 @@
+"""Handler: recall -- PG recall + production enrichments.
+
+Composition root wiring infrastructure to core retrieval logic.
+
+Base retrieval uses pg_recall (intent-adaptive PG WRRF + FlashRank reranking).
+Production enrichments layer on top: prospective memory injection,
+co-activation Hebbian learning, neuro-symbolic rules, strategic ordering.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from mcp_server.core import memory_rules
+from mcp_server.handlers._telemetry_wrap import instrument
+from mcp_server.core.knowledge_graph import extract_entities
+from mcp_server.core.pg_recall import recall as pg_recall
+from mcp_server.core.query_intent import QueryIntent, classify_query_intent
+from mcp_server.handlers._tool_meta import READ_ONLY
+from mcp_server.handlers.recall_helpers import (
+    build_enhancements,
+    filter_low_signal,
+    inject_triggered_memories,
+)
+from mcp_server.infrastructure.embedding_engine import get_embedding_engine
+from mcp_server.infrastructure.memory_config import get_memory_settings
+from mcp_server.infrastructure.memory_store import MemoryStore
+
+schema = {
+    "title": "Recall (retrieve memories)",
+    "annotations": READ_ONLY,
+    "outputSchema": {
+        "type": "object",
+        "required": ["memories"],
+        "properties": {
+            "memories": {
+                "type": "array",
+                "description": "Ranked list of matching memories. Best result is index 0.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "Memory UUID."},
+                        "content": {"type": "string", "description": "Memory body."},
+                        "score": {
+                            "type": "number",
+                            "description": "Final fused + reranked score.",
+                        },
+                        "heat": {
+                            "type": "number",
+                            "description": "Current thermodynamic heat [0,1].",
+                        },
+                        "domain": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "created_at": {"type": "string", "format": "date-time"},
+                        "source": {"type": "string"},
+                    },
+                },
+            },
+            "intent": {
+                "type": "string",
+                "enum": [
+                    "temporal",
+                    "causal",
+                    "semantic",
+                    "entity",
+                    "knowledge_update",
+                    "multi_hop",
+                ],
+                "description": "Classified query intent that drove the signal-weight profile.",
+            },
+            "count": {"type": "integer", "description": "Number of memories returned."},
+        },
+    },
+    "description": (
+        "Retrieve memories from the Cortex store using intent-adaptive PG "
+        "recall (server-side WRRF fusion of vector + FTS + trigram + heat + "
+        "recency) followed by FlashRank cross-encoder reranking and "
+        "production enrichments (prospective memory injection, Hebbian "
+        "co-activation strengthening, neuro-symbolic rules, strategic ordering "
+        "to mitigate Lost-in-the-Middle, Liu et al. 2023). Use this before "
+        "any non-trivial work to check what Cortex already knows; running "
+        "blind is unacceptable when recall takes ~200ms. Distinct from "
+        "`recall_hierarchical` (returns the L0/L1/L2 cluster topology, not "
+        "a flat ranked list), `navigate_memory` (graph BFS over co-access "
+        "edges from one seed memory), and `get_causal_chain` (entity-graph "
+        "traversal, not memory recall). Returns ranked memories with scores, "
+        "heat, and source."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Natural-language query describing what to retrieve. Free "
+                    "text; intent (temporal/causal/semantic/entity/multi-hop) "
+                    "is auto-classified to weight the WRRF signals."
+                ),
+                "examples": [
+                    "why did we choose pgvector over Pinecone?",
+                    "failed attempts to fix recall regression",
+                    "what does the consolidate handler do?",
+                ],
+            },
+            "domain": {
+                "type": "string",
+                "description": (
+                    "Restrict results to a single cognitive domain. Omit to "
+                    "search across all domains."
+                ),
+                "examples": ["cortex", "auth-service"],
+            },
+            "directory": {
+                "type": "string",
+                "description": (
+                    "Restrict results to memories tagged with a specific "
+                    "absolute project directory."
+                ),
+                "examples": ["/Users/alice/code/cortex"],
+            },
+            "max_results": {
+                "type": "integer",
+                "description": (
+                    "Maximum number of ranked memories to return after reranking."
+                ),
+                "default": 10,
+                "minimum": 1,
+                "maximum": 100,
+                "examples": [5, 10, 25],
+            },
+            "min_heat": {
+                "type": "number",
+                "description": (
+                    "Minimum heat (0.0-1.0) for a memory to be considered. "
+                    "Lower = include colder/older memories. Use 0 to include everything."
+                ),
+                "default": 0.05,
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "examples": [0.0, 0.05, 0.3],
+            },
+            "agent_topic": {
+                "type": "string",
+                "description": (
+                    "Restrict to memories produced under a specific agent "
+                    "context tag (subagent topic isolation)."
+                ),
+                "examples": ["engineer", "researcher", "reviewer"],
+            },
+            "include_low_signal": {
+                "type": "boolean",
+                "description": (
+                    "When false (default), drops memories tagged as auto-"
+                    "captures (``auto-captured``, ``tool:edit``, ``_backfill``, "
+                    "``stage-N``, ``session-summary``, …) so curated content "
+                    "(ADRs, lessons, conventions) surfaces in the first few "
+                    "results. Spike 2026-05-13 showed unfiltered recall is "
+                    "drowned by tool-output captures even for queries about "
+                    "design decisions. Set true for debugging / replay "
+                    "tooling that needs the raw memory feed."
+                ),
+                "default": False,
+            },
+        },
+    },
+}
+
+_store: MemoryStore | None = None
+_momentum_state: dict = {"momentum": 0.5}
+
+
+def _get_store() -> MemoryStore:
+    global _store
+    if _store is None:
+        s = get_memory_settings()
+        _store = MemoryStore(s.DB_PATH, s.EMBEDDING_DIM)
+    return _store
+
+
+def _apply_strategic_ordering(
+    results: list[dict],
+    top_fraction: float = 0.3,
+    bottom_fraction: float = 0.2,
+) -> list[dict]:
+    """Reorder to mitigate 'Lost in the Middle' (Liu et al. 2023)."""
+    n = len(results)
+    if n < 5:
+        return results
+    top_n = max(1, int(n * top_fraction))
+    bottom_n = max(1, int(n * bottom_fraction))
+    if n - top_n - bottom_n <= 0:
+        return results
+    return results[:top_n] + results[n - bottom_n :] + results[top_n : n - bottom_n]
+
+
+def _apply_co_activation(
+    results: list[dict], store: MemoryStore, settings: Any
+) -> None:
+    """Dragon Hatchling Hebbian: co-retrieved entities strengthen edges."""
+    from mcp_server.core.ablation import Mechanism, is_mechanism_disabled
+
+    if is_mechanism_disabled(Mechanism.CO_ACTIVATION):
+        # No-op: do not strengthen co-retrieved entity edges.
+        return
+    if not settings.CO_ACTIVATION_ENABLED or len(results) < 2:
+        return
+    min_score = settings.CO_ACTIVATION_MIN_SCORE
+    lr = settings.CO_ACTIVATION_LEARNING_RATE
+    entity_sets: list[set[str]] = []
+    for r in results[:5]:
+        if r.get("score", 0) < min_score:
+            continue
+        ents = extract_entities(r.get("content", ""))
+        entity_sets.append({e["name"] for e in ents})
+    try:
+        for i, ents_a in enumerate(entity_sets):
+            for ents_b in entity_sets[i + 1 :]:
+                for a in list(ents_a)[:5]:
+                    for b in list(ents_b)[:5]:
+                        if a != b:
+                            store.reinforce_or_create_relationship(a, b, lr)
+    except Exception:
+        pass
+
+
+def _apply_rules_and_order(
+    results: list[dict], store: MemoryStore, settings: Any, max_results: int
+) -> list[dict]:
+    """Apply neuro-symbolic rules and strategic ordering."""
+    try:
+        rules = store.get_all_active_rules()
+        if rules:
+            results = memory_rules.apply_rules(results, rules, score_field="score")
+    except Exception:
+        pass
+    results = results[:max_results]
+    if settings.STRATEGIC_ORDERING_ENABLED:
+        results = _apply_strategic_ordering(
+            results, settings.STRATEGIC_TOP_FRACTION, settings.STRATEGIC_BOTTOM_FRACTION
+        )
+    return results
+
+
+def _track_recall_replay(results: list[dict], store: Any) -> None:
+    """Increment access_count and replay_count for recalled memories.
+
+    Each recall event counts as a hippocampal replay (McClelland 1995).
+    This drives consolidation stage advancement through the cascade.
+    """
+    for mem in results:
+        mem_id = mem.get("memory_id") or mem.get("id")
+        if mem_id is None:
+            continue
+        try:
+            store.update_memory_access(mem_id)
+            store.increment_replay_count(mem_id)
+        except Exception:
+            pass
+
+
+async def _handler_impl(args: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Retrieve memories: pg_recall base + production enrichments."""
+    if not args or not args.get("query"):
+        return {"results": [], "total": 0}
+
+    query = args["query"]
+    domain, directory = args.get("domain"), args.get("directory")
+    agent_topic = args.get("agent_topic")
+    max_results = args.get("max_results", 10)
+    min_heat = args.get("min_heat", 0.05)
+    include_low_signal = bool(args.get("include_low_signal", False))
+    settings = get_memory_settings()
+    store, emb = _get_store(), get_embedding_engine()
+
+    # Base retrieval: pg_recall (intent → PG weights → recall_memories → rerank).
+    # Over-fetch when filtering is on so that after low-signal drops we
+    # still surface ``max_results`` curated items. Tool-output captures
+    # are common enough that a 3× headroom is a reasonable starting
+    # point — the alternative is iterative refill, which complicates
+    # the rerank ordering.
+    fetch_k = max_results * 3 if not include_low_signal else max_results
+    results = pg_recall(
+        query=query,
+        store=store,
+        embeddings=emb,
+        top_k=fetch_k,
+        domain=domain,
+        directory=directory,
+        agent_topic=agent_topic,
+        min_heat=min_heat,
+        wrrf_k=settings.WRRF_K,
+        momentum_state=_momentum_state,
+    )
+
+    # Low-signal filter (spike 2026-05-13). Tool-output captures,
+    # backfilled imports, and stage reports dominate unfiltered recall
+    # even for queries about design decisions, drowning out curated
+    # ADRs / lessons / conventions. Filter unless the caller opts in.
+    low_signal_dropped = 0
+    if not include_low_signal:
+        results, low_signal_dropped = filter_low_signal(results)
+    # Cap to the caller-requested max_results after filtering.
+    results = results[:max_results]
+
+    # Production enrichments on top of base retrieval
+    results = inject_triggered_memories(results, query, store)
+    _apply_co_activation(results, store, settings)
+    results = _apply_rules_and_order(results, store, settings, max_results)
+
+    # Track access + replay for consolidation cascade
+    # Biological basis: retrieval = hippocampal replay (McClelland 1995)
+    # Each recall increments replay_count, driving stage advancement
+    _track_recall_replay(results, store)
+
+    intent_info = classify_query_intent(query)
+    intent = intent_info.get("intent", QueryIntent.GENERAL)
+    return {
+        "results": results,
+        "total": len(results),
+        "low_signal_dropped": low_signal_dropped,
+        "query_intent": intent,
+        "dispatch_tier": "pg",
+        "signals": {},
+        "enhancements": build_enhancements(query, intent, "pg", settings),
+    }
+
+
+# Telemetry-instrumented public entry. Wrapper records latency, byte
+# volume, and result count per call (Popper C6 read/write ratio audit).
+handler = instrument("recall", _handler_impl, result_count_key="results")

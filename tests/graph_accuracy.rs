@@ -1859,6 +1859,211 @@ fn fixture_scanner_py() -> Fixture {
 }
 
 // ---------------------------------------------------------------------------
+// Category: handlers — MCP tool composition roots (DI, async dispatch).
+// All function-only (no stateful classes); heavy cross-layer imports.
+// ---------------------------------------------------------------------------
+
+fn fixture_explore_features_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "explore_features.py",
+        category: "handlers",
+        rel_path: "handlers/explore_features.py",
+        file_prefix: "handlers/explore_features.py",
+        imports: &[
+            ("__future__::annotations", 6),
+            ("mcp_server::core::attribution_tracer::trace_attribution", 8),
+            ("mcp_server::core::behavioral_crosscoder::compare_feature_profiles", 9),
+            ("mcp_server::core::behavioral_crosscoder::detect_persistent_features", 9),
+            ("mcp_server::core::persona_vector::PERSONA_DIMENSIONS", 13),
+            ("mcp_server::core::persona_vector::build_persona_vector", 13),
+            ("mcp_server::core::persona_vector::compose_personas", 13),
+            ("mcp_server::core::sparse_dictionary::build_seed_dictionary", 18),
+            ("mcp_server::handlers::_tool_meta::READ_ONLY", 19),
+            ("mcp_server::infrastructure::profile_store::load_profiles", 20),
+        ],
+        constants: &[],
+        functions: &[
+            ("handler", 106, 11),
+            ("_handle_features", 135, 12),
+            ("_handle_attribution", 159, 12),
+            ("_handle_persona", 185, 12),
+            ("_handle_crosscoder", 221, 14),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("handler", "_handle_attribution"),
+            ("handler", "_handle_crosscoder"),
+            ("handler", "_handle_features"),
+            ("handler", "_handle_persona"),
+        ],
+    })
+}
+
+fn fixture_recall_handler_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "recall.py",
+        category: "handlers",
+        rel_path: "handlers/recall.py",
+        file_prefix: "handlers/recall.py",
+        imports: &[
+            ("__future__::annotations", 10),
+            ("typing::Any", 12),
+            ("mcp_server::core::memory_rules", 14),
+            ("mcp_server::handlers::_telemetry_wrap::instrument", 15),
+            ("mcp_server::core::knowledge_graph::extract_entities", 16),
+            // Aliased: `from ... import recall as pg_recall`
+            ("pg_recall", 17),
+            ("mcp_server::core::query_intent::QueryIntent", 18),
+            ("mcp_server::core::query_intent::classify_query_intent", 18),
+            ("mcp_server::handlers::_tool_meta::READ_ONLY", 19),
+            ("mcp_server::handlers::recall_helpers::build_enhancements", 20),
+            ("mcp_server::handlers::recall_helpers::filter_low_signal", 20),
+            ("mcp_server::handlers::recall_helpers::inject_triggered_memories", 20),
+            ("mcp_server::infrastructure::embedding_engine::get_embedding_engine", 25),
+            ("mcp_server::infrastructure::memory_config::get_memory_settings", 26),
+            ("mcp_server::infrastructure::memory_store::MemoryStore", 27),
+        ],
+        constants: &[],
+        functions: &[
+            ("_get_store", 173, 2),
+            ("_apply_strategic_ordering", 181, 5),
+            ("_apply_co_activation", 197, 10),
+            ("_apply_rules_and_order", 227, 3),
+            ("_track_recall_replay", 245, 4),
+            ("_handler_impl", 262, 21),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_apply_rules_and_order", "_apply_strategic_ordering"),
+            ("_handler_impl", "_apply_co_activation"),
+            ("_handler_impl", "_apply_rules_and_order"),
+            ("_handler_impl", "_get_store"),
+            ("_handler_impl", "_track_recall_replay"),
+        ],
+    })
+}
+
+fn fixture_remember_handler_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "remember.py",
+        category: "handlers",
+        rel_path: "handlers/remember.py",
+        file_prefix: "handlers/remember.py",
+        imports: &[
+            ("__future__::annotations", 6),
+            ("typing::Any", 8),
+            // Bare module imports (from X import Y where Y is a module not a symbol)
+            ("mcp_server::core::thermodynamics", 10),
+            ("mcp_server::core::write_gate", 10),
+            ("mcp_server::handlers::_telemetry_wrap::instrument", 11),
+            ("mcp_server::core::domain_detector::detect_domain", 12),
+            ("mcp_server::core::global_detector::detect_global", 13),
+            ("mcp_server::handlers::_tool_meta::IDEMPOTENT_WRITE", 14),
+            ("mcp_server::handlers::remember_helpers::apply_modulations", 15),
+            ("mcp_server::handlers::remember_helpers::evaluate_gate", 15),
+            ("mcp_server::handlers::remember_helpers::insert_and_post_process", 15),
+            ("mcp_server::handlers::remember_helpers::try_curation", 15),
+            ("mcp_server::handlers::remember_helpers::update_user_mood_ema", 15),
+            ("mcp_server::handlers::remember_response::build_merge_response", 22),
+            ("mcp_server::infrastructure::wiki_store", 23),
+            ("mcp_server::infrastructure::config::WIKI_ROOT", 24),
+            ("mcp_server::infrastructure::embedding_engine::get_embedding_engine", 25),
+            ("mcp_server::infrastructure::memory_config::get_memory_settings", 26),
+            ("mcp_server::infrastructure::memory_store::MemoryStore", 27),
+            ("mcp_server::infrastructure::profile_store::load_profiles", 28),
+        ],
+        constants: &[],
+        functions: &[
+            ("_get_store", 187, 2),
+            ("_resolve_domain", 195, 6),
+            ("_enrich_mod_with_gate", 218, 1),
+            ("_parse_args", 231, 11),
+            ("_handler_impl", 260, 30),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_handler_impl", "_enrich_mod_with_gate"),
+            ("_handler_impl", "_get_store"),
+            ("_handler_impl", "_parse_args"),
+            ("_handler_impl", "_resolve_domain"),
+        ],
+    })
+}
+
+fn fixture_consolidate_handler_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "consolidate.py",
+        category: "handlers",
+        rel_path: "handlers/consolidate.py",
+        file_prefix: "handlers/consolidate.py",
+        imports: &[
+            ("__future__::annotations", 7),
+            ("logging", 9),
+            ("time", 10),
+            ("typing::Any", 11),
+            ("mcp_server::core::emergence_metrics", 13),
+            ("mcp_server::handlers::consolidation::cascade::run_cascade_advancement", 14),
+            ("mcp_server::handlers::consolidation::cls::run_cls_cycle", 15),
+            ("mcp_server::handlers::consolidation::compression::run_compression_cycle", 16),
+            ("mcp_server::handlers::consolidation::decay::run_decay_cycle", 17),
+            ("mcp_server::handlers::consolidation::homeostatic::run_homeostatic_cycle", 18),
+            ("mcp_server::handlers::consolidation::memify::run_memify_cycle", 19),
+            ("mcp_server::handlers::consolidation::plasticity::run_plasticity_cycle", 20),
+            ("mcp_server::handlers::consolidation::pruning::run_pruning_cycle", 21),
+            ("mcp_server::handlers::consolidation::sleep::run_deep_sleep", 22),
+            ("mcp_server::handlers::consolidation::transfer::run_two_stage_transfer", 23),
+            ("mcp_server::handlers::consolidation::wiki_maintenance::run_wiki_maintenance", 24),
+            ("mcp_server::infrastructure::embedding_engine::EmbeddingEngine", 25),
+            ("mcp_server::infrastructure::embedding_engine::get_embedding_engine", 25),
+            ("mcp_server::infrastructure::memory_config::get_memory_settings", 29),
+            ("mcp_server::infrastructure::memory_store::MemoryStore", 30),
+            ("mcp_server::handlers::_tool_meta::IDEMPOTENT_WRITE", 31),
+        ],
+        constants: &[],
+        functions: &[
+            ("_get_store", 160, 2),
+            ("_timed", 168, 8),
+            ("handler", 186, 24),
+            ("_run_cycles", 255, 12),
+            ("_run_always_cycles", 291, 6),
+            ("_log_consolidation", 317, 7),
+        ],
+        classes: &[],
+        resolved_calls: &[
+            ("_run_always_cycles", "_timed"),
+            ("_run_cycles", "_timed"),
+            ("handler", "_get_store"),
+            ("handler", "_log_consolidation"),
+            ("handler", "_run_always_cycles"),
+            ("handler", "_run_cycles"),
+            ("handler", "_timed"),
+        ],
+    })
+}
+
+fn fixture_get_methodology_graph_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "get_methodology_graph.py",
+        category: "handlers",
+        rel_path: "handlers/get_methodology_graph.py",
+        file_prefix: "handlers/get_methodology_graph.py",
+        imports: &[
+            ("__future__::annotations", 3),
+            ("mcp_server::core::graph_builder::build_graph", 5),
+            ("mcp_server::infrastructure::profile_store::load_profiles", 6),
+            ("mcp_server::handlers::_tool_meta::READ_ONLY", 7),
+        ],
+        constants: &[
+            ("_MAX_NODES", 41),
+            ("_MAX_EDGES", 42),
+        ],
+        functions: &[("handler", 45, 13)],
+        classes: &[],
+        resolved_calls: &[],
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Per-fixture runner
 // ---------------------------------------------------------------------------
 //
@@ -2146,6 +2351,51 @@ fn infrastructure_pg_store_py() {
     run_fixture(
         "pg_store_py",
         fixture_pg_store_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn handlers_explore_features_py() {
+    run_fixture(
+        "explore_features_py",
+        fixture_explore_features_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn handlers_recall_py() {
+    run_fixture(
+        "recall_handler_py",
+        fixture_recall_handler_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn handlers_remember_py() {
+    run_fixture(
+        "remember_handler_py",
+        fixture_remember_handler_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn handlers_consolidate_py() {
+    run_fixture(
+        "consolidate_handler_py",
+        fixture_consolidate_handler_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn handlers_get_methodology_graph_py() {
+    run_fixture(
+        "get_methodology_graph_py",
+        fixture_get_methodology_graph_py(),
         Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
