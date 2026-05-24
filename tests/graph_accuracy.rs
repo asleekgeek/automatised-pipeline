@@ -1057,6 +1057,7 @@ fn fixture_persona_vector_py() -> Fixture {
 
 struct CoreFixtureInputs {
     name: &'static str,
+    category: &'static str,
     rel_path: &'static str,
     file_prefix: &'static str, // file ID prefix, e.g. "core/profile_builder.py"
     imports: &'static [(&'static str, u64)],       // (qual_suffix, line)
@@ -1112,7 +1113,7 @@ fn build_core_fixture(inp: &CoreFixtureInputs) -> Fixture {
 
     Fixture {
         name: inp.name,
-        category: "pure-core",
+        category: inp.category,
         rel_path: inp.rel_path,
         nodes,
         edges,
@@ -1127,6 +1128,7 @@ fn build_core_fixture(inp: &CoreFixtureInputs) -> Fixture {
 fn fixture_profile_builder_py() -> Fixture {
     build_core_fixture(&CoreFixtureInputs {
         name: "profile_builder.py",
+        category: "pure-core",
         rel_path: "core/profile_builder.py",
         file_prefix: "core/profile_builder.py",
         imports: &[
@@ -1168,6 +1170,7 @@ fn fixture_profile_builder_py() -> Fixture {
 fn fixture_style_classifier_py() -> Fixture {
     build_core_fixture(&CoreFixtureInputs {
         name: "style_classifier.py",
+        category: "pure-core",
         rel_path: "core/style_classifier.py",
         file_prefix: "core/style_classifier.py",
         imports: &[
@@ -1231,6 +1234,7 @@ fn fixture_style_classifier_py() -> Fixture {
 fn fixture_sparse_dictionary_py() -> Fixture {
     build_core_fixture(&CoreFixtureInputs {
         name: "sparse_dictionary.py",
+        category: "pure-core",
         rel_path: "core/sparse_dictionary.py",
         file_prefix: "core/sparse_dictionary.py",
         imports: &[
@@ -1275,6 +1279,7 @@ fn fixture_sparse_dictionary_py() -> Fixture {
 fn fixture_cognitive_map_py() -> Fixture {
     build_core_fixture(&CoreFixtureInputs {
         name: "cognitive_map.py",
+        category: "pure-core",
         rel_path: "core/cognitive_map.py",
         file_prefix: "core/cognitive_map.py",
         imports: &[
@@ -1305,6 +1310,192 @@ fn fixture_cognitive_map_py() -> Fixture {
             ("build_temporal_co_access", "_parse_iso_timestamp"),
             ("navigate_from", "_enqueue_neighbors"),
             ("project_to_2d", "_spring_relax"),
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Category: core-with-deps — core modules importing other core/ modules.
+// Stress-tests deep dependency chains and many cross-module imports.
+// ---------------------------------------------------------------------------
+
+fn fixture_hierarchical_predictive_coding_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "hierarchical_predictive_coding.py",
+        category: "core-with-deps",
+        rel_path: "core/hierarchical_predictive_coding.py",
+        file_prefix: "core/hierarchical_predictive_coding.py",
+        imports: &[
+            ("__future__::annotations", 19),
+            ("math", 21),
+            ("mcp_server::core::predictive_coding_flat::compute_embedding_novelty", 23),
+            ("mcp_server::core::predictive_coding_flat::compute_entity_novelty", 23),
+            ("mcp_server::core::predictive_coding_flat::compute_structural_novelty", 23),
+            ("mcp_server::core::predictive_coding_flat::compute_temporal_novelty", 23),
+            ("mcp_server::core::predictive_coding_gate::PrecisionState", 29),
+            ("mcp_server::core::predictive_coding_gate::neuromodulate_precisions", 29),
+            ("mcp_server::core::predictive_coding_signals::HierarchicalPrediction", 33),
+            ("mcp_server::core::predictive_coding_signals::PredictionLevel", 33),
+            ("mcp_server::core::predictive_coding_signals::compute_entity_errors", 33),
+            ("mcp_server::core::predictive_coding_signals::compute_schema_errors", 33),
+            ("mcp_server::core::predictive_coding_signals::compute_sensory_errors", 33),
+            ("mcp_server::core::predictive_coding_signals::compute_sensory_prediction", 33),
+        ],
+        constants: &[("_LEVEL_WEIGHTS", 61)],
+        functions: &[
+            ("_compute_ach_weights", 67, 0),
+            ("_apply_precision_modulation", 87, 2),
+            ("_compute_prediction_levels", 106, 4),
+            ("_aggregate_novelty", 134, 4),
+            ("compute_hierarchical_novelty", 149, 6),
+        ],
+        resolved_calls: &[
+            ("_aggregate_novelty", "_compute_ach_weights"),
+            ("compute_hierarchical_novelty", "_aggregate_novelty"),
+            ("compute_hierarchical_novelty", "_apply_precision_modulation"),
+            ("compute_hierarchical_novelty", "_compute_prediction_levels"),
+        ],
+    })
+}
+
+fn fixture_dual_store_cls_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "dual_store_cls.py",
+        category: "core-with-deps",
+        rel_path: "core/dual_store_cls.py",
+        file_prefix: "core/dual_store_cls.py",
+        imports: &[
+            ("__future__::annotations", 20),
+            ("re", 22),
+        ],
+        constants: &[
+            ("_SEMANTIC_TAGS", 26),
+            ("_DECISION_RE", 41),
+            ("_INSTRUCTION_RE", 45),
+            ("_ARCHITECTURE_RE", 51),
+            ("_SPECIFIC_RE", 55),
+        ],
+        functions: &[
+            ("classify_memory", 62, 9),
+            ("auto_weight", 96, 6),
+        ],
+        resolved_calls: &[],
+    })
+}
+
+fn fixture_causal_graph_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "causal_graph.py",
+        category: "core-with-deps",
+        rel_path: "core/causal_graph.py",
+        file_prefix: "core/causal_graph.py",
+        imports: &[
+            ("__future__::annotations", 6),
+            ("math", 8),
+            ("typing::Any", 9),
+        ],
+        constants: &[],
+        functions: &[
+            ("compute_co_occurrence_matrix", 12, 9),
+            ("compute_conditional_independence", 34, 3),
+            ("compute_temporal_precedence", 69, 2),
+            ("_build_skeleton", 94, 4),
+            ("_find_conditionally_independent_edges", 118, 13),
+            ("_orient_edges", 158, 6),
+            ("_prune_skeleton", 191, 1),
+            ("discover_causal_edges", 200, 4),
+            ("_build_directed_adjacency", 243, 3),
+            ("find_causal_chain", 252, 9),
+            ("find_common_causes", 291, 9),
+        ],
+        resolved_calls: &[
+            ("_build_skeleton", "compute_conditional_independence"),
+            ("_find_conditionally_independent_edges", "compute_conditional_independence"),
+            ("_orient_edges", "compute_temporal_precedence"),
+            ("discover_causal_edges", "_build_skeleton"),
+            ("discover_causal_edges", "_find_conditionally_independent_edges"),
+            ("discover_causal_edges", "_orient_edges"),
+            ("discover_causal_edges", "_prune_skeleton"),
+            ("find_causal_chain", "_build_directed_adjacency"),
+        ],
+    })
+}
+
+fn fixture_consolidation_engine_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "consolidation_engine.py",
+        category: "core-with-deps",
+        rel_path: "core/consolidation_engine.py",
+        file_prefix: "core/consolidation_engine.py",
+        imports: &[
+            ("__future__::annotations", 13),
+            ("typing::Any", 15),
+            ("mcp_server::core::dual_store_cls::classify_memory", 17),
+            ("mcp_server::core::dual_store_cls_abstraction::abstract_to_schema", 18),
+            ("mcp_server::core::dual_store_cls_abstraction::check_consistency", 18),
+            ("mcp_server::core::dual_store_cls_abstraction::cluster_by_similarity", 18),
+            ("mcp_server::core::dual_store_cls_abstraction::filter_recurring_patterns", 18),
+        ],
+        constants: &[],
+        functions: &[
+            ("_is_duplicate_schema", 28, 4),
+            ("_collect_common_tags", 46, 8),
+            ("plan_cls_consolidation", 58, 3),
+            ("_try_abstract_pattern", 87, 3),
+            ("_process_patterns", 111, 4),
+            ("find_near_duplicates", 145, 13),
+            ("summarize_action_group", 184, 14),
+            ("should_reclassify", 222, 6),
+        ],
+        resolved_calls: &[
+            ("_process_patterns", "_try_abstract_pattern"),
+            ("_try_abstract_pattern", "_collect_common_tags"),
+            ("_try_abstract_pattern", "_is_duplicate_schema"),
+            ("plan_cls_consolidation", "_process_patterns"),
+        ],
+    })
+}
+
+fn fixture_replay_py() -> Fixture {
+    build_core_fixture(&CoreFixtureInputs {
+        name: "replay.py",
+        category: "core-with-deps",
+        rel_path: "core/replay.py",
+        file_prefix: "core/replay.py",
+        imports: &[
+            ("__future__::annotations", 48),
+            ("mcp_server::core::replay_execution::build_causal_sequence", 50),
+            ("mcp_server::core::replay_execution::build_temporal_sequence", 50),
+            ("mcp_server::core::replay_execution::compute_replay_stdp_pairs", 50),
+            ("mcp_server::core::replay_formatting::format_restoration", 55),
+            ("mcp_server::core::replay_formatting::should_micro_checkpoint", 55),
+            ("mcp_server::core::replay_selection::compute_sequence_priority", 59),
+            ("mcp_server::core::replay_selection::compute_sequence_rpe", 59),
+            ("mcp_server::core::replay_selection::select_replay_sequences", 59),
+            ("mcp_server::core::replay_types::ReplayDirection", 64),
+            ("mcp_server::core::replay_types::ReplayEvent", 64),
+            ("mcp_server::core::replay_types::ReplayResult", 64),
+            ("mcp_server::core::replay_types::ReplaySequence", 64),
+        ],
+        constants: &[
+            ("_MIN_SEQUENCE_LENGTH", 73),
+            ("_MAX_SEQUENCES_PER_SWR", 74),
+        ],
+        functions: &[
+            ("_select_seeds", 80, 2),
+            ("run_swr_replay", 86, 7),
+            ("_build_candidate_sequences", 116, 2),
+            ("_build_single_sequence", 140, 5),
+            ("_build_temporal_candidates", 164, 5),
+            ("_aggregate_results", 190, 7),
+            ("describe_replay_result", 227, 2),
+        ],
+        resolved_calls: &[
+            ("_build_candidate_sequences", "_build_single_sequence"),
+            ("run_swr_replay", "_aggregate_results"),
+            ("run_swr_replay", "_build_candidate_sequences"),
+            ("run_swr_replay", "_build_temporal_candidates"),
+            ("run_swr_replay", "_select_seeds"),
         ],
     })
 }
@@ -1507,6 +1698,51 @@ fn pure_core_cognitive_map_py() {
     run_fixture(
         "cognitive_map_py",
         fixture_cognitive_map_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn core_with_deps_hierarchical_predictive_coding_py() {
+    run_fixture(
+        "hpc_py",
+        fixture_hierarchical_predictive_coding_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn core_with_deps_dual_store_cls_py() {
+    run_fixture(
+        "dual_store_cls_py",
+        fixture_dual_store_cls_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn core_with_deps_causal_graph_py() {
+    run_fixture(
+        "causal_graph_py",
+        fixture_causal_graph_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn core_with_deps_consolidation_engine_py() {
+    run_fixture(
+        "consolidation_engine_py",
+        fixture_consolidation_engine_py(),
+        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+    );
+}
+
+#[test]
+fn core_with_deps_replay_py() {
+    run_fixture(
+        "replay_py",
+        fixture_replay_py(),
         Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
     );
 }
