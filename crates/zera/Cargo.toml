@@ -1,0 +1,28 @@
+# ZERA — Zero-latency Encoded Recursive Atlas.
+# Wire protocol for graph payloads. This crate is the reference encoder/decoder.
+#
+# S1 (this slice): HELLO frame only. Compute a deterministic content hash
+# over a graph's nodes + edges and report the size we'd ship for a full
+# JSON transfer. Establishes the cache-handshake primitive that every
+# later layer (codebook, grammar, sparse, eigen, seed, delta) depends on.
+#
+# Spec: docs/protocols/ZERA-spec.md §4.2 Layer 0.
+[package]
+name = "zera"
+version = "0.0.1"
+edition = "2021"
+description = "Zero-latency Encoded Recursive Atlas — wire protocol for >1 GB graph payloads"
+
+[dependencies]
+# Source: BLAKE3 selected because of (a) parallelizable hashing for large
+# inputs, (b) ~6 GB/s on M-series silicon (measured by the BLAKE3 authors),
+# and (c) the 32-byte digest is the cache-key primitive throughout ZERA.
+# Crate vetted via cargo-vet + dependabot in the parent workspace.
+blake3 = "1.5"
+# Source: serde + serde_json used by the parent workspace already; no
+# new transitive deps.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+path = "src/lib.rs"

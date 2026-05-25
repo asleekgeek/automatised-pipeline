@@ -2,7 +2,10 @@
 # source: benches/harness is the end-result evaluation harness (stage-3b-v2 §2).
 # Lives as a workspace member so its deps (clap, tempfile) stay out of the
 # main crate.
-members = [".", "benches/harness"]
+# crates/zera: ZERA protocol reference implementation. Workspace member so
+# its deps (blake3) stay isolated from the main crate; spec at
+# docs/protocols/ZERA-spec.md.
+members = [".", "benches/harness", "crates/zera"]
 
 [package]
 name = "ai-architect-mcp"
@@ -49,6 +52,9 @@ tantivy = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+# Source: ZERA S1 — the zera-hello integration test needs the crate to
+# call hello() against a real indexed graph from this workspace.
+zera = { path = "crates/zera" }
 
 [profile.release]
 opt-level = 3
