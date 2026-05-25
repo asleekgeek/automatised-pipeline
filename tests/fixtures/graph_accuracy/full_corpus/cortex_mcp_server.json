@@ -1,0 +1,3785 @@
+{
+  "target_root": "/Users/cdeust/Developments/Cortex/mcp_server",
+  "files": [
+    {
+      "rel_path": "__main__.py",
+      "imports": 14,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 7,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/ablation.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 13,
+      "classes": 3,
+      "methods": 4,
+      "callsites": 33,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/ablation_report.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 15,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/abstention_gate.py",
+      "imports": 4,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 17,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/ast_extractors.py",
+      "imports": 4,
+      "constants": 3,
+      "functions": 16,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 104,
+      "intra_pairs": 26
+    },
+    {
+      "rel_path": "core/ast_extractors_extra.py",
+      "imports": 7,
+      "constants": 1,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 76,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/ast_parser.py",
+      "imports": 7,
+      "constants": 2,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 36,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/attribution_tracer.py",
+      "imports": 7,
+      "constants": 2,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 61,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "core/auto_curator.py",
+      "imports": 6,
+      "constants": 15,
+      "functions": 20,
+      "classes": 4,
+      "methods": 0,
+      "callsites": 142,
+      "intra_pairs": 16
+    },
+    {
+      "rel_path": "core/auto_task_record.py",
+      "imports": 6,
+      "constants": 5,
+      "functions": 10,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 69,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/behavioral_crosscoder.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 37,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/blindspot_detector.py",
+      "imports": 8,
+      "constants": 4,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 56,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/blindspot_patterns.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 4,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/bridge_finder.py",
+      "imports": 3,
+      "constants": 1,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 69,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "core/cascade_advancement.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 15,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/cascade_stages.py",
+      "imports": 3,
+      "constants": 1,
+      "functions": 6,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 10,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/causal_graph.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 63,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/change_impact_matcher.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 3,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 26,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/claim_extractor.py",
+      "imports": 6,
+      "constants": 13,
+      "functions": 6,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 62,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/claim_resolver.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 6,
+      "classes": 4,
+      "methods": 0,
+      "callsites": 70,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/codebase_extractors.py",
+      "imports": 5,
+      "constants": 30,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 132,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/codebase_graph.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 12,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 79,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "core/codebase_parser.py",
+      "imports": 4,
+      "constants": 1,
+      "functions": 3,
+      "classes": 3,
+      "methods": 0,
+      "callsites": 24,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/codebase_type_resolver.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 11,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/cognitive_map.py",
+      "imports": 4,
+      "constants": 3,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 51,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/compression.py",
+      "imports": 4,
+      "constants": 6,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 71,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "core/concept_emerger.py",
+      "imports": 6,
+      "constants": 14,
+      "functions": 10,
+      "classes": 3,
+      "methods": 0,
+      "callsites": 101,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/concept_vocabulary.py",
+      "imports": 1,
+      "constants": 2,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 5,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/consolidation_engine.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 55,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/context_assembly/active_retrieval.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 0,
+      "classes": 3,
+      "methods": 4,
+      "callsites": 20,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_assembly/budget.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 3,
+      "classes": 2,
+      "methods": 2,
+      "callsites": 9,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_assembly/condensers.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 80,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/context_assembly/coverage.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 23,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_assembly/decomposer.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 34,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_assembly/ppr_traversal.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 41,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_assembly/stage_assembler.py",
+      "imports": 11,
+      "constants": 1,
+      "functions": 0,
+      "classes": 4,
+      "methods": 3,
+      "callsites": 52,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_assembly/stage_detector.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 0,
+      "classes": 4,
+      "methods": 12,
+      "callsites": 44,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_assembly/warning.py",
+      "imports": 2,
+      "constants": 1,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 6,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/context_generator.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 44,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/coupled_neuromodulation.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 12,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 29,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/curation.py",
+      "imports": 3,
+      "constants": 5,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 49,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/decay_cycle.py",
+      "imports": 7,
+      "constants": 3,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 59,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "core/dendritic_clusters.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 11,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/dendritic_computation.py",
+      "imports": 4,
+      "constants": 10,
+      "functions": 9,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 42,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/domain_detector.py",
+      "imports": 6,
+      "constants": 5,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 36,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/draft_compiler.py",
+      "imports": 5,
+      "constants": 1,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 63,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "core/draft_curator.py",
+      "imports": 5,
+      "constants": 6,
+      "functions": 6,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 42,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/draft_synthesizer.py",
+      "imports": 8,
+      "constants": 2,
+      "functions": 7,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 78,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "core/dual_store_cls.py",
+      "imports": 2,
+      "constants": 5,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 15,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/dual_store_cls_abstraction.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 55,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/emergence_metrics.py",
+      "imports": 4,
+      "constants": 2,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 65,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/emergence_tracker.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 6,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 49,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/emotional_tagging.py",
+      "imports": 5,
+      "constants": 5,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 63,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/engram.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 24,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/enrichment.py",
+      "imports": 5,
+      "constants": 6,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 38,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/entity_reconciliation.py",
+      "imports": 1,
+      "constants": 6,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 10,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/fractal.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 40,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/fractal_clustering.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 6,
+      "classes": 1,
+      "methods": 3,
+      "callsites": 54,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/global_detector.py",
+      "imports": 2,
+      "constants": 7,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 22,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/graph_builder.py",
+      "imports": 2,
+      "constants": 2,
+      "functions": 10,
+      "classes": 1,
+      "methods": 2,
+      "callsites": 91,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "core/graph_builder_dedup.py",
+      "imports": 2,
+      "constants": 1,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 53,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/graph_builder_discussions.py",
+      "imports": 5,
+      "constants": 1,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 33,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/graph_builder_edges.py",
+      "imports": 2,
+      "constants": 3,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 47,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/graph_builder_nodes.py",
+      "imports": 3,
+      "constants": 15,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 85,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/graph_quality_scorer.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 15,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 95,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/hdc_encoder.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 51,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/hierarchical_predictive_coding.py",
+      "imports": 14,
+      "constants": 1,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 16,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/homeostatic_health.py",
+      "imports": 2,
+      "constants": 1,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 27,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/homeostatic_plasticity.py",
+      "imports": 1,
+      "constants": 8,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 21,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/hopfield.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 62,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/interference.py",
+      "imports": 7,
+      "constants": 5,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 60,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "core/interference_detection.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 42,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/knowledge_graph.py",
+      "imports": 3,
+      "constants": 11,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 71,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/layout_engine.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 30,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/memory_decomposer.py",
+      "imports": 2,
+      "constants": 10,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 67,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/memory_ingest.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 34,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/memory_rules.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 73,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/metacognition.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 35,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/metacognition_analysis.py",
+      "imports": 4,
+      "constants": 4,
+      "functions": 15,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 74,
+      "intra_pairs": 15
+    },
+    {
+      "rel_path": "core/microglial_pruning.py",
+      "imports": 3,
+      "constants": 5,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 45,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/mmr_diversity.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 29,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/narrative.py",
+      "imports": 3,
+      "constants": 6,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 83,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/neurogenesis.py",
+      "imports": 5,
+      "constants": 2,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 21,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/neuromodulation_channels.py",
+      "imports": 1,
+      "constants": 10,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/oscillatory_clock.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 27,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/oscillatory_phases.py",
+      "imports": 4,
+      "constants": 9,
+      "functions": 11,
+      "classes": 3,
+      "methods": 0,
+      "callsites": 18,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/pattern_extractor.py",
+      "imports": 8,
+      "constants": 1,
+      "functions": 12,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 79,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/persona_vector.py",
+      "imports": 6,
+      "constants": 1,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 66,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/pg_recall.py",
+      "imports": 6,
+      "constants": 2,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 111,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/platt_calibration.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 6,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 19,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/predictive_coding_flat.py",
+      "imports": 3,
+      "constants": 5,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 33,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/predictive_coding_gate.py",
+      "imports": 6,
+      "constants": 1,
+      "functions": 10,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 33,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/predictive_coding_signals.py",
+      "imports": 8,
+      "constants": 1,
+      "functions": 6,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 44,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/profile_assembler.py",
+      "imports": 14,
+      "constants": 0,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 81,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "core/profile_builder.py",
+      "imports": 5,
+      "constants": 3,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 42,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/prospective.py",
+      "imports": 4,
+      "constants": 5,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 30,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/query_decomposition.py",
+      "imports": 5,
+      "constants": 4,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 28,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/query_intent.py",
+      "imports": 3,
+      "constants": 17,
+      "functions": 4,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/recall_pipeline.py",
+      "imports": 5,
+      "constants": 8,
+      "functions": 12,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 140,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/reconsolidation.py",
+      "imports": 6,
+      "constants": 5,
+      "functions": 8,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 51,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/replay.py",
+      "imports": 13,
+      "constants": 2,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 30,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/replay_execution.py",
+      "imports": 4,
+      "constants": 4,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 44,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/replay_formatting.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 50,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "core/replay_selection.py",
+      "imports": 5,
+      "constants": 2,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 18,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/replay_types.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 0,
+      "classes": 4,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/reranker.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 29,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/reranker_calibration.py",
+      "imports": 5,
+      "constants": 5,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 12,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/retrieval_dispatch.py",
+      "imports": 6,
+      "constants": 4,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 28,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "core/retrieval_signals.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 17,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/schema_engine.py",
+      "imports": 4,
+      "constants": 4,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 32,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/schema_extraction.py",
+      "imports": 4,
+      "constants": 6,
+      "functions": 11,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 64,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/scoring.py",
+      "imports": 4,
+      "constants": 1,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 46,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/sensory_buffer.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 2,
+      "classes": 2,
+      "methods": 13,
+      "callsites": 37,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/separation_core.py",
+      "imports": 6,
+      "constants": 4,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 32,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/session_critique.py",
+      "imports": 5,
+      "constants": 1,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 50,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/session_critique_format.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 38,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/session_extractor.py",
+      "imports": 3,
+      "constants": 7,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 64,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/session_shape.py",
+      "imports": 2,
+      "constants": 2,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 35,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/sleep_compute.py",
+      "imports": 6,
+      "constants": 1,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 55,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/sparse_dictionary.py",
+      "imports": 11,
+      "constants": 2,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 38,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/sparse_dictionary_activation.py",
+      "imports": 6,
+      "constants": 8,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 42,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "core/sparse_dictionary_learning.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 62,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/spreading_activation.py",
+      "imports": 1,
+      "constants": 4,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 44,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/staleness.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 5,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 32,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/style_classifier.py",
+      "imports": 3,
+      "constants": 5,
+      "functions": 12,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 87,
+      "intra_pairs": 20
+    },
+    {
+      "rel_path": "core/style_classifier_ema.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 19,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/synaptic_plasticity.py",
+      "imports": 12,
+      "constants": 6,
+      "functions": 7,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 15,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/synaptic_plasticity_hebbian.py",
+      "imports": 5,
+      "constants": 7,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/synaptic_plasticity_stochastic.py",
+      "imports": 14,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 29,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/synaptic_tagging.py",
+      "imports": 2,
+      "constants": 8,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 35,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/telemetry.py",
+      "imports": 7,
+      "constants": 3,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/temporal.py",
+      "imports": 5,
+      "constants": 6,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 68,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/thermodynamics.py",
+      "imports": 8,
+      "constants": 9,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 45,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/tile_renderer.py",
+      "imports": 2,
+      "constants": 5,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 22,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/titans_memory.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 1,
+      "classes": 1,
+      "methods": 4,
+      "callsites": 50,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/tripartite_calcium.py",
+      "imports": 2,
+      "constants": 22,
+      "functions": 18,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 38,
+      "intra_pairs": 13
+    },
+    {
+      "rel_path": "core/tripartite_synapse.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 3,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 16,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/two_stage_model.py",
+      "imports": 5,
+      "constants": 3,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 32,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/two_stage_transfer.py",
+      "imports": 2,
+      "constants": 4,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 24,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/unified_search_fusion.py",
+      "imports": 2,
+      "constants": 1,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 13,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/wiki_axis_registry.py",
+      "imports": 8,
+      "constants": 13,
+      "functions": 12,
+      "classes": 2,
+      "methods": 5,
+      "callsites": 98,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/wiki_classifier.py",
+      "imports": 2,
+      "constants": 26,
+      "functions": 15,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 96,
+      "intra_pairs": 12
+    },
+    {
+      "rel_path": "core/wiki_coverage.py",
+      "imports": 6,
+      "constants": 8,
+      "functions": 12,
+      "classes": 4,
+      "methods": 5,
+      "callsites": 75,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/wiki_coverage_dashboard.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 5,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 103,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/wiki_curation_gaps.py",
+      "imports": 4,
+      "constants": 2,
+      "functions": 5,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 39,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/wiki_drift.py",
+      "imports": 7,
+      "constants": 7,
+      "functions": 8,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 51,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "core/wiki_file_doc_skeleton.py",
+      "imports": 5,
+      "constants": 5,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 48,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/wiki_groomer.py",
+      "imports": 10,
+      "constants": 1,
+      "functions": 4,
+      "classes": 2,
+      "methods": 1,
+      "callsites": 36,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/wiki_identity.py",
+      "imports": 4,
+      "constants": 1,
+      "functions": 6,
+      "classes": 1,
+      "methods": 1,
+      "callsites": 17,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/wiki_layout.py",
+      "imports": 3,
+      "constants": 6,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 17,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/wiki_links.py",
+      "imports": 2,
+      "constants": 2,
+      "functions": 6,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 29,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/wiki_pages.py",
+      "imports": 5,
+      "constants": 1,
+      "functions": 16,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 111,
+      "intra_pairs": 25
+    },
+    {
+      "rel_path": "core/wiki_readme.py",
+      "imports": 6,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 58,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/wiki_redirect.py",
+      "imports": 6,
+      "constants": 2,
+      "functions": 5,
+      "classes": 2,
+      "methods": 2,
+      "callsites": 63,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/wiki_rule_engine.py",
+      "imports": 5,
+      "constants": 1,
+      "functions": 2,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/wiki_schema_loader.py",
+      "imports": 8,
+      "constants": 2,
+      "functions": 7,
+      "classes": 5,
+      "methods": 1,
+      "callsites": 86,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/wiki_staleness.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 3,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 33,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/wiki_stub_detector.py",
+      "imports": 3,
+      "constants": 7,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 23,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "core/wiki_symbol_extract.py",
+      "imports": 2,
+      "constants": 4,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 36,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "core/wiki_symbol_verify.py",
+      "imports": 2,
+      "constants": 2,
+      "functions": 1,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 10,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/wiki_sync.py",
+      "imports": 9,
+      "constants": 3,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 47,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/wiki_templates.py",
+      "imports": 2,
+      "constants": 17,
+      "functions": 4,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 3,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/wiki_thermodynamics.py",
+      "imports": 6,
+      "constants": 7,
+      "functions": 5,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/wiki_view_executor.py",
+      "imports": 4,
+      "constants": 7,
+      "functions": 7,
+      "classes": 1,
+      "methods": 1,
+      "callsites": 72,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "core/workflow_graph_builder.py",
+      "imports": 33,
+      "constants": 3,
+      "functions": 2,
+      "classes": 1,
+      "methods": 17,
+      "callsites": 163,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/workflow_graph_builder_relational.py",
+      "imports": 17,
+      "constants": 0,
+      "functions": 13,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 164,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/workflow_graph_entity.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "core/workflow_graph_inputs.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/workflow_graph_palette.py",
+      "imports": 3,
+      "constants": 13,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 5,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/workflow_graph_schema.py",
+      "imports": 11,
+      "constants": 3,
+      "functions": 11,
+      "classes": 4,
+      "methods": 11,
+      "callsites": 53,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "core/workflow_graph_schema_enums.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 0,
+      "classes": 4,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "core/write_gate.py",
+      "imports": 20,
+      "constants": 1,
+      "functions": 13,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 65,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "core/write_gate_calibration.py",
+      "imports": 2,
+      "constants": 8,
+      "functions": 7,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 14,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "core/write_post_store.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 62,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "doctor.py",
+      "imports": 6,
+      "constants": 1,
+      "functions": 10,
+      "classes": 1,
+      "methods": 1,
+      "callsites": 74,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "doctor_mcp.py",
+      "imports": 10,
+      "constants": 6,
+      "functions": 18,
+      "classes": 2,
+      "methods": 3,
+      "callsites": 181,
+      "intra_pairs": 18
+    },
+    {
+      "rel_path": "errors/__init__.py",
+      "imports": 1,
+      "constants": 0,
+      "functions": 0,
+      "classes": 5,
+      "methods": 5,
+      "callsites": 10,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/_telemetry_wrap.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 13,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/_tool_meta.py",
+      "imports": 2,
+      "constants": 5,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/add_rule.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 23,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/admission.py",
+      "imports": 6,
+      "constants": 2,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 7,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/anchor.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 22,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/assess_coverage.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 61,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "handlers/auto_task_record_writer.py",
+      "imports": 11,
+      "constants": 1,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 50,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/backfill_helpers.py",
+      "imports": 8,
+      "constants": 4,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 42,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/backfill_memories.py",
+      "imports": 16,
+      "constants": 0,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 64,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "handlers/change_impact.py",
+      "imports": 8,
+      "constants": 3,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 54,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/checkpoint.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 34,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/codebase_analyze.py",
+      "imports": 19,
+      "constants": 5,
+      "functions": 13,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 86,
+      "intra_pairs": 12
+    },
+    {
+      "rel_path": "handlers/codebase_analyze_helpers.py",
+      "imports": 8,
+      "constants": 4,
+      "functions": 16,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 61,
+      "intra_pairs": 17
+    },
+    {
+      "rel_path": "handlers/consolidate.py",
+      "imports": 21,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 59,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "handlers/consolidation/cascade.py",
+      "imports": 6,
+      "constants": 4,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 47,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/consolidation/cls.py",
+      "imports": 8,
+      "constants": 7,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 44,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "handlers/consolidation/compression.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 27,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/consolidation/decay.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/consolidation/headless_authoring.py",
+      "imports": 9,
+      "constants": 6,
+      "functions": 20,
+      "classes": 2,
+      "methods": 0,
+      "callsites": 219,
+      "intra_pairs": 24
+    },
+    {
+      "rel_path": "handlers/consolidation/homeostatic.py",
+      "imports": 6,
+      "constants": 5,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 75,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "handlers/consolidation/memify.py",
+      "imports": 6,
+      "constants": 4,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 32,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/consolidation/plasticity.py",
+      "imports": 4,
+      "constants": 1,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 37,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/consolidation/pruning.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/consolidation/sleep.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 23,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/consolidation/transfer.py",
+      "imports": 4,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 16,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/consolidation/wiki_maintenance.py",
+      "imports": 3,
+      "constants": 4,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 44,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/create_trigger.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 12,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/curate_wiki.py",
+      "imports": 19,
+      "constants": 0,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 77,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "handlers/detect_domain.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 5,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/detect_gaps.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 60,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/drill_down.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 36,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "handlers/explore_features.py",
+      "imports": 10,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 61,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/forget.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 12,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/get_causal_chain.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 48,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "handlers/get_methodology_graph.py",
+      "imports": 4,
+      "constants": 2,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 13,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/get_project_story.py",
+      "imports": 9,
+      "constants": 1,
+      "functions": 13,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 65,
+      "intra_pairs": 12
+    },
+    {
+      "rel_path": "handlers/get_rules.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/get_telemetry.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 1,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/import_sessions.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 50,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "handlers/ingest_codebase.py",
+      "imports": 15,
+      "constants": 3,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 63,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "handlers/ingest_codebase_cypher.py",
+      "imports": 6,
+      "constants": 3,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 70,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/ingest_codebase_graph.py",
+      "imports": 10,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 35,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/ingest_codebase_pages.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 30,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/ingest_codebase_schema.py",
+      "imports": 1,
+      "constants": 0,
+      "functions": 0,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/ingest_codebase_writers.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 49,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/ingest_helpers.py",
+      "imports": 6,
+      "constants": 1,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 34,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/ingest_prd.py",
+      "imports": 14,
+      "constants": 4,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 104,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "handlers/latency_class.py",
+      "imports": 2,
+      "constants": 2,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 4,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/list_domains.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 18,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/memories_facets.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 50,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/memories_page.py",
+      "imports": 6,
+      "constants": 5,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 117,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/memory_stats.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 17,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/narrative.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 12,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/navigate_memory.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 39,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/open_visualization.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 69,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/quadtree_handler.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 42,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/query_methodology.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 66,
+      "intra_pairs": 11
+    },
+    {
+      "rel_path": "handlers/query_workflow_graph.py",
+      "imports": 6,
+      "constants": 2,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 75,
+      "intra_pairs": 12
+    },
+    {
+      "rel_path": "handlers/rate_memory.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/rebuild_profiles.py",
+      "imports": 12,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 29,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/recall.py",
+      "imports": 15,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 47,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/recall_helpers.py",
+      "imports": 14,
+      "constants": 1,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 57,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "handlers/recall_hierarchical.py",
+      "imports": 10,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 47,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/recompute_layout.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 38,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/record_session_end.py",
+      "imports": 16,
+      "constants": 0,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 58,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "handlers/remember.py",
+      "imports": 20,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 50,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/remember_helpers.py",
+      "imports": 20,
+      "constants": 1,
+      "functions": 12,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 70,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "handlers/remember_response.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 22,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/seed_project.py",
+      "imports": 10,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 41,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/seed_project_constants.py",
+      "imports": 1,
+      "constants": 9,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 2,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/seed_project_stages.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 14,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 80,
+      "intra_pairs": 18
+    },
+    {
+      "rel_path": "handlers/sync_instructions.py",
+      "imports": 8,
+      "constants": 5,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 56,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "handlers/tile_handler.py",
+      "imports": 2,
+      "constants": 1,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 38,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/unified_search.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 26,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/validate_memory.py",
+      "imports": 10,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 41,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/wiki_adr.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 27,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/wiki_api.py",
+      "imports": 8,
+      "constants": 0,
+      "functions": 13,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 113,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "handlers/wiki_compile.py",
+      "imports": 15,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 58,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/wiki_consolidate.py",
+      "imports": 18,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 53,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/wiki_curate.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/wiki_emerge.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 38,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "handlers/wiki_export.py",
+      "imports": 8,
+      "constants": 5,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 72,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "handlers/wiki_extract.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 26,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "handlers/wiki_link.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 19,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/wiki_list.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 19,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/wiki_migrate.py",
+      "imports": 12,
+      "constants": 1,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 71,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "handlers/wiki_pipeline.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/wiki_purge.py",
+      "imports": 13,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 73,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/wiki_read.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 17,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "handlers/wiki_refine.py",
+      "imports": 12,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 57,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "handlers/wiki_reindex.py",
+      "imports": 12,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 66,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/wiki_rename.py",
+      "imports": 14,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 25,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/wiki_resolve.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/wiki_seed_codebase.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 46,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/wiki_synthesize.py",
+      "imports": 12,
+      "constants": 1,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 41,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "handlers/wiki_verify.py",
+      "imports": 12,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 28,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "handlers/wiki_view.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 21,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/wiki_write.py",
+      "imports": 12,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 15,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "handlers/workflow_graph.py",
+      "imports": 9,
+      "constants": 2,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 79,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "hooks/agent_briefing.py",
+      "imports": 7,
+      "constants": 7,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 69,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "hooks/auto_recall.py",
+      "imports": 6,
+      "constants": 7,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 59,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "hooks/compaction_checkpoint.py",
+      "imports": 4,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 23,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "hooks/consolidate_background.py",
+      "imports": 8,
+      "constants": 1,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 34,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "hooks/ingest_codebase_background.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 17,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "hooks/pipeline_impact_bump.py",
+      "imports": 8,
+      "constants": 6,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 58,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "hooks/post_tool_capture.py",
+      "imports": 4,
+      "constants": 7,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 93,
+      "intra_pairs": 13
+    },
+    {
+      "rel_path": "hooks/preemptive_context.py",
+      "imports": 7,
+      "constants": 6,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 34,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "hooks/session_lifecycle.py",
+      "imports": 6,
+      "constants": 2,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 64,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "hooks/session_start.py",
+      "imports": 6,
+      "constants": 6,
+      "functions": 23,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 293,
+      "intra_pairs": 31
+    },
+    {
+      "rel_path": "infrastructure/agent_config.py",
+      "imports": 1,
+      "constants": 1,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 8,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/ap_bridge.py",
+      "imports": 7,
+      "constants": 1,
+      "functions": 4,
+      "classes": 1,
+      "methods": 15,
+      "callsites": 59,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/brain_index_store.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 1,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/config.py",
+      "imports": 2,
+      "constants": 7,
+      "functions": 0,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/conversation_reader.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 37,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "infrastructure/embedding_engine.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 2,
+      "classes": 1,
+      "methods": 18,
+      "callsites": 92,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/file_io.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 23,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/git_diff.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 15,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 74,
+      "intra_pairs": 16
+    },
+    {
+      "rel_path": "infrastructure/git_diff_exec.py",
+      "imports": 4,
+      "constants": 3,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 11,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "infrastructure/git_diff_format.py",
+      "imports": 1,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/layout_pg_store.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 31,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "infrastructure/mcp_client.py",
+      "imports": 6,
+      "constants": 2,
+      "functions": 0,
+      "classes": 1,
+      "methods": 18,
+      "callsites": 114,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/mcp_client_pool.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 32,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/memory_config.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 2,
+      "classes": 1,
+      "methods": 2,
+      "callsites": 6,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/memory_store.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 3,
+      "classes": 1,
+      "methods": 1,
+      "callsites": 17,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/pg_schema.py",
+      "imports": 1,
+      "constants": 19,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 7,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/pg_store.py",
+      "imports": 21,
+      "constants": 0,
+      "functions": 2,
+      "classes": 2,
+      "methods": 49,
+      "callsites": 178,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pg_store_auxiliary.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 25,
+      "callsites": 118,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pg_store_entities.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 18,
+      "callsites": 71,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pg_store_queries.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 14,
+      "callsites": 59,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pg_store_relationships.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 9,
+      "callsites": 42,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pg_store_rules.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 5,
+      "callsites": 29,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pg_store_stats.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 21,
+      "callsites": 71,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pg_store_wiki.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 33,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 224,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "infrastructure/pipeline_discovery.py",
+      "imports": 9,
+      "constants": 6,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 40,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/pipeline_graph_ttl.py",
+      "imports": 5,
+      "constants": 1,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 9,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "infrastructure/pipeline_install_lock.py",
+      "imports": 6,
+      "constants": 1,
+      "functions": 1,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 9,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/pipeline_install_release.py",
+      "imports": 12,
+      "constants": 3,
+      "functions": 5,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 69,
+      "intra_pairs": 4
+    },
+    {
+      "rel_path": "infrastructure/pipeline_install_rust.py",
+      "imports": 9,
+      "constants": 5,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 39,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "infrastructure/pipeline_installer.py",
+      "imports": 17,
+      "constants": 5,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 67,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "infrastructure/pipeline_installer_common.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 4,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/profile_store.py",
+      "imports": 10,
+      "constants": 3,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 63,
+      "intra_pairs": 12
+    },
+    {
+      "rel_path": "infrastructure/scanner.py",
+      "imports": 15,
+      "constants": 2,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 71,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "infrastructure/scanner_parse.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 40,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "infrastructure/session_store.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 2,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_compat.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 1,
+      "classes": 2,
+      "methods": 12,
+      "callsites": 24,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_schema.py",
+      "imports": 1,
+      "constants": 18,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store.py",
+      "imports": 20,
+      "constants": 0,
+      "functions": 1,
+      "classes": 1,
+      "methods": 25,
+      "callsites": 134,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store_auxiliary.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 25,
+      "callsites": 112,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store_entities.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 16,
+      "callsites": 55,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store_queries.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 10,
+      "callsites": 44,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store_relationships.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 9,
+      "callsites": 42,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store_rules.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 4,
+      "callsites": 22,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store_search.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 17,
+      "callsites": 77,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/sqlite_store_stats.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 0,
+      "classes": 1,
+      "methods": 21,
+      "callsites": 69,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/wiki_store.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 12,
+      "classes": 3,
+      "methods": 0,
+      "callsites": 106,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "infrastructure/workflow_graph_source.py",
+      "imports": 16,
+      "constants": 2,
+      "functions": 7,
+      "classes": 1,
+      "methods": 16,
+      "callsites": 62,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/workflow_graph_source_ast.py",
+      "imports": 9,
+      "constants": 3,
+      "functions": 3,
+      "classes": 2,
+      "methods": 14,
+      "callsites": 149,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/workflow_graph_source_jsonl.py",
+      "imports": 10,
+      "constants": 7,
+      "functions": 15,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 122,
+      "intra_pairs": 14
+    },
+    {
+      "rel_path": "infrastructure/workflow_graph_source_native_ast.py",
+      "imports": 12,
+      "constants": 2,
+      "functions": 1,
+      "classes": 1,
+      "methods": 9,
+      "callsites": 45,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "infrastructure/workflow_graph_source_pg.py",
+      "imports": 4,
+      "constants": 6,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 62,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "observability/metrics.py",
+      "imports": 4,
+      "constants": 2,
+      "functions": 7,
+      "classes": 1,
+      "methods": 3,
+      "callsites": 48,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "server/http_common.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 7,
+      "classes": 1,
+      "methods": 7,
+      "callsites": 84,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "server/http_dashboard_data.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 129,
+      "intra_pairs": 8
+    },
+    {
+      "rel_path": "server/http_file_diff.py",
+      "imports": 4,
+      "constants": 0,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 57,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "server/http_launcher.py",
+      "imports": 8,
+      "constants": 1,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 79,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "server/http_security.py",
+      "imports": 2,
+      "constants": 1,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 26,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "server/http_server.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 68,
+      "intra_pairs": 10
+    },
+    {
+      "rel_path": "server/http_standalone.py",
+      "imports": 29,
+      "constants": 1,
+      "functions": 9,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 138,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "server/http_standalone_endpoints.py",
+      "imports": 9,
+      "constants": 2,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 59,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "server/http_standalone_graph.py",
+      "imports": 9,
+      "constants": 1,
+      "functions": 18,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 340,
+      "intra_pairs": 14
+    },
+    {
+      "rel_path": "server/http_standalone_response.py",
+      "imports": 5,
+      "constants": 0,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 24,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "server/http_standalone_state.py",
+      "imports": 3,
+      "constants": 3,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 2,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "server/http_standalone_wiki.py",
+      "imports": 5,
+      "constants": 1,
+      "functions": 9,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 106,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "server/http_viz_server.py",
+      "imports": 1,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "server/visualize_bootstrap.py",
+      "imports": 6,
+      "constants": 3,
+      "functions": 7,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 46,
+      "intra_pairs": 6
+    },
+    {
+      "rel_path": "shared/categorizer.py",
+      "imports": 2,
+      "constants": 2,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 7,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "shared/content_hardening.py",
+      "imports": 4,
+      "constants": 3,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 9,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "shared/domain_mapping.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 13,
+      "classes": 2,
+      "methods": 1,
+      "callsites": 109,
+      "intra_pairs": 13
+    },
+    {
+      "rel_path": "shared/entity_canonical.py",
+      "imports": 1,
+      "constants": 1,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 6,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/hash.py",
+      "imports": 1,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 2,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/linear_algebra.py",
+      "imports": 3,
+      "constants": 0,
+      "functions": 11,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 45,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "shared/memory_types.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 0,
+      "classes": 9,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/project_ids.py",
+      "imports": 2,
+      "constants": 6,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 18,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "shared/similarity.py",
+      "imports": 1,
+      "constants": 0,
+      "functions": 1,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 2,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/sparse.py",
+      "imports": 2,
+      "constants": 0,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 24,
+      "intra_pairs": 2
+    },
+    {
+      "rel_path": "shared/text.py",
+      "imports": 2,
+      "constants": 3,
+      "functions": 2,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 7,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "shared/types.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 0,
+      "classes": 14,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/types_profiles.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 0,
+      "classes": 15,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/vader.py",
+      "imports": 3,
+      "constants": 6,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 23,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "shared/wiki_classification.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 4,
+      "classes": 2,
+      "methods": 3,
+      "callsites": 32,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/wiki_ir.py",
+      "imports": 6,
+      "constants": 0,
+      "functions": 0,
+      "classes": 9,
+      "methods": 0,
+      "callsites": 0,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "shared/yaml_parser.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 1,
+      "classes": 1,
+      "methods": 0,
+      "callsites": 15,
+      "intra_pairs": 0
+    },
+    {
+      "rel_path": "tool_error_handler.py",
+      "imports": 5,
+      "constants": 2,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 18,
+      "intra_pairs": 1
+    },
+    {
+      "rel_path": "tool_registry_advanced.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 28,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "tool_registry_core.py",
+      "imports": 13,
+      "constants": 0,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 36,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "tool_registry_ingest.py",
+      "imports": 7,
+      "constants": 0,
+      "functions": 4,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 12,
+      "intra_pairs": 3
+    },
+    {
+      "rel_path": "tool_registry_manage.py",
+      "imports": 11,
+      "constants": 0,
+      "functions": 8,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 28,
+      "intra_pairs": 7
+    },
+    {
+      "rel_path": "tool_registry_memory.py",
+      "imports": 13,
+      "constants": 0,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 36,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "tool_registry_nav.py",
+      "imports": 9,
+      "constants": 0,
+      "functions": 6,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 20,
+      "intra_pairs": 5
+    },
+    {
+      "rel_path": "tool_registry_wiki.py",
+      "imports": 13,
+      "constants": 0,
+      "functions": 10,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 36,
+      "intra_pairs": 9
+    },
+    {
+      "rel_path": "validation/schemas.py",
+      "imports": 3,
+      "constants": 2,
+      "functions": 3,
+      "classes": 0,
+      "methods": 0,
+      "callsites": 35,
+      "intra_pairs": 2
+    }
+  ]
+}
