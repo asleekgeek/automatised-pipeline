@@ -27,12 +27,15 @@ Output format (JSON):
 }
 
 The Rust test loads this, indexes each file, and asserts the extractor
-emits ≥ each expected count. Equality isn't required because:
-  - The Rust parser may extract additional CallSite nodes the Python
-    AST doesn't model (e.g. chained method calls counted once vs twice).
-  - Decorator chains, exception handlers, and similar constructs can
-    produce edge counts that vary slightly between AST representations.
-  - We're catching structural REGRESSIONS, not exact-match parity.
+emits the EXACT 5-tuple (imports, constants, functions, classes, methods)
+that Python's `ast` produces. We measured this passes on Cortex's 576-file
+tree as of 2026-05-25; the test fails on any drift.
+
+`callsites` and `intra_pairs` are emitted for future use but NOT asserted
+because chained-call counting and resolver dedup diverge between Python
+ast and the Rust resolver (e.g., `a.b().c()` is two ast.Call nodes but
+typically one resolved Calls edge after dedup). When that divergence is
+characterized and bounded these become assertable too.
 
 source: Spike B' full-extension gate — 5-files-per-category was the
 proof of harness; full coverage validates every file under the

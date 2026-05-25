@@ -286,6 +286,65 @@ impl GraphStore {
         Ok(QueryResult { columns, rows })
     }
 
+    /// Iterate every node carrying one of the given labels, returning
+    /// (label, id, qualified_name_or_path). Consolidates the five
+    /// separate iterate-labels-then-query loops that used to live in
+    /// graph_accuracy.rs / corpus_full.rs / visualize_* (now deleted).
+    ///
+    /// source: 2026-05-25 Feynman audit — five copies of the same
+    /// iterate-by-label loop is a SRP violation; the schema knows which
+    /// QN/path column each label exposes (File→path, Import/CallSite→id,
+    /// everything else→qualified_name), so the iteration belongs here.
+    pub fn iter_nodes_by_labels(
+        &self,
+        labels: &[&str],
+    ) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for label in labels {
+            let qn_col = match *label {
+                "File" | "Directory" => "path",
+                "Import" | "CallSite" => "id",
+                _ => "qualified_name",
+            };
+            let cypher = format!("MATCH (n:{label}) RETURN n.id, n.{qn_col}");
+            let qr = match self.execute_query(&cypher) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for row in qr.rows {
+                if row.len() < 2 {
+                    continue;
+                }
+                out.push((label.to_string(), row[0].clone(), row[1].clone()));
+            }
+        }
+        out
+    }
+
+    /// Iterate every resolution-or-structural edge in the graph,
+    /// returning (from_id, to_id, rel_table_name). Consolidates the
+    /// REL_TABLES iteration that used to be duplicated across test files.
+    ///
+    /// source: 2026-05-25 Feynman audit — same SRP rationale as
+    /// iter_nodes_by_labels.
+    pub fn iter_edges(&self) -> Vec<(String, String, &'static str)> {
+        let mut out = Vec::new();
+        for (rel, _, _) in REL_TABLES {
+            let cypher = format!("MATCH (a)-[r:{rel}]->(b) RETURN a.id, b.id");
+            let qr = match self.execute_query(&cypher) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for row in qr.rows {
+                if row.len() < 2 {
+                    continue;
+                }
+                out.push((row[0].clone(), row[1].clone(), *rel));
+            }
+        }
+        out
+    }
+
     /// Returns the total number of nodes across all node tables.
     pub fn node_count(&self) -> Result<u64, String> {
         let mut total: u64 = 0;

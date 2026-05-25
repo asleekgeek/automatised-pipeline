@@ -9,7 +9,10 @@
 // tests_py/ for now), `tools/spike_b_corpus_gen.py` emits per-file
 // expected counts derived from Python's `ast` module. This test loads
 // that JSON, indexes the entire target root into one Lbug store, runs
-// the resolver, then asserts per-file counts via Cypher against expected.
+// the resolver, then asserts the EXACT 5-tuple per file (imports,
+// constants, functions, classes, methods). Equality, not ≥ — measured
+// to hold on Cortex's 576-file tree as of 2026-05-25; the test fails
+// on any drift.
 //
 // Different from graph_accuracy.rs:
 //   * 576 files instead of 41 — full production coverage
