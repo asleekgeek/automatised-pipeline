@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod codebook;
+pub mod grammar;
 pub use codebook::{Codebook, EncEdge, EncNode, EncodedGraph};
+pub use grammar::{Grammar, Rule};
 
 /// A node in the graph as seen by ZERA: just the addressable identity
 /// and the label. The decoder layers expand this to the full node body.
