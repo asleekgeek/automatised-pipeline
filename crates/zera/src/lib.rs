@@ -20,6 +20,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod codebook;
+pub use codebook::{Codebook, EncEdge, EncNode, EncodedGraph};
+
 /// A node in the graph as seen by ZERA: just the addressable identity
 /// and the label. The decoder layers expand this to the full node body.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
