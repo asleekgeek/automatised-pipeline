@@ -26,14 +26,41 @@ jobs:
     name: cargo test (graph accuracy gate)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
+    # zstd-sys (pulled transitively via tantivy → tantivy-columnar →
+    # tantivy-sstable → zstd → zstd-safe → zstd-sys) and lbug both
+    # statically link libzstd, producing duplicate symbols on Linux
+    # (rust-lld is strict about this; macOS ld64 silently dedupes,
+    # which is why release.yml only needed this on its ubuntu matrix
+    # legs). ZSTD_SYS_USE_PKG_CONFIG=1 makes zstd-sys link the system
+    # libzstd dynamically instead of compiling its own static copy,
+    # eliminating the conflict. See the duplicate-symbol failure on
+    # run 26411205432 for the unfixed signature.
+    env:
+      ZSTD_SYS_USE_PKG_CONFIG: "1"
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libzstd-dev pkg-config cmake
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       # Cache the cargo target dir keyed on Cargo.lock. Saves ~minutes per
       # run because tree-sitter + tantivy + lbug are heavy to recompile.
+      #
+      # The "zstd-pkgconfig-v1" segment is part of the key on purpose:
+      # the previous build environment baked a static libzstd.a into
+      # target/ that collides with lbug's vendored zstd at link time
+      # (see job-level env comment). When that env changes, the cache
+      # must NOT be restored — otherwise the conflicting artifact comes
+      # back and the link error reappears. Bump this segment whenever
+      # the build env changes in a way that touches target/.
       - name: Cache cargo build
         uses: actions/cache@v4
         with:
@@ -41,9 +68,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-zstd-pkgconfig-v1-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-zstd-pkgconfig-v1-
 
       # The graph_accuracy test is the Spike B' gate. Its asserts ratchet
       # forward as fixes land — current floor is nodes/Defines ≥ 0.96 on
