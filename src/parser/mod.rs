@@ -198,8 +198,10 @@ mod tests {
         assert_eq!(Language::from_extension("py"), Some(Language::Python));
         assert_eq!(Language::from_extension("ts"), Some(Language::TypeScript));
         assert_eq!(Language::from_extension("tsx"), Some(Language::TypeScript));
+        assert_eq!(Language::from_extension("java"), Some(Language::Java));
+        assert_eq!(Language::from_extension("go"), Some(Language::Go));
+        // js has no tree-sitter parser wired in — stays unsupported.
         assert_eq!(Language::from_extension("js"), None);
-        assert_eq!(Language::from_extension("go"), None);
     }
 
     #[test]
@@ -207,8 +209,10 @@ mod tests {
         assert_eq!(Language::from_str_opt("rust"), Some(Language::Rust));
         assert_eq!(Language::from_str_opt("python"), Some(Language::Python));
         assert_eq!(Language::from_str_opt("typescript"), Some(Language::TypeScript));
+        assert_eq!(Language::from_str_opt("java"), Some(Language::Java));
+        assert_eq!(Language::from_str_opt("go"), Some(Language::Go));
+        // "auto" is not a concrete language — detection happens by extension.
         assert_eq!(Language::from_str_opt("auto"), None);
-        assert_eq!(Language::from_str_opt("java"), None);
     }
 
     #[test]
