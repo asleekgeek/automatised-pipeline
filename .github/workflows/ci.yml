@@ -25,7 +25,15 @@ jobs:
   test:
     name: cargo test (graph accuracy gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # A cold build (no cargo cache) compiles tree-sitter + tantivy + lbug
+    # from scratch — measured ~19 min just to reach the graph-accuracy gate
+    # on run 26515840381, leaving too little of a 25 min budget to also
+    # compile + run the full suite. Worse, a timeout is a *cancellation*,
+    # and actions/cache skips its save step when cancelled — so every
+    # timed-out run failed to warm the cache, guaranteeing the next run was
+    # cold too (a self-perpetuating deadlock). 60 min lets one cold build
+    # finish and populate the cache; warm-cache runs complete in ~6 min.
+    timeout-minutes: 60
 
     # zstd-sys (pulled transitively via tantivy → tantivy-columnar →
     # tantivy-sstable → zstd → zstd-safe → zstd-sys) and lbug both
