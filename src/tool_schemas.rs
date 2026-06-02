@@ -520,16 +520,17 @@ fn lsp_resolve_schema() -> Value {
 fn prepare_prd_input_schema() -> Value {
     json!({
         "name": "prepare_prd_input",
-        "description": "Stage 4 — Bundle the verified stage-2 finding + graph intel (matched symbols, impacted communities, impacted processes, graph stats) into stage-4.prd_input.json. Read-only against the graph. Writes one JSON artifact under <output_dir>/runs/<run_id>/findings/<finding_id>/ and updates the run's index.json with stage4 markers. Consumed by the TypeScript PRD generator.",
+        "description": "Stage 4 — Bundle graph intel (matched symbols, impacted communities, impacted processes, graph stats) into stage-4.prd_input.json for the PRD generator. Read-only against the graph. TWO modes: (1) FINDING mode — pass finding_id to bundle a VERIFIED stage-2 finding (writes under runs/<run_id>/findings/<finding_id>/ and updates index.json); (2) FEATURE mode — pass feature_description (no finding_id) to ground a free-text feature directly on the code graph, skipping the stage-2 gate (writes under runs/<run_id>/features/<slug>/). Provide finding_id OR feature_description.",
         "inputSchema": {
             "type": "object",
-            "required": ["run_id", "finding_id", "output_dir", "graph_path"],
+            "required": ["output_dir", "graph_path"],
             "additionalProperties": false,
             "properties": {
-                "run_id":     { "type": "string" },
-                "finding_id": { "type": "string" },
-                "output_dir": { "type": "string", "pattern": "^/.+" },
-                "graph_path": { "type": "string", "pattern": "^/.+" }
+                "run_id":              { "type": "string", "description": "Pipeline run id (path segment). Defaults to 'adhoc' in feature mode." },
+                "finding_id":          { "type": "string", "description": "Finding mode: the verified stage-2 finding to bundle. Omit for feature mode." },
+                "feature_description": { "type": "string", "description": "Feature mode: free-text feature/intent to ground on the graph. Used when finding_id is absent." },
+                "output_dir":          { "type": "string", "pattern": "^/.+" },
+                "graph_path":          { "type": "string", "pattern": "^/.+" }
             }
         }
     })

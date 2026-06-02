@@ -62,9 +62,18 @@ pub struct PrdInputOutcome {
 }
 
 /// Arguments already validated by the handler in main.rs.
+///
+/// Two modes:
+///  * Finding mode  — `finding_id: Some` → bundle a VERIFIED stage-2 finding
+///    (the original Stage-4 contract; enforces the verified gate).
+///  * Feature mode  — `finding_id: None` + `feature_description: Some` → ground
+///    a free-text feature directly on the code graph (no stage-2 gate), so the
+///    PRD generator can prepare input from intent alone. Same search/enrich
+///    path; writes under `runs/<run_id>/features/<slug>/`.
 pub struct PrdInputArgs {
     pub run_id: String,
-    pub finding_id: String,
+    pub finding_id: Option<String>,
+    pub feature_description: Option<String>,
     pub output_dir: PathBuf,
     pub graph_path: PathBuf,
 }
@@ -73,11 +82,41 @@ pub struct PrdInputArgs {
 // Orchestration
 // ---------------------------------------------------------------------------
 
-/// Runs stage 4 end to end.
+/// Runs stage 4 end to end (finding mode OR feature-description mode).
 pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutcome, String> {
-    let finding_dir = finding_dir_for(args);
-    let verified = load_verified(&finding_dir)?;
-    let summary = load_finding_summary(&finding_dir)?;
+    // Resolve the working dir + summary + verified receipt per mode. Both modes
+    // converge on the SAME search/enrich/artifact path below.
+    let (out_dir, summary, verified) = match (&args.finding_id, &args.feature_description) {
+        (Some(_), _) => {
+            // Finding mode — enforce the verified stage-2 gate.
+            let finding_dir = finding_dir_for(args);
+            let verified = load_verified(&finding_dir)?;
+            let summary = load_finding_summary(&finding_dir)?;
+            (finding_dir, summary, verified)
+        }
+        (None, Some(desc)) => {
+            // Feature mode — synthesize a summary from intent, no stage-2 gate.
+            let desc = desc.trim();
+            if desc.is_empty() {
+                return Err("feature_description_empty".into());
+            }
+            let summary = synth_summary_from_description(desc);
+            let verified = VerifiedReceipt {
+                finalized_at: prepared_at.clone(),
+                stage1_refined_path: String::new(),
+                verified: true,
+            };
+            (feature_dir_for(args, &summary.finding_id), summary, verified)
+        }
+        (None, None) => {
+            return Err(
+                "prepare_prd_input: provide either finding_id (finding mode) \
+                 or feature_description (feature mode)"
+                    .into(),
+            );
+        }
+    };
+
     let store = GraphStore::open_or_create(&args.graph_path)?;
     let stats = collect_graph_stats(&store);
     let tokens = tokenize_description(&summary);
@@ -88,9 +127,12 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
         args, &verified, &summary, &prepared_at,
         &matched, &impacted_communities, &impacted_processes, &stats,
     );
-    let artifact_path = finding_dir.join(PRD_INPUT_FILE_NAME);
+    let artifact_path = out_dir.join(PRD_INPUT_FILE_NAME);
     write_json(&artifact_path, &artifact)?;
-    update_index(args, &prepared_at)?;
+    // index.json is a finding-run artifact; only update it in finding mode.
+    if args.finding_id.is_some() {
+        update_index(args, &prepared_at)?;
+    }
     Ok(PrdInputOutcome {
         artifact_path,
         matched_symbol_count: matched.len(),
@@ -104,7 +146,47 @@ fn finding_dir_for(args: &PrdInputArgs) -> PathBuf {
         .join("runs")
         .join(&args.run_id)
         .join("findings")
-        .join(&args.finding_id)
+        .join(args.finding_id.as_deref().unwrap_or("unknown"))
+}
+
+/// Feature-mode working dir: runs/<run_id>/features/<slug>/.
+fn feature_dir_for(args: &PrdInputArgs, slug: &str) -> PathBuf {
+    args.output_dir
+        .join("runs")
+        .join(&args.run_id)
+        .join("features")
+        .join(slug)
+}
+
+/// Builds a synthetic finding summary from a free-text feature description.
+/// finding_id is a stable slug of the description; title is its first line.
+fn synth_summary_from_description(desc: &str) -> FindingSummary {
+    let title = desc.lines().next().unwrap_or(desc).trim();
+    let title = if title.len() > 80 { &title[..80] } else { title };
+    FindingSummary {
+        finding_id: slugify(desc),
+        title: title.to_string(),
+        description: desc.to_string(),
+        relevance_category: "feature".to_string(),
+    }
+}
+
+/// Filesystem-safe, deterministic slug for a feature description.
+fn slugify(text: &str) -> String {
+    let mut slug: String = text
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect();
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    let slug = slug.trim_matches('-');
+    let slug: String = slug.chars().take(48).collect();
+    if slug.is_empty() {
+        "feature".to_string()
+    } else {
+        format!("feature-{slug}")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,14 +469,27 @@ fn build_artifact(
         format!("{} — {}", summary.title, summary.description)
     };
 
-    let stage2_rel = format!(
-        "findings/{}/stage-2.verified.json",
-        args.finding_id
-    );
+    // Effective finding id: the real finding in finding mode, or the synthetic
+    // feature slug in feature mode. stage-2 path only exists in finding mode.
+    let effective_finding_id = args
+        .finding_id
+        .clone()
+        .unwrap_or_else(|| summary.finding_id.clone());
+    let stage2_rel = if args.finding_id.is_some() {
+        format!("findings/{}/stage-2.verified.json", effective_finding_id)
+    } else {
+        String::new()
+    };
+    let mode = if args.finding_id.is_some() {
+        "finding"
+    } else {
+        "feature"
+    };
 
     json!({
         "run_id": args.run_id,
-        "finding_id": args.finding_id,
+        "finding_id": effective_finding_id,
+        "mode": mode,
         "stage2_verified_path": stage2_rel,
         "graph_path": args.graph_path.to_string_lossy(),
         "prepared_at": prepared_at,
@@ -474,7 +569,8 @@ fn update_index(args: &PrdInputArgs, prepared_at: &str) -> Result<(), String> {
         );
         let rel = format!(
             "findings/{}/{}",
-            args.finding_id, PRD_INPUT_FILE_NAME
+            args.finding_id.as_deref().unwrap_or("unknown"),
+            PRD_INPUT_FILE_NAME
         );
         obj.insert("stage4_path".into(), Value::String(rel));
     }
