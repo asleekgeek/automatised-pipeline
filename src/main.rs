@@ -2970,6 +2970,9 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         "matched_symbol_count": outcome.matched_symbol_count,
         "impacted_community_count": outcome.impacted_community_count,
         "impacted_process_count": outcome.impacted_process_count,
+        // Grounding returned inline so the PRD generator can inject it without
+        // a second read of artifact_path.
+        "prd_context": outcome.prd_context,
         "preparer_version": prd_input::PREPARER_VERSION,
     }))
 }

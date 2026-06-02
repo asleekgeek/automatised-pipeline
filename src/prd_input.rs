@@ -59,6 +59,11 @@ pub struct PrdInputOutcome {
     pub matched_symbol_count: usize,
     pub impacted_community_count: usize,
     pub impacted_process_count: usize,
+    /// The grounding payload (matched_symbols / impacted_communities /
+    /// impacted_processes / graph_stats) returned INLINE so MCP consumers
+    /// (the PRD generator) get the grounding from the tool response without a
+    /// second file read. Same object that is also persisted in the artifact.
+    pub prd_context: Value,
 }
 
 /// Arguments already validated by the handler in main.rs.
@@ -133,11 +138,16 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
     if args.finding_id.is_some() {
         update_index(args, &prepared_at)?;
     }
+    let prd_context = artifact
+        .get("prd_context")
+        .cloned()
+        .unwrap_or(Value::Null);
     Ok(PrdInputOutcome {
         artifact_path,
         matched_symbol_count: matched.len(),
         impacted_community_count: impacted_communities.len(),
         impacted_process_count: impacted_processes.len(),
+        prd_context,
     })
 }
 
