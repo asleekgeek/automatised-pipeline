@@ -5,7 +5,9 @@
 // convention (src/lib.rs + src/main.rs coexist in the same crate).
 
 pub mod clustering;
+pub mod git_diff;
 pub mod graph_store;
+pub mod history;
 pub mod indexer;
 pub mod lsp_client;
 pub mod lsp_resolver;

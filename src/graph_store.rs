@@ -32,6 +32,17 @@ pub const NODE_COMMUNITY: &str = "Community"; // source: stages/stage-3c.md §4.
 pub const NODE_PROCESS: &str = "Process"; // source: stages/stage-3c.md §4.1
 pub const NODE_STDLIB_SYMBOL: &str = "StdlibSymbol"; // source: stages/stage-3b-v2.md §5 Layer 5
 
+// History layer — temporal axis over the structural snapshot.
+// source: second-brain history requirement — the graph must track not just
+// the current state of an entity but its evolution: which commits touched it,
+// and the chain of its successive versions. A `Commit` is a point in git
+// history; a `Version` is one revision of an entity (a File or a symbol) as it
+// stood at a particular commit. The structural graph remains the HEAD
+// snapshot; the version spine hangs off it via VersionOf/ChangedIn edges so
+// every entity stays traversable in both directions across time.
+pub const NODE_COMMIT: &str = "Commit";
+pub const NODE_VERSION: &str = "Version";
+
 // ---------------------------------------------------------------------------
 // Edge kinds — source: stages/stage-3.md §schema (Shannon spec, 3a subset)
 // ---------------------------------------------------------------------------
@@ -304,6 +315,9 @@ impl GraphStore {
             let qn_col = match *label {
                 "File" | "Directory" => "path",
                 "Import" | "CallSite" => "id",
+                // Commit has no qualified_name column; key it by sha.
+                // Version carries qualified_name (the entity's qn/path).
+                "Commit" => "sha",
                 _ => "qualified_name",
             };
             let cypher = format!("MATCH (n:{label}) RETURN n.id, n.{qn_col}");
@@ -427,6 +441,7 @@ const NODE_LABELS: &[&str] = &[
     NODE_STRUCT, NODE_ENUM, NODE_VARIANT, NODE_TRAIT, NODE_FIELD,
     NODE_CONSTANT, NODE_TYPE_ALIAS, NODE_IMPORT, NODE_CALL_SITE,
     NODE_COMMUNITY, NODE_PROCESS, NODE_STDLIB_SYMBOL,
+    NODE_COMMIT, NODE_VERSION,
 ];
 
 /// Single source of truth for all relationship tables: (name, from, to).
@@ -543,6 +558,22 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     // 3c ParticipatesIn — source: stages/stage-3c.md §4.2
     ("ParticipatesIn_Function_Process", NODE_FUNCTION, NODE_PROCESS),
     ("ParticipatesIn_Method_Process", NODE_METHOD, NODE_PROCESS),
+    // History layer — source: second-brain history requirement.
+    // Commit lineage + per-entity version spine. Every edge is read in both
+    // directions by the query surface, so a consumer can walk:
+    //   entity  <-VersionOf-  Version  -ChangedIn->  Commit  -PreviousVersion->  Commit
+    // and the reverse (a commit's changed entities, a version's successor).
+    // PreviousVersion_Version_Version chains an entity's own revisions over
+    // time; PreviousVersion_Commit_Commit is the commit ancestry (first parent).
+    ("PreviousVersion_Commit_Commit", NODE_COMMIT, NODE_COMMIT),
+    ("VersionOf_Version_File", NODE_VERSION, NODE_FILE),
+    ("VersionOf_Version_Function", NODE_VERSION, NODE_FUNCTION),
+    ("VersionOf_Version_Method", NODE_VERSION, NODE_METHOD),
+    ("VersionOf_Version_Struct", NODE_VERSION, NODE_STRUCT),
+    ("VersionOf_Version_Enum", NODE_VERSION, NODE_ENUM),
+    ("VersionOf_Version_Trait", NODE_VERSION, NODE_TRAIT),
+    ("ChangedIn_Version_Commit", NODE_VERSION, NODE_COMMIT),
+    ("PreviousVersion_Version_Version", NODE_VERSION, NODE_VERSION),
 ];
 
 fn node_table_ddl() -> Vec<String> {
@@ -559,10 +590,14 @@ fn node_table_ddl() -> Vec<String> {
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, is_async BOOLEAN, \
              language STRING"),
+        // source: implements fix — `trait_name` carries the trait a method
+        // belongs to in an `impl Trait for Type` block (already extracted by
+        // the parser at parser/rust.rs but previously dropped for lack of a
+        // column). resolve_implements reads it to emit the Type→Trait edge.
         ddl_node(NODE_METHOD,
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, is_async BOOLEAN, \
-             receiver_type STRING, language STRING"),
+             receiver_type STRING, trait_name STRING, language STRING"),
         // source: Spike B' BUG #9 fix — `bases STRING` column carries a CSV
         // of unresolved base-class names emitted by the parser. The resolver
         // reads this in resolve_extends, looks each name up in the symbol
@@ -570,20 +605,26 @@ fn node_table_ddl() -> Vec<String> {
         // route Extends refs directly because their to_qualified_name is a
         // raw NAME (e.g., "Animal"), not a QN — name→QN resolution happens
         // server-side in the resolver pass after all nodes are indexed.
+        //
+        // source: implements fix — `implements STRING` is the same mechanism
+        // for the implemented-trait/interface names (`#[derive(...)]`, Java
+        // `implements`). resolve_implements resolves each name to a local
+        // Trait or a stdlib trait. Trait carries the column for schema
+        // uniformity but never populates it (a trait implements nothing).
         ddl_node(NODE_STRUCT,
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, language STRING, \
-             bases STRING"),
+             bases STRING, implements STRING"),
         ddl_node(NODE_ENUM,
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, language STRING, \
-             bases STRING"),
+             bases STRING, implements STRING"),
         ddl_node(NODE_VARIANT,
             "id STRING, name STRING, qualified_name STRING, language STRING"),
         ddl_node(NODE_TRAIT,
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, language STRING, \
-             bases STRING"),
+             bases STRING, implements STRING"),
         ddl_node(NODE_FIELD,
             "id STRING, name STRING, type_annotation STRING, visibility STRING, \
              language STRING"),
@@ -611,6 +652,20 @@ fn node_table_ddl() -> Vec<String> {
         ddl_node(NODE_STDLIB_SYMBOL,
             "id STRING, name STRING, language STRING, \
              receiver_type STRING, canonical_path STRING"),
+        // History layer — source: second-brain history requirement.
+        // Commit: one git commit. id = sha. committed_at is unix seconds.
+        ddl_node(NODE_COMMIT,
+            "id STRING, sha STRING, author STRING, author_email STRING, \
+             committed_at INT64, message STRING"),
+        // Version: one revision of an entity (File or symbol) at a commit.
+        // id = "<entity_id>@<sha>". entity_kind discriminates File/Function/
+        // Method/Struct/Enum/Trait so the version spine generalizes to any
+        // entity type (code today, documents tomorrow). qualified_name mirrors
+        // the entity's qn (or path, for File) for direct lookup.
+        ddl_node(NODE_VERSION,
+            "id STRING, entity_id STRING, entity_kind STRING, \
+             qualified_name STRING, change_type STRING, commit_sha STRING, \
+             committed_at INT64, lines_changed INT64"),
     ]
 }
 
@@ -763,6 +818,7 @@ const COLS_METHOD: ColTypes = &[
     ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("visibility", LogicalType::String), ("is_async", LogicalType::Bool),
     ("receiver_type", LogicalType::String),
+    ("trait_name", LogicalType::String),
     ("language", LogicalType::String),
 ];
 const COLS_TYPEDECL: ColTypes = &[
@@ -772,6 +828,7 @@ const COLS_TYPEDECL: ColTypes = &[
     ("visibility", LogicalType::String),
     ("language", LogicalType::String),
     ("bases", LogicalType::String),
+    ("implements", LogicalType::String),
 ];
 const COLS_FIELD: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
@@ -816,6 +873,20 @@ const COLS_PROCESS: ColTypes = &[
     ("depth", LogicalType::Int64),
     ("symbol_count", LogicalType::Int64),
 ];
+// History layer — mirrors the NODE_COMMIT / NODE_VERSION DDL exactly.
+const COLS_COMMIT: ColTypes = &[
+    ("id", LogicalType::String), ("sha", LogicalType::String),
+    ("author", LogicalType::String), ("author_email", LogicalType::String),
+    ("committed_at", LogicalType::Int64), ("message", LogicalType::String),
+];
+const COLS_VERSION: ColTypes = &[
+    ("id", LogicalType::String), ("entity_id", LogicalType::String),
+    ("entity_kind", LogicalType::String),
+    ("qualified_name", LogicalType::String),
+    ("change_type", LogicalType::String), ("commit_sha", LogicalType::String),
+    ("committed_at", LogicalType::Int64),
+    ("lines_changed", LogicalType::Int64),
+];
 
 fn node_column_types(label: &str) -> Result<ColTypes, String> {
     match label {
@@ -833,6 +904,8 @@ fn node_column_types(label: &str) -> Result<ColTypes, String> {
         NODE_CALL_SITE => Ok(COLS_CALL_SITE),
         NODE_COMMUNITY => Ok(COLS_COMMUNITY),
         NODE_PROCESS => Ok(COLS_PROCESS),
+        NODE_COMMIT => Ok(COLS_COMMIT),
+        NODE_VERSION => Ok(COLS_VERSION),
         other => Err(format!("unknown node label for bulk insert: {other}")),
     }
 }

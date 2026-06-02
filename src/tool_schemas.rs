@@ -24,6 +24,7 @@ pub fn tools_list() -> Value {
             cluster_graph_schema(),
             get_processes_schema(),
             get_impact_schema(),
+            index_history_schema(),
             search_codebase_schema(),
             get_context_schema(),
             analyze_codebase_schema(),
@@ -341,7 +342,7 @@ fn get_processes_schema() -> Value {
 fn get_impact_schema() -> Value {
     json!({
         "name": "get_impact",
-        "description": "Stage 3c — Blast radius analysis for a symbol. Returns which communities the symbol belongs to and which processes it participates in. Requires cluster_graph to have been called first.",
+        "description": "Stage 3c — Blast radius analysis for a symbol. Returns the symbol's reverse dependencies — callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements) — each as a re-queryable {id, qualified_name, label} handle you can traverse further via get_symbol/get_context/query_graph, plus the communities the symbol belongs to and the processes it participates in. Community/process fields require cluster_graph to have been called first; reverse-dependency fields work on any resolved graph.",
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "qualified_name"],
@@ -354,6 +355,33 @@ fn get_impact_schema() -> Value {
                 "qualified_name": {
                     "type": "string",
                     "description": "The qualified name of the symbol to analyze (e.g., 'src/main.rs::handle_tool_call')."
+                }
+            }
+        }
+    })
+}
+
+fn index_history_schema() -> Value {
+    json!({
+        "name": "index_history",
+        "description": "History layer — ingests git commit history into an already-indexed graph as a traversable version spine (not a flat diff report). Creates Commit nodes with author/timestamp/message, PreviousVersion commit ancestry, and a Version node per (entity, commit) for every File and symbol a commit changed — linked by ChangedIn (version→commit) and VersionOf (version→entity), and chained by PreviousVersion (version→prior version). Lets a consumer walk: entity ← VersionOf ← Version → ChangedIn → Commit → PreviousVersion → Commit, and the reverse. File attribution is exact; symbol attribution maps changed lines onto the current graph's symbol ranges (best-effort on older commits). Call after index_codebase + resolve_graph on the same graph_path.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["graph_path", "codebase_path"],
+            "additionalProperties": false,
+            "properties": {
+                "graph_path": {
+                    "type": "string",
+                    "description": "Path to the graph directory (must already be indexed)."
+                },
+                "codebase_path": {
+                    "type": "string",
+                    "description": "Path to the git working tree that was indexed. Must be inside a git repository."
+                },
+                "max_commits": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum number of commits to walk, newest first. Defaults to 200."
                 }
             }
         }

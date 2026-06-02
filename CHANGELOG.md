@@ -6,6 +6,55 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] — History layer, declared-implements resolution, indexer batching, all-direction get_impact
+
+### Added
+
+- **Code-history temporal layer.** New `Commit` and `Version` node tables plus
+  `PreviousVersion` (commit ancestry + per-entity version chain), `ChangedIn`
+  (version→commit) and `VersionOf` (version→File/Function/Method/Struct/Enum/
+  Trait) relationship tables. A new `index_history` MCP tool walks `git log`,
+  persists commit metadata + ancestry, then records a `Version` per (entity,
+  commit) for every File and symbol a commit changed. The graph is now
+  traversable across time in both directions:
+  `entity ← VersionOf ← Version → ChangedIn → Commit → PreviousVersion → Commit`.
+  File attribution is exact; symbol attribution maps changed lines onto the
+  current graph's symbol ranges. Implemented in `src/history/`.
+- **Declared `Implements` resolution.** New `implements` column on Struct/Enum
+  (derived/declared trait names) and `trait_name` column on Method (the trait
+  of an `impl Trait for Type` block — already extracted by the parser but
+  previously dropped for lack of a column). `resolve_implements` now resolves
+  these **declared facts** — to a local `Trait` (`Implements_*_Trait`) or, for
+  `#[derive(...)]`, to a stdlib trait via the macro-expansion table
+  (`Implements_*_StdlibSymbol`, e.g. `Debug → std::fmt::Debug`) — wiring the
+  previously-unread `macro_expansion::emit_implements`.
+
+### Changed
+
+- **`get_impact` returns the real blast radius.** Previously it returned only
+  community + process membership. It now also returns reverse dependencies —
+  `callers`, `importers`, `users`, `implementors` — each as a re-queryable
+  `{id, qualified_name, label}` handle so a consumer (Cortex, an agent) keeps
+  traversing through MCP instead of receiving a terminal digest.
+- **Indexer batches inserts across files.** Symbol nodes/edges now accumulate
+  into a `SymbolBatch` and flush in large batches instead of one small bulk
+  call per file. Indexing the 500-file synthetic fixture dropped from ~140 s to
+  ~8 s (~17×); the `scalability_bench` 60 s budget now passes with wide margin.
+- **`clustering.rs` (1061 lines) and `indexer.rs` (832 lines)** split into
+  `src/clustering/{community,process,impact}` and `src/indexer/{walk,persist}`
+  directory modules to satisfy the 500-line-per-file limit. Behaviour-preserving.
+
+### Fixed
+
+- **Process call-chains were flattened.** `ParticipatesIn` edges hardcoded
+  `depth = 0`, discarding the BFS distance that was already computed. They now
+  carry the real per-step depth, so a process's participants can be ordered.
+- **`#[derive(...)]`, `impl Trait for`, and Java `implements` produced no (or
+  wrong) `Implements` edges.** The indexer dropped the parser's implements refs
+  and the resolver fell back to a fuzzy method-name-match heuristic (false
+  positives + missing every declared impl). Replaced by declared resolution
+  (see Added).
+
 ## [0.0.9] — Skip build / dependency dirs at walk time (Android, iOS, Go, JVM)
 
 ### Fixed

@@ -20,6 +20,7 @@
 mod clustering;
 mod git_diff;
 mod graph_store;
+mod history;
 mod indexer;
 mod lsp_client;
 mod lsp_resolver;
@@ -2334,6 +2335,26 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     let store = graph_store::GraphStore::open_or_create(graph_path)?;
     let impact = clustering::get_impact(&store, qn)?;
 
+    // Serialize reverse-dependency endpoints as re-queryable handles so the
+    // caller can keep traversing through MCP (get_symbol/get_context on `id`)
+    // rather than receiving a flattened terminal digest.
+    let to_handles = |nodes: &[clustering::ImpactNode]| -> Vec<Value> {
+        nodes
+            .iter()
+            .map(|n| {
+                json!({
+                    "id": n.id,
+                    "qualified_name": n.qualified_name,
+                    "label": n.label,
+                })
+            })
+            .collect()
+    };
+    let dependents_total = impact.callers.len()
+        + impact.importers.len()
+        + impact.users.len()
+        + impact.implementors.len();
+
     Ok(json!({
         "stage": 3,
         "status": "ok",
@@ -2343,6 +2364,55 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "communities_affected": impact.communities.len(),
         "processes": impact.processes,
         "processes_affected": impact.processes.len(),
+        "callers": to_handles(&impact.callers),
+        "importers": to_handles(&impact.importers),
+        "users": to_handles(&impact.users),
+        "implementors": to_handles(&impact.implementors),
+        "dependents_total": dependents_total,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// History — index_history (temporal layer over the structural snapshot)
+// ---------------------------------------------------------------------------
+
+fn run_index_history(arguments: &Value) -> Value {
+    match do_index_history(arguments) {
+        Ok(v) => v,
+        Err(msg) => json!({
+            "stage": 3, "status": "error", "reason": "index_history_failed", "message": msg
+        }),
+    }
+}
+
+fn do_index_history(arguments: &Value) -> Result<Value, String> {
+    let args = arguments.as_object().ok_or("arguments must be an object")?;
+    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+        .ok_or("missing required field 'graph_path'")?;
+    let codebase_str = args.get("codebase_path").and_then(|v| v.as_str())
+        .ok_or("missing required field 'codebase_path'")?;
+    let max_commits = args.get("max_commits").and_then(|v| v.as_u64()).map(|n| n as usize);
+
+    let graph_path = Path::new(graph_str);
+    if !graph_path.exists() {
+        return Err(format!("graph_path does not exist: {graph_str}"));
+    }
+    let codebase_path = Path::new(codebase_str);
+    if !codebase_path.exists() {
+        return Err(format!("codebase_path does not exist: {codebase_str}"));
+    }
+
+    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    let result = history::index_history(&store, codebase_path, max_commits)?;
+
+    Ok(json!({
+        "stage": 3,
+        "status": "ok",
+        "tool": "index_history",
+        "commits": result.commits,
+        "versions": result.versions,
+        "commit_edges": result.commit_edges,
+        "version_edges": result.version_edges,
     }))
 }
 
@@ -3291,6 +3361,7 @@ fn handle_tool_call(params: &Value) -> Value {
         "cluster_graph" => run_cluster_graph(&arguments),
         "get_processes" => run_get_processes(&arguments),
         "get_impact" => run_get_impact(&arguments),
+        "index_history" => run_index_history(&arguments),
         "search_codebase" => run_search_codebase(&arguments),
         "get_context" => run_get_context(&arguments),
         "analyze_codebase" => run_analyze_codebase(&arguments),

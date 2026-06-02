@@ -510,118 +510,164 @@ fn resolve_single_call(
 // source: stages/stage-3b.md §5.3
 // ---------------------------------------------------------------------------
 
+/// Resolves Implements edges from DECLARED facts, not method-name guesses.
+/// Two sources:
+///   (A) the `implements` CSV column on Struct/Enum (`#[derive(...)]` names,
+///       and, for other languages, `implements`/interface clauses), and
+///   (B) `impl Trait for Type` blocks, which the parser stamps onto each
+///       method as `trait_name` + the receiver's QN.
+///
+/// source: implements fix — replaces the prior fuzzy `trait-name-match`
+/// heuristic (which guessed Struct→Trait whenever a method name coincided
+/// with a trait method, producing false edges and missing every declared
+/// impl). Mirrors resolve_extends and finally wires the
+/// macro_expansion.emit_implements table (Debug → std::fmt::Debug, …).
 fn resolve_implements(
     store: &GraphStore,
     idx: &SymbolIndex,
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
-    let qr = store.execute_query(
-        "MATCH (m:Method) WHERE m.receiver_type <> '' \
-         RETURN m.receiver_type, m.id"
-    )?;
-    // Group by receiver_type to find trait_name property
-    let pairs: HashMap<String, String> = HashMap::new();
-    // We need trait_name — query methods that have it
-    let qr2 = store.execute_query(
-        "MATCH (m:Method) RETURN m.id, m.receiver_type"
-    )?;
-    // The trait_name is stored on method nodes but we need to find it.
-    // Methods from `impl Trait for Struct` have trait_name in their properties,
-    // but LadybugDB schema doesn't have a trait_name column on Method.
-    // The parser stores it as a property but the DDL lacks the column.
-    // We must work from the pattern: methods whose receiver_type ends with
-    // the struct name and whose qualified_name contains the struct name.
+    let mut resolved = 0u64;
+    let mut total = 0u64;
+    let mut unresolved = Vec::new();
+    let mut created_stdlib: HashSet<String> = HashSet::new();
 
-    // Alternative approach: look at method qualified names and match patterns.
-    // A method from `impl Display for GraphStore` has receiver_type = file::GraphStore
-    // and the trait was stored as trait_name in parser but NOT persisted.
-    // We need to re-derive this from the parser output. Since the 3a parser
-    // DOES extract trait_name but the DDL lacks the column, let's add it.
+    // (A) Declared/derived trait names on Struct/Enum.
+    for label in &["Struct", "Enum"] {
+        let q = format!("MATCH (s:{label}) RETURN s.id, s.implements");
+        let qr = match store.execute_query(&q) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for row in &qr.rows {
+            if row.len() < 2 {
+                continue;
+            }
+            let from_id = &row[0];
+            let csv = &row[1];
+            if csv.is_empty() || csv == "Null(String)" {
+                continue;
+            }
+            for raw in csv.split(',') {
+                let name = raw.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                total += 1;
+                if resolve_one_implements(
+                    store, idx, buf, label, from_id, name, &mut created_stdlib,
+                )? {
+                    resolved += 1;
+                } else {
+                    unresolved.push(UnresolvedRef {
+                        kind: "Implements".to_string(),
+                        from_id: from_id.clone(),
+                        target_text: name.to_string(),
+                        reason: "no_target_in_corpus".to_string(),
+                    });
+                }
+            }
+        }
+    }
 
-    // For now, we look at impl blocks indirectly: if a struct has methods
-    // whose names match trait method names, that's a strong signal.
-    // But this is unreliable. Let's skip impl resolution in this first pass
-    // and focus on what we CAN resolve from the schema.
+    // (B) `impl Trait for Type` blocks.
+    let (b_res, b_total, b_unresolved) = resolve_impl_trait_blocks(store, idx, buf)?;
+    resolved += b_res;
+    total += b_total;
+    unresolved.extend(b_unresolved);
 
-    drop(qr);
-    drop(qr2);
-    drop(pairs);
-
-    // Approach: check if Method node DDL has trait_name. If not, we can't resolve.
-    // The spec says "Method nodes with trait_name property (already extracted by 3a)".
-    // But the schema lacks the column. We must add it.
-    // For idempotent operation, just return 0 resolved if column missing.
-    let resolved_count = resolve_implements_from_schema(store, idx, buf)?;
-    Ok((resolved_count, 0, Vec::new()))
+    Ok((resolved, total, unresolved))
 }
 
-fn resolve_implements_from_schema(
+/// Resolve one implemented-trait NAME for a Struct/Enum. Prefers a local Trait
+/// in the corpus (`Implements_<Label>_Trait`, confidence 0.95); otherwise a
+/// stdlib trait via the derive macro table (`Implements_<Label>_StdlibSymbol`,
+/// 0.9). Returns true if at least one edge was newly staged.
+fn resolve_one_implements(
     store: &GraphStore,
     idx: &SymbolIndex,
     buf: &mut EdgeBuffer,
-) -> Result<u64, String> {
+    label: &str,
+    from_id: &str,
+    name: &str,
+    created_stdlib: &mut HashSet<String>,
+) -> Result<bool, String> {
+    let lookup = name.rsplit("::").next().unwrap_or(name);
+    if let Some(t) = idx
+        .by_name
+        .get(lookup)
+        .and_then(|c| c.iter().find(|e| e.label == "Trait"))
+    {
+        let table = format!("Implements_{label}_Trait");
+        return Ok(buf.add(&table, from_id, &t.id, 0.95, "declared-implements"));
+    }
+    if let Some(exp) = crate::macro_expansion::lookup("rust", &format!("derive_{name}")) {
+        let mut any = false;
+        let table = format!("Implements_{label}_StdlibSymbol");
+        for canonical in exp.emit_implements {
+            crate::resolver_layers::ensure_stdlib_symbol(
+                store, created_stdlib, canonical, "rust",
+            )?;
+            if buf.add(&table, from_id, canonical, 0.9, "derive-macro") {
+                any = true;
+            }
+        }
+        return Ok(any);
+    }
+    Ok(false)
+}
+
+/// Resolve `impl Trait for Type` blocks. The parser stamps each method in such
+/// a block with `trait_name` and the receiver's QN; we emit one
+/// `Implements_<Label>_Trait` edge per block. buf.add collapses the repeated
+/// methods of a block to a single edge.
+fn resolve_impl_trait_blocks(
+    store: &GraphStore,
+    idx: &SymbolIndex,
+    buf: &mut EdgeBuffer,
+) -> PhaseResult {
     let mut resolved = 0u64;
-    let mut seen = std::collections::HashSet::new();
-
+    let mut total = 0u64;
+    let mut unresolved = Vec::new();
     let qr = store.execute_query(
-        "MATCH (s:Struct)-[:HasMethod_Struct_Method]->(m:Method) \
-         RETURN s.id, s.name, m.name, m.receiver_type"
+        "MATCH (m:Method) WHERE m.trait_name <> '' AND m.receiver_type <> '' \
+         RETURN m.receiver_type, m.trait_name",
     )?;
-    let trait_method_map = build_trait_method_map(store)?;
-
     for row in &qr.rows {
-        if row.len() < 4 {
+        if row.len() < 2 {
             continue;
         }
-        resolved += match_struct_to_traits(
-            idx, buf, &row[0], &row[2], &trait_method_map, &mut seen,
-        );
-    }
-    Ok(resolved)
-}
-
-fn build_trait_method_map(
-    store: &GraphStore,
-) -> Result<HashMap<String, Vec<(String, String)>>, String> {
-    let qr = store.execute_query(
-        "MATCH (t:Trait)-[:HasMethod_Trait_Method]->(m:Method) \
-         RETURN t.id, t.name, m.name"
-    )?;
-    let mut map: HashMap<String, Vec<(String, String)>> = HashMap::new();
-    for row in &qr.rows {
-        if row.len() >= 3 {
-            map.entry(row[2].clone()).or_default()
-                .push((row[0].clone(), row[1].clone()));
+        let receiver_qn = row[0].trim();
+        let trait_name = row[1].trim();
+        if receiver_qn.is_empty() || trait_name.is_empty() {
+            continue;
+        }
+        let recv = match idx.by_qn.get(receiver_qn) {
+            Some(e) if e.label == "Struct" || e.label == "Enum" => e,
+            _ => continue,
+        };
+        total += 1;
+        let lookup = trait_name.rsplit("::").next().unwrap_or(trait_name);
+        match idx
+            .by_name
+            .get(lookup)
+            .and_then(|c| c.iter().find(|e| e.label == "Trait"))
+        {
+            Some(t) => {
+                let table = format!("Implements_{}_Trait", recv.label);
+                if buf.add(&table, &recv.id, &t.id, 0.95, "impl-block") {
+                    resolved += 1;
+                }
+            }
+            None => unresolved.push(UnresolvedRef {
+                kind: "Implements".to_string(),
+                from_id: recv.id.clone(),
+                target_text: trait_name.to_string(),
+                reason: "no_target_in_corpus".to_string(),
+            }),
         }
     }
-    Ok(map)
-}
-
-fn match_struct_to_traits(
-    idx: &SymbolIndex,
-    buf: &mut EdgeBuffer,
-    struct_id: &str,
-    method_name: &str,
-    trait_method_map: &HashMap<String, Vec<(String, String)>>,
-    seen: &mut std::collections::HashSet<String>,
-) -> u64 {
-    let mut count = 0;
-    let candidates = match trait_method_map.get(method_name) {
-        Some(c) => c,
-        None => return 0,
-    };
-    for (trait_id, _) in candidates {
-        let key = format!("{struct_id}->{trait_id}");
-        if seen.contains(&key) { continue; }
-        seen.insert(key);
-        let label = idx.by_qn.get(struct_id)
-            .map(|e| e.label.as_str()).unwrap_or("Struct");
-        let table = format!("Implements_{label}_Trait");
-        if buf.add(&table, struct_id, trait_id, 0.7, "trait-name-match") {
-            count += 1;
-        }
-    }
-    count
+    Ok((resolved, total, unresolved))
 }
 
 // ---------------------------------------------------------------------------
