@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — Release hygiene + flaky-test fix
+
+### Fixed
+
+- **CI flake in `stage3d_hybrid_search`.** The four hybrid-search tests share
+  the process-global `AA_SEARCH_INDEX_DIR` env var; cargo runs them on parallel
+  threads, so they stomped each other's index path and `build_search_index`
+  wiped a dir mid-read, producing a tantivy `FileDoesNotExist` on the BM25
+  store (CI run 26824494088). Serialized the four tests with a shared mutex
+  held for each test's duration — deterministic, no new dependency.
+- **Version consistency.** `Cargo.toml`, `.claude-plugin/plugin.json`, and
+  both `.claude-plugin/marketplace.json` fields are now all `0.2.1` (the 0.2.0
+  release shipped with `plugin.json`/`marketplace.json` lagging). `SERVER_VERSION`
+  derives from `CARGO_PKG_VERSION`, so the MCP handshake follows automatically.
+
 ## [0.2.0] — All-file indexing
 
 ### Added

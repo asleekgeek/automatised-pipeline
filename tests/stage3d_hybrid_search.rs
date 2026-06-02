@@ -11,6 +11,21 @@ use ai_architect_mcp::search;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+// search_graph reads the index location from the PROCESS-GLOBAL env var
+// `AA_SEARCH_INDEX_DIR`. cargo runs the tests in this binary on parallel
+// threads, so without serialization two tests stomp each other's env var
+// (and `build_search_index` wipes+rebuilds its dir), producing a tantivy
+// `FileDoesNotExist` on the BM25 store. Hold this lock for the whole of
+// each test so the env var + index belong to exactly one test at a time.
+// source: observed CI flake (stage3d_hybrid_search.rs, run 26824494088).
+fn search_test_guard() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 const FIXTURE_MAIN: &str = r#"
 fn main() {
@@ -43,7 +58,12 @@ pub fn route_incoming(path: &str) -> String {
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn setup_with_search_index(test_name: &str) -> (PathBuf, GraphStore) {
+fn setup_with_search_index(
+    test_name: &str,
+) -> (MutexGuard<'static, ()>, PathBuf, GraphStore) {
+    // Acquire BEFORE touching the shared env var / index dir; the guard is
+    // returned so the caller holds it for the whole test.
+    let guard = search_test_guard();
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let tmp_root = std::env::temp_dir().join(format!(
         "stage3d_hybrid_{}_{n}_{}", test_name, std::process::id()
@@ -72,12 +92,12 @@ fn setup_with_search_index(test_name: &str) -> (PathBuf, GraphStore) {
     let idx_dir = tmp_root.join("search_index");
     std::env::set_var("AA_SEARCH_INDEX_DIR", idx_dir.to_string_lossy().as_ref());
 
-    (tmp_root, store)
+    (guard, tmp_root, store)
 }
 
 #[test]
 fn test_hybrid_bm25_keyword_search() {
-    let (tmp_root, store) = setup_with_search_index("bm25");
+    let (_guard, tmp_root, store) = setup_with_search_index("bm25");
     let opts = search::SearchOptions {
         limit: 10,
         label_filter: None,
@@ -94,7 +114,7 @@ fn test_hybrid_bm25_keyword_search() {
 
 #[test]
 fn test_hybrid_semantic_search() {
-    let (tmp_root, store) = setup_with_search_index("semantic");
+    let (_guard, tmp_root, store) = setup_with_search_index("semantic");
     let opts = search::SearchOptions {
         limit: 10,
         label_filter: None,
@@ -121,7 +141,7 @@ fn test_hybrid_semantic_search() {
 
 #[test]
 fn test_rrf_fusion_combines_rankings() {
-    let (tmp_root, store) = setup_with_search_index("rrf");
+    let (_guard, tmp_root, store) = setup_with_search_index("rrf");
     let opts = search::SearchOptions {
         limit: 10,
         label_filter: None,
@@ -143,7 +163,7 @@ fn test_rrf_fusion_combines_rankings() {
 
 #[test]
 fn test_build_search_index_creates_files() {
-    let (tmp_root, _store) = setup_with_search_index("files");
+    let (_guard, tmp_root, _store) = setup_with_search_index("files");
 
     let bm25_dir = tmp_root.join("search_index/bm25");
     assert!(bm25_dir.exists(), "BM25 index directory should exist");
