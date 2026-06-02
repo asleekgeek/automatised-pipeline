@@ -12,6 +12,7 @@ use std::time::Instant;
 
 mod walk;
 mod persist;
+mod light_link;
 
 use walk::collect_source_files;
 use persist::{insert_ancestor_dirs, insert_dir_file_edge, insert_file_node, index_single_file};
@@ -187,6 +188,16 @@ pub fn index_codebase_with_language(
     }
     batch.flush(&store)?;
 
+    // All-file indexing post-pass: now that every File node exists, recover
+    // the import graph of files the AST parsers don't cover (.js family) as
+    // Imports_File_File edges. Forward-reference safe (all File nodes present);
+    // best-effort (unresolved specifiers skipped). source: all-file indexing.
+    match light_link::link_loose_file_imports(&store, codebase_path, &source_files) {
+        Ok(n) if n > 0 => eprintln!("indexer: light-linked {n} loose file imports (.js family)"),
+        Ok(_) => {}
+        Err(e) => eprintln!("indexer: light-link pass skipped: {e}"),
+    }
+
     let node_count = store.node_count()?;
     let edge_count = store.edge_count()?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -261,6 +272,104 @@ mod tests {
             "should have File nodes"
         );
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_all_file_indexing_documents_and_links() {
+        // All-file indexing: EVERY file becomes a File node — code, plain-text
+        // docs, structured data, AND binary documents (.pdf/.docx). Text docs
+        // additionally get light links: Markdown `[..](path)` → References,
+        // JS import/require → Imports.
+        use std::io::Write;
+        let root = std::env::temp_dir()
+            .join(format!("indexer_allfile_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("js")).unwrap();
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+
+        // Code (AST) + JS (light-link) + plain docs + structured + BINARY docs.
+        std::fs::write(root.join("mod.py"), "def f():\n    return 1\n").unwrap();
+        std::fs::write(
+            root.join("js/app.js"),
+            "import { u } from './util.js';\nconst x = require('./util');\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("js/util.js"), "export const u = 1;\n").unwrap();
+        // Markdown doc that references the python module and another doc.
+        std::fs::write(
+            root.join("docs/guide.md"),
+            "# Guide\nSee [the code](../mod.py) and [arch](./arch.md).\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("docs/arch.md"), "# Arch\n").unwrap();
+        std::fs::write(root.join("config.json"), "{\"k\": 1}\n").unwrap();
+        std::fs::write(root.join("notes.txt"), "plain text\n").unwrap();
+        // Binary documents: arbitrary non-UTF8 bytes (a real .pdf/.docx header).
+        std::fs::File::create(root.join("report.pdf"))
+            .unwrap()
+            .write_all(&[0x25, 0x50, 0x44, 0x46, 0x2d, 0x00, 0xff, 0xfe, 0x01])
+            .unwrap();
+        std::fs::File::create(root.join("spec.docx"))
+            .unwrap()
+            .write_all(&[0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0x00, 0x12])
+            .unwrap();
+
+        let tmp = std::env::temp_dir()
+            .join(format!("indexer_allfile_graph_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let result = index_codebase(&root, &tmp).unwrap();
+        let store = GraphStore::open_or_create(&tmp).unwrap();
+
+        // 9 files total — including the two BINARY documents.
+        let files = store
+            .execute_query("MATCH (f:File) RETURN count(f) AS n")
+            .unwrap();
+        assert_eq!(
+            files.rows[0][0].parse::<u64>().unwrap(),
+            9,
+            "every file — code, text docs, data, AND binary .pdf/.docx — must be a File node"
+        );
+
+        // Each document type is a navigable File node (binary included).
+        for id in [
+            "docs/guide.md", "config.json", "notes.txt", "report.pdf", "spec.docx", "js/app.js",
+        ] {
+            let q = store
+                .execute_query(&format!("MATCH (f:File) WHERE f.id = '{id}' RETURN f.id"))
+                .unwrap();
+            assert!(!q.rows.is_empty(), "missing File node for document: {id}");
+        }
+
+        // Markdown light-linking: guide.md references mod.py and arch.md.
+        let refs = store
+            .execute_query(
+                "MATCH (a:File)-[:References_File_File]->(b:File) \
+                 WHERE a.id = 'docs/guide.md' RETURN b.id",
+            )
+            .unwrap();
+        let ref_targets: Vec<&str> = refs.rows.iter().map(|r| r[0].as_str()).collect();
+        assert!(
+            ref_targets.contains(&"mod.py") && ref_targets.contains(&"docs/arch.md"),
+            "guide.md should reference mod.py + docs/arch.md, got {ref_targets:?}"
+        );
+
+        // JS light-linking: app.js imports util.js.
+        let imp = store
+            .execute_query(
+                "MATCH (a:File)-[:Imports_File_File]->(b:File) \
+                 WHERE a.id = 'js/app.js' RETURN b.id",
+            )
+            .unwrap();
+        assert!(
+            imp.rows.iter().any(|r| r[0] == "js/util.js"),
+            "js/app.js should import js/util.js, got {:?}",
+            imp.rows
+        );
+
+        assert!(result.node_count >= 9);
+        let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

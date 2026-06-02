@@ -20,7 +20,7 @@
 // Opt-in via CORTEX_FULL_CORPUS=1, same gate as corpus_full.rs, because
 // the indexer takes ~30 s on the full Cortex tree.
 
-use ai_architect_mcp::graph_store::GraphStore;
+use ai_architect_mcp::graph_store::{GraphStore, REL_TABLES};
 use ai_architect_mcp::indexer;
 use ai_architect_mcp::parser::Language;
 use ai_architect_mcp::resolver;
@@ -42,13 +42,11 @@ fn graph_state_from_store(store: &GraphStore) -> GraphState {
         "Enum", "Variant", "Trait", "Constant", "TypeAlias", "Import",
         "CallSite",
     ];
-    let nodes: Vec<NodeRef> = store
-        .iter_nodes_by_labels(labels)
+    let nodes: Vec<NodeRef> = iter_nodes_by_labels(store, labels)
         .into_iter()
         .map(|(label, id, _qn)| NodeRef { id, label })
         .collect();
-    let edges: Vec<EdgeRef> = store
-        .iter_edges()
+    let edges: Vec<EdgeRef> = iter_edges(store)
         .into_iter()
         .map(|(from, to, kind)| EdgeRef {
             from,
@@ -57,6 +55,57 @@ fn graph_state_from_store(store: &GraphStore) -> GraphState {
         })
         .collect();
     GraphState::new(nodes, edges)
+}
+
+/// Test helper: iterate every node carrying one of the given labels, returning
+/// (label, id, qualified_name_or_path). Uses only GraphStore's public query
+/// surface — kept here, beside its sole caller, rather than as production API
+/// (it has exactly one use: building the zera GraphState for this test).
+/// The schema knows which QN/path column each label exposes (File→path,
+/// Import/CallSite→id, Commit→sha, everything else→qualified_name).
+fn iter_nodes_by_labels(store: &GraphStore, labels: &[&str]) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for label in labels {
+        let qn_col = match *label {
+            "File" | "Directory" => "path",
+            "Import" | "CallSite" => "id",
+            "Commit" => "sha",
+            _ => "qualified_name",
+        };
+        let cypher = format!("MATCH (n:{label}) RETURN n.id, n.{qn_col}");
+        let qr = match store.execute_query(&cypher) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for row in qr.rows {
+            if row.len() < 2 {
+                continue;
+            }
+            out.push((label.to_string(), row[0].clone(), row[1].clone()));
+        }
+    }
+    out
+}
+
+/// Test helper: iterate every resolution-or-structural edge in the graph,
+/// returning (from_id, to_id, rel_table_name). Public-API only; see
+/// `iter_nodes_by_labels` for why it lives here.
+fn iter_edges(store: &GraphStore) -> Vec<(String, String, &'static str)> {
+    let mut out = Vec::new();
+    for (rel, _, _) in REL_TABLES {
+        let cypher = format!("MATCH (a)-[r:{rel}]->(b) RETURN a.id, b.id");
+        let qr = match store.execute_query(&cypher) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for row in qr.rows {
+            if row.len() < 2 {
+                continue;
+            }
+            out.push((row[0].clone(), row[1].clone(), *rel));
+        }
+    }
+    out
 }
 
 fn human_bytes(n: usize) -> String {
