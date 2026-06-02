@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Java `implements` and `extends` produced no graph edges.** The Java parser
+  emitted them only as `ExtractedRef`s, which the indexer drops, and never
+  populated the `bases` / `implements` node columns the resolver reads — so
+  `resolve_extends` / `resolve_implements` had nothing to work from. The parser
+  now writes both columns (mirroring `parser/rust.rs`). Additionally, the
+  interface-name extraction iterated the `super_interfaces` node's direct
+  children and so never found the type identifiers (they sit one level down in
+  a `type_list`); `extract_interfaces` now descends into the `type_list`. Java
+  `class Dog extends Animal implements Greeter` now yields `Extends_Struct_Struct`
+  and `Implements_Struct_Trait` edges.
+
 ## [0.1.0] — History layer, declared-implements resolution, indexer batching, all-direction get_impact
 
 ### Added

@@ -138,6 +138,26 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     }
     let qn = qual(scope, &name);
     let visibility = visibility_from_modifiers(ctx.source, node);
+
+    // Collect inheritance up front so it lands on the node as `bases` /
+    // `implements` columns — consumed by resolver::resolve_extends and
+    // resolve_implements respectively (name→QN resolution happens there, after
+    // all nodes are indexed). The same names are still emitted below as
+    // Extends/Implements refs for the parser-output integration tests.
+    // source: implements fix (Java) — mirror parser/rust.rs column population;
+    // Java previously emitted only refs, which the indexer drops, so Java
+    // extends/implements produced no graph edges at all.
+    let superclass = extract_superclass(ctx.source, node);
+    let interfaces = extract_interfaces(ctx.source, node);
+
+    let mut properties = Vec::new();
+    if !superclass.is_empty() {
+        properties.push(("bases".to_string(), superclass.clone()));
+    }
+    if !interfaces.is_empty() {
+        properties.push(("implements".to_string(), interfaces.join(",")));
+    }
+
     ctx.nodes.push(ExtractedNode {
         label: label.to_string(),
         name: name.clone(),
@@ -145,45 +165,74 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
         start_line: node.start_position().row as u64 + 1,
         end_line: node.end_position().row as u64 + 1,
         visibility,
-        properties: Vec::new(),
+        properties,
     });
     ctx.refs.push(ExtractedRef {
         kind: "Defines".to_string(),
         from_qualified_name: scope.to_string(),
         to_qualified_name: qn.clone(),
     });
-    // Inheritance / interface implementation.
-    if let Some(supers) = node.child_by_field_name("superclass") {
-        let name = node_text(ctx.source, supers)
-            .trim_start_matches("extends")
-            .trim()
-            .to_string();
-        if !name.is_empty() {
-            ctx.refs.push(ExtractedRef {
-                kind: "Extends".to_string(),
-                from_qualified_name: qn.clone(),
-                to_qualified_name: name,
-            });
-        }
+    if !superclass.is_empty() {
+        ctx.refs.push(ExtractedRef {
+            kind: "Extends".to_string(),
+            from_qualified_name: qn.clone(),
+            to_qualified_name: superclass,
+        });
     }
-    if let Some(ifaces) = node.child_by_field_name("interfaces") {
-        let mut cursor = ifaces.walk();
-        for child in ifaces.children(&mut cursor) {
-            let k = child.kind();
-            if k == "type_identifier" || k == "scoped_type_identifier" {
-                let name = node_text(ctx.source, child);
-                if !name.is_empty() {
-                    ctx.refs.push(ExtractedRef {
-                        kind: "Implements".to_string(),
-                        from_qualified_name: qn.clone(),
-                        to_qualified_name: name,
-                    });
-                }
-            }
-        }
+    for iface in interfaces {
+        ctx.refs.push(ExtractedRef {
+            kind: "Implements".to_string(),
+            from_qualified_name: qn.clone(),
+            to_qualified_name: iface,
+        });
     }
     if let Some(body) = node.child_by_field_name("body") {
         extract_children(ctx, body, &qn, Some(&qn));
+    }
+}
+
+/// The `extends` superclass name for a class (single; empty if none).
+/// source: tree-sitter-java — the `superclass` field text is `extends Foo`.
+fn extract_superclass(source: &str, node: Node) -> String {
+    match node.child_by_field_name("superclass") {
+        Some(supers) => node_text(source, supers)
+            .trim_start_matches("extends")
+            .trim()
+            .to_string(),
+        None => String::new(),
+    }
+}
+
+/// The implemented-interface names for a class (empty if none).
+/// source: tree-sitter-java — the `interfaces` field is a `super_interfaces`
+/// node holding the `implements` keyword plus a `type_list`; the type names
+/// live one level down inside that `type_list`, so we descend into it.
+fn extract_interfaces(source: &str, node: Node) -> Vec<String> {
+    let ifaces = match node.child_by_field_name("interfaces") {
+        Some(i) => i,
+        None => return Vec::new(),
+    };
+    let mut names = Vec::new();
+    collect_type_names(source, ifaces, &mut names);
+    names
+}
+
+/// Collects type_identifier / scoped_type_identifier names directly under
+/// `node`, descending one level through a `type_list` wrapper (the shape
+/// tree-sitter-java uses for `implements`/`extends`-interfaces clauses).
+fn collect_type_names(source: &str, node: Node, out: &mut Vec<String>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "type_identifier" | "scoped_type_identifier" => {
+                let nm = node_text(source, child);
+                if !nm.is_empty() {
+                    out.push(nm);
+                }
+            }
+            "type_list" => collect_type_names(source, child, out),
+            _ => {}
+        }
     }
 }
 

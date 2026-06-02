@@ -305,3 +305,65 @@ fn test_implements_resolution_declared() {
 
     let _ = fs::remove_dir_all(&tmp_root);
 }
+
+// ---------------------------------------------------------------------------
+// Java implements + extends — the parser now populates the bases/implements
+// columns (previously emitted only as dropped refs), so the generic resolver
+// passes produce real edges. source: implements fix (Java).
+// ---------------------------------------------------------------------------
+
+const FIXTURE_JAVA: &str = r#"
+interface Greeter {
+    String greet();
+}
+
+class Animal {
+    void breathe() {}
+}
+
+class Dog extends Animal implements Greeter {
+    public String greet() {
+        return "woof";
+    }
+}
+"#;
+
+#[test]
+fn test_java_implements_and_extends_resolution() {
+    let tmp_root = std::env::temp_dir().join(format!(
+        "stage3b_java_{}", std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp_root);
+    let src = tmp_root.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("Demo.java"), FIXTURE_JAVA).unwrap();
+
+    let graph_dir = tmp_root.join("graph");
+    indexer::index_codebase(&src, &graph_dir).expect("index");
+    let store = GraphStore::open_or_create(&graph_dir).expect("open");
+    let res = resolver::resolve_graph(&store).expect("resolve");
+
+    // Java `implements`: Dog -> Greeter (interface carries the Trait label).
+    let impl_edge = store.execute_query(
+        "MATCH (s:Struct)-[:Implements_Struct_Trait]->(t:Trait) \
+         WHERE s.name = 'Dog' RETURN t.name"
+    ).expect("query Implements_Struct_Trait");
+    assert!(
+        impl_edge.rows.iter().any(|r| r.first().map(|n| n == "Greeter").unwrap_or(false)),
+        "Dog must implement Greeter (Java implements); impls={}, got {:?}",
+        res.impls_resolved, impl_edge.rows
+    );
+
+    // Java `extends`: Dog -> Animal.
+    let ext_edge = store.execute_query(
+        "MATCH (a:Struct)-[:Extends_Struct_Struct]->(b:Struct) \
+         WHERE a.name = 'Dog' RETURN b.name"
+    ).expect("query Extends_Struct_Struct");
+    assert!(
+        ext_edge.rows.iter().any(|r| r.first().map(|n| n == "Animal").unwrap_or(false)),
+        "Dog must extend Animal (Java extends); extends={}, got {:?}",
+        res.extends_resolved, ext_edge.rows
+    );
+
+    let _ = fs::remove_dir_all(&tmp_root);
+}
