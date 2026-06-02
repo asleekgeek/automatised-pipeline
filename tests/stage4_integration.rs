@@ -155,7 +155,8 @@ fn test_prepare_prd_input_end_to_end() {
 
     let args = PrdInputArgs {
         run_id: run_id.to_string(),
-        finding_id: finding_id.to_string(),
+        finding_id: Some(finding_id.to_string()),
+        feature_description: None,
         output_dir: output_dir.clone(),
         graph_path: graph_dir.clone(),
     };
@@ -233,7 +234,8 @@ fn test_prepare_prd_input_rejects_unverified() {
 
     let args = PrdInputArgs {
         run_id: run_id.to_string(),
-        finding_id: finding_id.to_string(),
+        finding_id: Some(finding_id.to_string()),
+        feature_description: None,
         output_dir: output_dir.clone(),
         graph_path: graph_dir.clone(),
     };
@@ -260,7 +262,8 @@ fn test_prepare_prd_input_missing_stage2() {
     let output_dir = root.join("out");
     let args = PrdInputArgs {
         run_id: "run-missing".to_string(),
-        finding_id: "f-missing".to_string(),
+        finding_id: Some("f-missing".to_string()),
+        feature_description: None,
         output_dir: output_dir.clone(),
         graph_path: graph_dir.clone(),
     };
@@ -268,6 +271,54 @@ fn test_prepare_prd_input_missing_stage2() {
         .err()
         .expect("must reject missing stage2");
     assert!(err.contains("stage_2_not_verified"), "got {err}");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn test_prepare_prd_input_feature_mode_no_finding() {
+    // Feature mode: ground a free-text feature directly on the graph, with NO
+    // finding and NO stage-2 gate. Same enrichment, written under features/.
+    let root = tmp("feature");
+    let _ = fs::remove_dir_all(&root);
+
+    let fixture_dir = root.join("fixture");
+    let graph_dir = root.join("graph");
+    build_fixture_graph(&fixture_dir, &graph_dir);
+
+    let output_dir = root.join("out");
+    let args = PrdInputArgs {
+        run_id: "adhoc".to_string(),
+        finding_id: None,
+        feature_description: Some(
+            "Harden handle_tool_call to reject unknown tools".to_string(),
+        ),
+        output_dir: output_dir.clone(),
+        graph_path: graph_dir.clone(),
+    };
+    let outcome = prd_input::prepare(&args, "2026-04-11T00:03:00Z".into())
+        .expect("feature-mode prepare must succeed without a finding");
+
+    assert!(outcome.artifact_path.exists(), "artifact must be on disk");
+    // Written under features/, not findings/.
+    assert!(
+        outcome.artifact_path.to_string_lossy().contains("/features/"),
+        "feature-mode artifact should live under features/: {:?}",
+        outcome.artifact_path
+    );
+
+    let v: Value =
+        serde_json::from_str(&fs::read_to_string(&outcome.artifact_path).unwrap()).unwrap();
+    assert_eq!(v["mode"], "feature");
+    assert_eq!(v["stage2_verified_path"], "");
+    // Grounding still works: handle_tool_call is matched from the description.
+    let ms = v["prd_context"]["matched_symbols"].as_array().unwrap();
+    assert!(
+        ms.iter()
+            .any(|m| m["name"].as_str() == Some("handle_tool_call")),
+        "expected handle_tool_call grounded from feature text; got {:?}",
+        ms.iter().map(|m| m["name"].clone()).collect::<Vec<_>>()
+    );
 
     let _ = fs::remove_dir_all(&root);
 }

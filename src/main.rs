@@ -2904,18 +2904,34 @@ fn stage4_error_response(msg: &str) -> Value {
 
 fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
+    // run_id defaults to "adhoc" — required only as a path segment. In feature
+    // mode the caller often has no pipeline run.
     let run_id = args
         .get("run_id")
         .and_then(|v| v.as_str())
-        .ok_or("missing required field 'run_id'")?
+        .unwrap_or("adhoc")
         .to_string();
     validate_safe_id("run_id", &run_id)?;
-    let finding_id = args
-        .get("finding_id")
+    // finding_id is OPTIONAL now: present → finding mode (verified stage-2
+    // gate); absent → feature mode (requires feature_description).
+    let finding_id = match args.get("finding_id").and_then(|v| v.as_str()) {
+        Some(fid) => {
+            validate_safe_id("finding_id", fid)?;
+            Some(fid.to_string())
+        }
+        None => None,
+    };
+    let feature_description = args
+        .get("feature_description")
         .and_then(|v| v.as_str())
-        .ok_or("missing required field 'finding_id'")?
-        .to_string();
-    validate_safe_id("finding_id", &finding_id)?;
+        .map(|s| s.to_string());
+    if finding_id.is_none() && feature_description.is_none() {
+        return Err(
+            "missing input: provide 'finding_id' (finding mode) or \
+             'feature_description' (feature mode)"
+                .to_string(),
+        );
+    }
     let output_dir_str = args
         .get("output_dir")
         .and_then(|v| v.as_str())
@@ -2935,6 +2951,7 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         &prd_input::PrdInputArgs {
             run_id: run_id.clone(),
             finding_id: finding_id.clone(),
+            feature_description: feature_description.clone(),
             output_dir,
             graph_path,
         },
@@ -2945,6 +2962,7 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         "stage": 4,
         "status": "ok",
         "tool": "prepare_prd_input",
+        "mode": if finding_id.is_some() { "finding" } else { "feature" },
         "run_id": run_id,
         "finding_id": finding_id,
         "artifact_path": outcome.artifact_path.to_string_lossy(),
@@ -2952,6 +2970,9 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         "matched_symbol_count": outcome.matched_symbol_count,
         "impacted_community_count": outcome.impacted_community_count,
         "impacted_process_count": outcome.impacted_process_count,
+        // Grounding returned inline so the PRD generator can inject it without
+        // a second read of artifact_path.
+        "prd_context": outcome.prd_context,
         "preparer_version": prd_input::PREPARER_VERSION,
     }))
 }
