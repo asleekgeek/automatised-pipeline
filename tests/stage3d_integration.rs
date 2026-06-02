@@ -95,7 +95,7 @@ fn test_search_exact_name() {
         label_filter: None,
         min_score: 0.0,
     };
-    let results = search::search_graph(&store, "main", &opts).unwrap();
+    let results = search::search_graph(&store, "main", &opts, None).unwrap();
     assert!(!results.is_empty(), "search for 'main' should return results");
     assert_eq!(results[0].name, "main", "top result should be exact match");
     assert!(
@@ -114,7 +114,7 @@ fn test_search_partial_name() {
         label_filter: None,
         min_score: 0.0,
     };
-    let results = search::search_graph(&store, "handle", &opts).unwrap();
+    let results = search::search_graph(&store, "handle", &opts, None).unwrap();
     assert!(!results.is_empty(), "search for 'handle' should find handle_request");
     let found = results.iter().any(|r| r.name.contains("handle"));
     assert!(found, "should find a symbol containing 'handle'");
@@ -129,7 +129,7 @@ fn test_search_label_filter() {
         label_filter: Some("Function".to_string()),
         min_score: 0.0,
     };
-    let results = search::search_graph(&store, "process", &opts).unwrap();
+    let results = search::search_graph(&store, "process", &opts, None).unwrap();
     for r in &results {
         assert_eq!(r.label, "Function", "label filter should be respected");
     }
@@ -144,7 +144,7 @@ fn test_search_results_have_context() {
         label_filter: None,
         min_score: 0.0,
     };
-    let results = search::search_graph(&store, "main", &opts).unwrap();
+    let results = search::search_graph(&store, "main", &opts, None).unwrap();
     let main_result = results.iter().find(|r| r.name == "main").unwrap();
     assert!(!main_result.file_path.is_empty(), "should have file_path");
     assert!(main_result.community_id.is_some(), "main should have a community");

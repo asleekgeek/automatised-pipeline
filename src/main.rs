@@ -2443,14 +2443,13 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
-    // Set search index dir hint for hybrid search.
-    // Convention: search_index/ is a sibling of graph/ under the output dir.
-    if let Some(parent) = graph_path.parent() {
-        let search_index_dir = parent.join("search_index");
-        if search_index_dir.exists() {
-            std::env::set_var("AA_SEARCH_INDEX_DIR", search_index_dir.to_string_lossy().as_ref());
-        }
-    }
+    // The search index lives in a sibling ``search_index/`` of the graph dir.
+    // Pass it explicitly to search_graph — no process-global env hand-off
+    // (that channel raced across parallel callers; see search::search_graph).
+    let search_index_dir = graph_path
+        .parent()
+        .map(|p| p.join("search_index"))
+        .filter(|p| p.exists());
 
     let start = std::time::Instant::now();
     let store = graph_store::GraphStore::open_or_create(graph_path)?;
@@ -2459,7 +2458,8 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         label_filter,
         min_score: 0.01,
     };
-    let results = search::search_graph(&store, query, &options)?;
+    let results =
+        search::search_graph(&store, query, &options, search_index_dir.as_deref())?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
     let items: Vec<Value> = results.iter().map(|r| json!({

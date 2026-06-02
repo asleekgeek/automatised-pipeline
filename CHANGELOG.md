@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] — Remove the search-index env-var channel (flaky-test root cause)
+
+### Fixed
+
+- **Root-caused the `stage3d_hybrid_search` flake.** v0.2.1 serialized the
+  tests with a mutex — a band-aid. The structural cause was that
+  `do_search_codebase` passed the search-index directory to
+  `search::search_graph` through the PROCESS-GLOBAL env var
+  `AA_SEARCH_INDEX_DIR`, a hidden channel that races across any parallel
+  callers (and was wiped+rebuilt mid-read → tantivy `FileDoesNotExist`).
+  `search_graph` now takes `index_dir: Option<&Path>` as an explicit
+  parameter; the env var and `find_search_index_dir` are deleted. The test
+  mutex is removed — the four tests run fully parallel, each passing its own
+  index dir (verified 3× green). source: dijkstra root-cause audit.
+
 ## [0.2.1] — Release hygiene + flaky-test fix
 
 ### Fixed

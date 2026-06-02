@@ -242,7 +242,7 @@ fn search_and_enrich(store: &GraphStore, tokens: &[String]) -> Vec<MatchedSymbol
             label_filter: None,
             min_score: 0.0,
         };
-        let hits = match search::search_graph(store, token, &opts) {
+        let hits = match search::search_graph(store, token, &opts, None) {
             Ok(h) => h,
             Err(_) => continue,
         };

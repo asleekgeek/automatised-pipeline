@@ -142,6 +142,7 @@ pub fn search_graph(
     store: &GraphStore,
     query: &str,
     options: &SearchOptions,
+    index_dir: Option<&std::path::Path>,
 ) -> Result<Vec<SearchResult>, String> {
     let _start = Instant::now();
     let query_lower = query.to_lowercase();
@@ -150,9 +151,13 @@ pub fn search_graph(
         return Ok(Vec::new());
     }
 
-    // Try to find search index directory relative to the graph path.
-    // Convention: search_index/ is a sibling of graph/ under the output_dir.
-    let index_dir = find_search_index_dir(store);
+    // The search-index directory is passed by the caller (sibling
+    // ``search_index/`` of the graph dir). It used to be smuggled through the
+    // process-global env var ``AA_SEARCH_INDEX_DIR``, which raced across
+    // parallel callers/tests (tantivy FileDoesNotExist). Passing it as an
+    // argument removes that hidden global channel entirely. source: dijkstra
+    // root-cause audit of the stage3d_hybrid_search flake.
+    let index_dir = index_dir.map(|p| p.to_path_buf());
 
     let has_bm25 = index_dir.as_ref()
         .map(|d| d.join("bm25").exists())
@@ -516,21 +521,6 @@ fn find_name_candidates(store: &GraphStore, name: &str, limit: usize) -> Vec<Str
 // ---------------------------------------------------------------------------
 // Internal: find search index directory
 // ---------------------------------------------------------------------------
-
-fn find_search_index_dir(_store: &GraphStore) -> Option<std::path::PathBuf> {
-    // The GraphStore doesn't expose its path, but we can probe known locations.
-    // Convention: search_index/ is a sibling of graph/ under the output dir.
-    // The caller passes graph_path when opening the store. We use a probe:
-    // check if ../search_index/ exists relative to the DB path.
-    //
-    // Since GraphStore doesn't expose its path, we use an env-var hint
-    // set by the search tool handler, or probe common locations.
-    if let Ok(hint) = std::env::var("AA_SEARCH_INDEX_DIR") {
-        let p = std::path::PathBuf::from(hint);
-        if p.exists() { return Some(p); }
-    }
-    None
-}
 
 // ---------------------------------------------------------------------------
 // Internal: candidate fetching (for substring fallback)
