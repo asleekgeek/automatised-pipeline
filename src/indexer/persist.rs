@@ -96,6 +96,19 @@ pub(super) fn index_single_file(
     label_by_qn: &mut HashMap<String, String>,
     seen_node_ids: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
+    // Detect language FIRST (cheap, no I/O). Under all-file indexing the
+    // walker yields every file, so most non-code files reach here: they are
+    // NOT parsed (no grammar) — their File node was already inserted by the
+    // caller, and any lightweight cross-file links (e.g. .js import/require)
+    // are emitted in a dedicated post-pass once every File node exists
+    // (forward-reference safe). Returning Ok keeps them out of the error log.
+    // source: all-file indexing — every file is a File node; only supported
+    // languages get a full AST.
+    let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let lang = match Language::from_extension(ext) {
+        Some(l) => l,
+        None => return Ok(()),
+    };
     let source = std::fs::read_to_string(abs_path)
         .map_err(|e| format!("read {}: {e}", abs_path.display()))?;
     // Defense-in-depth: even if the dir walker let a large file slip (e.g.
@@ -107,9 +120,6 @@ pub(super) fn index_single_file(
             source.len(), super::MAX_PARSE_BYTES
         ));
     }
-    let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let lang = Language::from_extension(ext)
-        .ok_or_else(|| format!("unsupported file extension: {ext}"))?;
     let parsed = parser::parse_file(&source, rel_path, lang)?;
     accumulate_parsed_nodes(batch, &parsed.nodes, label_by_qn, seen_node_ids, lang.as_str());
     accumulate_parsed_edges(batch, &parsed.refs, label_by_qn);

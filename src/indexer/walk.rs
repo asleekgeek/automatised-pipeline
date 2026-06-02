@@ -77,13 +77,27 @@ fn walk_dir_recursive(
                 );
                 continue;
             }
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                let detected = Language::from_extension(ext);
-                match (language_filter, detected) {
-                    (Some(filter), Some(lang)) if filter == lang => out.push(path),
-                    (None, Some(_)) => out.push(path),
-                    _ => {}
+            // File collection policy:
+            //   * language_filter = Some(L): collect ONLY files of language L
+            //     (a scoped re-index of a single language).
+            //   * language_filter = None: ALL-FILE indexing — collect every
+            //     file regardless of extension. Code files in a supported
+            //     language get a full AST; every other file still becomes a
+            //     File node (path/name/extension/size), and .js-family files
+            //     are light-linked (import/require → Imports_File_File) in a
+            //     post-pass. Oversized files are already skipped above and
+            //     build/dependency dirs are pruned by should_skip.
+            //     source: "the pipeline should index any kind of files" — so
+            //     every file a session touches is navigable in the graph.
+            match language_filter {
+                Some(filter) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if Language::from_extension(ext) == Some(filter) {
+                            out.push(path);
+                        }
+                    }
                 }
+                None => out.push(path),
             }
         }
     }

@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — All-file indexing
+
+### Added
+
+- **The indexer now indexes ANY file type, not just the tree-sitter language
+  set.** Previously `collect_source_files` dropped every file whose extension
+  had no parser (`.js`, `.md`, `.json`, `.css`, `.html`, `.txt`, `.pdf`,
+  `.docx`, …), so a session touching those files had nothing to navigate to.
+  Now, when no language filter is given, the walker collects every file and
+  each becomes a `File` node (path / name / extension / size) — binary
+  documents included (metadata only; content is never read for them, so
+  `.pdf`/`.docx` are safe). Build/dependency dirs are still pruned and a
+  language-scoped re-index (`language_filter = Some(L)`) is unchanged.
+- **Light cross-file linking for non-AST files** (`src/indexer/light_link.rs`),
+  run as a forward-reference-safe post-pass once every `File` node exists:
+  - JavaScript family (`.js/.jsx/.mjs/.cjs`): relative `import … from "X"`,
+    `require("X")`, dynamic `import("X")` → `Imports_File_File` (Node-style
+    suffix resolution).
+  - Markdown (`.md/.markdown/.mdx`): inline links `[text](path)` → new
+    `References_File_File` edge (doc→file reference), resolved relative to the
+    doc and repo-root. External URLs / anchors / absolute paths are dropped.
+
+### Schema
+
+- New `References_File_File` rel table (resolution rel: `confidence`,
+  `resolution_method`).
+
+### Tests
+
+- `test_all_file_indexing_documents_and_links`: indexes code + JS + Markdown +
+  JSON + txt + binary `.pdf`/`.docx`; asserts all 9 become `File` nodes and
+  that Markdown References + JS Imports resolve.
+
 ### Fixed
 
 - **Java `implements` and `extends` produced no graph edges.** The Java parser
