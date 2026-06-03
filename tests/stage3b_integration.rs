@@ -232,3 +232,138 @@ pub struct Envelope {
 
     let _ = fs::remove_dir_all(&tmp_root);
 }
+
+// ---------------------------------------------------------------------------
+// Implements resolution — declared facts, not method-name guesses.
+// source: implements fix — verifies both the `#[derive(...)]` path (→ stdlib
+// trait via the macro table) and the `impl Trait for Type` path (→ local
+// Trait), neither of which the prior fuzzy stub produced reliably.
+// ---------------------------------------------------------------------------
+
+const FIXTURE_IMPLEMENTS: &str = r#"
+pub trait Greet {
+    fn greet(&self) -> String;
+}
+
+#[derive(Debug, Clone)]
+pub struct Robot {
+    pub id: i32,
+}
+
+impl Greet for Robot {
+    fn greet(&self) -> String {
+        format!("beep {}", self.id)
+    }
+}
+"#;
+
+#[test]
+fn test_implements_resolution_declared() {
+    let tmp_root = std::env::temp_dir().join(format!(
+        "stage3b_impl_{}", std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp_root);
+    let src = tmp_root.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("lib.rs"), FIXTURE_IMPLEMENTS).unwrap();
+
+    let graph_dir = tmp_root.join("graph");
+    indexer::index_codebase(&src, &graph_dir).expect("index");
+    let store = GraphStore::open_or_create(&graph_dir).expect("open");
+    let res = resolver::resolve_graph(&store).expect("resolve");
+
+    // (B) impl Trait for Type: Robot implements the local Greet trait.
+    let trait_edge = store.execute_query(
+        "MATCH (s:Struct)-[:Implements_Struct_Trait]->(t:Trait) \
+         WHERE s.name = 'Robot' RETURN t.name"
+    ).expect("query Implements_Struct_Trait");
+    assert!(
+        trait_edge.rows.iter().any(|r| r.first().map(|n| n == "Greet").unwrap_or(false)),
+        "Robot must implement local trait Greet (impl-block path); impls={}",
+        res.impls_resolved
+    );
+
+    // (A) #[derive(Debug)]: Robot implements std::fmt::Debug via the macro table.
+    let std_edge = store.execute_query(
+        "MATCH (s:Struct)-[:Implements_Struct_StdlibSymbol]->(d:StdlibSymbol) \
+         WHERE s.name = 'Robot' RETURN d.id"
+    ).expect("query Implements_Struct_StdlibSymbol");
+    assert!(
+        std_edge.rows.iter().any(|r| r.first().map(|n| n == "std::fmt::Debug").unwrap_or(false)),
+        "Robot must implement std::fmt::Debug via #[derive(Debug)]; got {:?}",
+        std_edge.rows
+    );
+
+    // The prior fuzzy stub would have guessed Implements edges from method-name
+    // coincidence; with declared resolution, greet() alone must NOT manufacture
+    // a spurious trait edge to any trait lacking a real impl. Greet is the only
+    // implemented trait, so exactly one local-trait edge from Robot.
+    assert_eq!(
+        trait_edge.rows.len(), 1,
+        "exactly one declared local-trait impl expected, got {:?}", trait_edge.rows
+    );
+
+    let _ = fs::remove_dir_all(&tmp_root);
+}
+
+// ---------------------------------------------------------------------------
+// Java implements + extends — the parser now populates the bases/implements
+// columns (previously emitted only as dropped refs), so the generic resolver
+// passes produce real edges. source: implements fix (Java).
+// ---------------------------------------------------------------------------
+
+const FIXTURE_JAVA: &str = r#"
+interface Greeter {
+    String greet();
+}
+
+class Animal {
+    void breathe() {}
+}
+
+class Dog extends Animal implements Greeter {
+    public String greet() {
+        return "woof";
+    }
+}
+"#;
+
+#[test]
+fn test_java_implements_and_extends_resolution() {
+    let tmp_root = std::env::temp_dir().join(format!(
+        "stage3b_java_{}", std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp_root);
+    let src = tmp_root.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("Demo.java"), FIXTURE_JAVA).unwrap();
+
+    let graph_dir = tmp_root.join("graph");
+    indexer::index_codebase(&src, &graph_dir).expect("index");
+    let store = GraphStore::open_or_create(&graph_dir).expect("open");
+    let res = resolver::resolve_graph(&store).expect("resolve");
+
+    // Java `implements`: Dog -> Greeter (interface carries the Trait label).
+    let impl_edge = store.execute_query(
+        "MATCH (s:Struct)-[:Implements_Struct_Trait]->(t:Trait) \
+         WHERE s.name = 'Dog' RETURN t.name"
+    ).expect("query Implements_Struct_Trait");
+    assert!(
+        impl_edge.rows.iter().any(|r| r.first().map(|n| n == "Greeter").unwrap_or(false)),
+        "Dog must implement Greeter (Java implements); impls={}, got {:?}",
+        res.impls_resolved, impl_edge.rows
+    );
+
+    // Java `extends`: Dog -> Animal.
+    let ext_edge = store.execute_query(
+        "MATCH (a:Struct)-[:Extends_Struct_Struct]->(b:Struct) \
+         WHERE a.name = 'Dog' RETURN b.name"
+    ).expect("query Extends_Struct_Struct");
+    assert!(
+        ext_edge.rows.iter().any(|r| r.first().map(|n| n == "Animal").unwrap_or(false)),
+        "Dog must extend Animal (Java extends); extends={}, got {:?}",
+        res.extends_resolved, ext_edge.rows
+    );
+
+    let _ = fs::remove_dir_all(&tmp_root);
+}

@@ -105,12 +105,12 @@ fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str) {
                 pending_derives.clear();
             }
             TS_STRUCT_ITEM => {
-                extract_struct(ctx, child, scope);
+                extract_struct(ctx, child, scope, &pending_derives);
                 emit_derive_implements(ctx, child, scope, &pending_derives);
                 pending_derives.clear();
             }
             TS_ENUM_ITEM => {
-                extract_enum(ctx, child, scope);
+                extract_enum(ctx, child, scope, &pending_derives);
                 emit_derive_implements(ctx, child, scope, &pending_derives);
                 pending_derives.clear();
             }
@@ -169,6 +169,18 @@ fn collect_derives_from_attribute(source: &str, node: Node, out: &mut Vec<String
         if !name.is_empty() {
             out.push(name.to_string());
         }
+    }
+}
+
+/// Builds the node `implements` property (a CSV of derived trait names) so
+/// resolve_implements can resolve each to a local Trait or a stdlib trait and
+/// emit the Implements edge. Empty when nothing is derived.
+/// source: implements fix — mirrors the `bases`/resolve_extends mechanism.
+fn implements_props(derives: &[String]) -> Vec<(String, String)> {
+    if derives.is_empty() {
+        Vec::new()
+    } else {
+        vec![("implements".to_string(), derives.join(","))]
     }
 }
 
@@ -232,7 +244,7 @@ fn extract_function(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 // Struct extraction
 // ---------------------------------------------------------------------------
 
-fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str, derives: &[String]) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -246,7 +258,7 @@ fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str) {
         start_line: node.start_position().row as u64 + 1,
         end_line: node.end_position().row as u64 + 1,
         visibility: vis,
-        properties: vec![],
+        properties: implements_props(derives),
     });
     ctx.refs.push(ExtractedRef {
         kind: "Defines".to_string(),
@@ -260,7 +272,7 @@ fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 // Enum extraction
 // ---------------------------------------------------------------------------
 
-fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, derives: &[String]) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -274,7 +286,7 @@ fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str) {
         start_line: node.start_position().row as u64 + 1,
         end_line: node.end_position().row as u64 + 1,
         visibility: vis,
-        properties: vec![],
+        properties: implements_props(derives),
     });
     ctx.refs.push(ExtractedRef {
         kind: "Defines".to_string(),

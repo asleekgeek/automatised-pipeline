@@ -12,6 +12,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+// These tests run in parallel (cargo default). Each builds its own index in a
+// per-test temp dir and passes that dir EXPLICITLY to search_graph, so there
+// is no shared global state to race — the previous flake came from smuggling
+// the index dir through the process-global env var AA_SEARCH_INDEX_DIR, now
+// removed at the root (search_graph takes index_dir as a parameter).
+// source: dijkstra root-cause audit (run 26824494088).
+
 const FIXTURE_MAIN: &str = r#"
 fn main() {
     let result = handle_tool_call("test");
@@ -43,7 +50,9 @@ pub fn route_incoming(path: &str) -> String {
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn setup_with_search_index(test_name: &str) -> (PathBuf, GraphStore) {
+/// Returns (tmp_root, store, index_dir). The index_dir is passed explicitly to
+/// search_graph by each test — no shared env var, so the tests are parallel-safe.
+fn setup_with_search_index(test_name: &str) -> (PathBuf, GraphStore, PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let tmp_root = std::env::temp_dir().join(format!(
         "stage3d_hybrid_{}_{n}_{}", test_name, std::process::id()
@@ -68,22 +77,19 @@ fn setup_with_search_index(test_name: &str) -> (PathBuf, GraphStore) {
     assert!(si.bm25_doc_count > 0, "should index BM25 docs");
     assert!(si.vector_doc_count > 0, "should index vector docs");
 
-    // Set env hint for search_graph to find the index
     let idx_dir = tmp_root.join("search_index");
-    std::env::set_var("AA_SEARCH_INDEX_DIR", idx_dir.to_string_lossy().as_ref());
-
-    (tmp_root, store)
+    (tmp_root, store, idx_dir)
 }
 
 #[test]
 fn test_hybrid_bm25_keyword_search() {
-    let (tmp_root, store) = setup_with_search_index("bm25");
+    let (tmp_root, store, idx_dir) = setup_with_search_index("bm25");
     let opts = search::SearchOptions {
         limit: 10,
         label_filter: None,
         min_score: 0.0,
     };
-    let results = search::search_graph(&store, "handle tool", &opts).unwrap();
+    let results = search::search_graph(&store, "handle tool", &opts, Some(&idx_dir)).unwrap();
     assert!(!results.is_empty(), "BM25 should find 'handle tool'");
     let found = results.iter().any(|r| r.name.contains("handle_tool"));
     assert!(found, "should find handle_tool_call via BM25: {:?}",
@@ -94,7 +100,7 @@ fn test_hybrid_bm25_keyword_search() {
 
 #[test]
 fn test_hybrid_semantic_search() {
-    let (tmp_root, store) = setup_with_search_index("semantic");
+    let (tmp_root, store, idx_dir) = setup_with_search_index("semantic");
     let opts = search::SearchOptions {
         limit: 10,
         label_filter: None,
@@ -102,7 +108,7 @@ fn test_hybrid_semantic_search() {
     };
     // "process incoming requests" should find process_request or route_incoming
     // via TF-IDF even though the exact phrase doesn't appear
-    let results = search::search_graph(&store, "process incoming requests", &opts).unwrap();
+    let results = search::search_graph(&store, "process incoming requests", &opts, Some(&idx_dir)).unwrap();
     assert!(!results.is_empty(),
         "semantic search should find results for 'process incoming requests'");
 
@@ -121,13 +127,13 @@ fn test_hybrid_semantic_search() {
 
 #[test]
 fn test_rrf_fusion_combines_rankings() {
-    let (tmp_root, store) = setup_with_search_index("rrf");
+    let (tmp_root, store, idx_dir) = setup_with_search_index("rrf");
     let opts = search::SearchOptions {
         limit: 10,
         label_filter: None,
         min_score: 0.0,
     };
-    let results = search::search_graph(&store, "handle", &opts).unwrap();
+    let results = search::search_graph(&store, "handle", &opts, Some(&idx_dir)).unwrap();
     assert!(!results.is_empty(), "should find results for 'handle'");
 
     // RRF scores are in the range ~0.01-0.03 (1/(60+rank))
@@ -143,7 +149,7 @@ fn test_rrf_fusion_combines_rankings() {
 
 #[test]
 fn test_build_search_index_creates_files() {
-    let (tmp_root, _store) = setup_with_search_index("files");
+    let (tmp_root, _store, _idx_dir) = setup_with_search_index("files");
 
     let bm25_dir = tmp_root.join("search_index/bm25");
     assert!(bm25_dir.exists(), "BM25 index directory should exist");

@@ -6,6 +6,131 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] — Remove the search-index env-var channel (flaky-test root cause)
+
+### Fixed
+
+- **Root-caused the `stage3d_hybrid_search` flake.** v0.2.1 serialized the
+  tests with a mutex — a band-aid. The structural cause was that
+  `do_search_codebase` passed the search-index directory to
+  `search::search_graph` through the PROCESS-GLOBAL env var
+  `AA_SEARCH_INDEX_DIR`, a hidden channel that races across any parallel
+  callers (and was wiped+rebuilt mid-read → tantivy `FileDoesNotExist`).
+  `search_graph` now takes `index_dir: Option<&Path>` as an explicit
+  parameter; the env var and `find_search_index_dir` are deleted. The test
+  mutex is removed — the four tests run fully parallel, each passing its own
+  index dir (verified 3× green). source: dijkstra root-cause audit.
+
+## [0.2.1] — Release hygiene + flaky-test fix
+
+### Fixed
+
+- **CI flake in `stage3d_hybrid_search`.** The four hybrid-search tests share
+  the process-global `AA_SEARCH_INDEX_DIR` env var; cargo runs them on parallel
+  threads, so they stomped each other's index path and `build_search_index`
+  wiped a dir mid-read, producing a tantivy `FileDoesNotExist` on the BM25
+  store (CI run 26824494088). Serialized the four tests with a shared mutex
+  held for each test's duration — deterministic, no new dependency.
+- **Version consistency.** `Cargo.toml`, `.claude-plugin/plugin.json`, and
+  both `.claude-plugin/marketplace.json` fields are now all `0.2.1` (the 0.2.0
+  release shipped with `plugin.json`/`marketplace.json` lagging). `SERVER_VERSION`
+  derives from `CARGO_PKG_VERSION`, so the MCP handshake follows automatically.
+
+## [0.2.0] — All-file indexing
+
+### Added
+
+- **The indexer now indexes ANY file type, not just the tree-sitter language
+  set.** Previously `collect_source_files` dropped every file whose extension
+  had no parser (`.js`, `.md`, `.json`, `.css`, `.html`, `.txt`, `.pdf`,
+  `.docx`, …), so a session touching those files had nothing to navigate to.
+  Now, when no language filter is given, the walker collects every file and
+  each becomes a `File` node (path / name / extension / size) — binary
+  documents included (metadata only; content is never read for them, so
+  `.pdf`/`.docx` are safe). Build/dependency dirs are still pruned and a
+  language-scoped re-index (`language_filter = Some(L)`) is unchanged.
+- **Light cross-file linking for non-AST files** (`src/indexer/light_link.rs`),
+  run as a forward-reference-safe post-pass once every `File` node exists:
+  - JavaScript family (`.js/.jsx/.mjs/.cjs`): relative `import … from "X"`,
+    `require("X")`, dynamic `import("X")` → `Imports_File_File` (Node-style
+    suffix resolution).
+  - Markdown (`.md/.markdown/.mdx`): inline links `[text](path)` → new
+    `References_File_File` edge (doc→file reference), resolved relative to the
+    doc and repo-root. External URLs / anchors / absolute paths are dropped.
+
+### Schema
+
+- New `References_File_File` rel table (resolution rel: `confidence`,
+  `resolution_method`).
+
+### Tests
+
+- `test_all_file_indexing_documents_and_links`: indexes code + JS + Markdown +
+  JSON + txt + binary `.pdf`/`.docx`; asserts all 9 become `File` nodes and
+  that Markdown References + JS Imports resolve.
+
+### Fixed
+
+- **Java `implements` and `extends` produced no graph edges.** The Java parser
+  emitted them only as `ExtractedRef`s, which the indexer drops, and never
+  populated the `bases` / `implements` node columns the resolver reads — so
+  `resolve_extends` / `resolve_implements` had nothing to work from. The parser
+  now writes both columns (mirroring `parser/rust.rs`). Additionally, the
+  interface-name extraction iterated the `super_interfaces` node's direct
+  children and so never found the type identifiers (they sit one level down in
+  a `type_list`); `extract_interfaces` now descends into the `type_list`. Java
+  `class Dog extends Animal implements Greeter` now yields `Extends_Struct_Struct`
+  and `Implements_Struct_Trait` edges.
+
+## [0.1.0] — History layer, declared-implements resolution, indexer batching, all-direction get_impact
+
+### Added
+
+- **Code-history temporal layer.** New `Commit` and `Version` node tables plus
+  `PreviousVersion` (commit ancestry + per-entity version chain), `ChangedIn`
+  (version→commit) and `VersionOf` (version→File/Function/Method/Struct/Enum/
+  Trait) relationship tables. A new `index_history` MCP tool walks `git log`,
+  persists commit metadata + ancestry, then records a `Version` per (entity,
+  commit) for every File and symbol a commit changed. The graph is now
+  traversable across time in both directions:
+  `entity ← VersionOf ← Version → ChangedIn → Commit → PreviousVersion → Commit`.
+  File attribution is exact; symbol attribution maps changed lines onto the
+  current graph's symbol ranges. Implemented in `src/history/`.
+- **Declared `Implements` resolution.** New `implements` column on Struct/Enum
+  (derived/declared trait names) and `trait_name` column on Method (the trait
+  of an `impl Trait for Type` block — already extracted by the parser but
+  previously dropped for lack of a column). `resolve_implements` now resolves
+  these **declared facts** — to a local `Trait` (`Implements_*_Trait`) or, for
+  `#[derive(...)]`, to a stdlib trait via the macro-expansion table
+  (`Implements_*_StdlibSymbol`, e.g. `Debug → std::fmt::Debug`) — wiring the
+  previously-unread `macro_expansion::emit_implements`.
+
+### Changed
+
+- **`get_impact` returns the real blast radius.** Previously it returned only
+  community + process membership. It now also returns reverse dependencies —
+  `callers`, `importers`, `users`, `implementors` — each as a re-queryable
+  `{id, qualified_name, label}` handle so a consumer (Cortex, an agent) keeps
+  traversing through MCP instead of receiving a terminal digest.
+- **Indexer batches inserts across files.** Symbol nodes/edges now accumulate
+  into a `SymbolBatch` and flush in large batches instead of one small bulk
+  call per file. Indexing the 500-file synthetic fixture dropped from ~140 s to
+  ~8 s (~17×); the `scalability_bench` 60 s budget now passes with wide margin.
+- **`clustering.rs` (1061 lines) and `indexer.rs` (832 lines)** split into
+  `src/clustering/{community,process,impact}` and `src/indexer/{walk,persist}`
+  directory modules to satisfy the 500-line-per-file limit. Behaviour-preserving.
+
+### Fixed
+
+- **Process call-chains were flattened.** `ParticipatesIn` edges hardcoded
+  `depth = 0`, discarding the BFS distance that was already computed. They now
+  carry the real per-step depth, so a process's participants can be ordered.
+- **`#[derive(...)]`, `impl Trait for`, and Java `implements` produced no (or
+  wrong) `Implements` edges.** The indexer dropped the parser's implements refs
+  and the resolver fell back to a fuzzy method-name-match heuristic (false
+  positives + missing every declared impl). Replaced by declared resolution
+  (see Added).
+
 ## [0.0.9] — Skip build / dependency dirs at walk time (Android, iOS, Go, JVM)
 
 ### Fixed

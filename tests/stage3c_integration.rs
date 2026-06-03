@@ -170,6 +170,49 @@ fn test_clustering_and_process_tracing() {
         "main should belong to at least one community"
     );
 
+    // Ordering fix: ParticipatesIn edges must carry the real BFS depth, not a
+    // flattened 0. The fixture chain is main(0) -> process_data(1) ->
+    // {sanitize,transform}(2), so the max depth across participants is > 0.
+    let depth_qr = store.execute_query(
+        "MATCH ()-[r:ParticipatesIn_Function_Process]->() RETURN r.depth"
+    ).unwrap();
+    let max_part_depth: u64 = depth_qr.rows.iter()
+        .filter_map(|r| r.first().and_then(|d| d.parse::<u64>().ok()))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_part_depth > 0,
+        "ParticipatesIn depth must reflect BFS distance (the call-chain order), \
+         not be flattened to 0; got max depth {max_part_depth}"
+    );
+
+    // Reverse-traversal fix: get_impact must return the symbols that DEPEND ON
+    // the target. process_data is called by both main and test_basic, so its
+    // callers set is non-empty and contains main.
+    let pd_qr = store.execute_query(
+        "MATCH (f:Function) WHERE f.name = 'process_data' RETURN f.id"
+    ).unwrap();
+    let pd_id = &pd_qr.rows[0][0];
+    let pd_impact = clustering::get_impact(&store, pd_id).unwrap();
+    assert!(
+        !pd_impact.callers.is_empty(),
+        "get_impact(process_data) must return its callers (main, test_basic), \
+         got none — reverse traversal flattened away"
+    );
+    let caller_qns: Vec<&str> = pd_impact.callers.iter()
+        .map(|c| c.qualified_name.as_str())
+        .collect();
+    assert!(
+        caller_qns.iter().any(|q| q.ends_with("::main")),
+        "main must appear as a caller of process_data; got {caller_qns:?}"
+    );
+    // Handles must be re-queryable: a non-empty id is what lets the caller keep
+    // traversing through MCP (get_symbol/get_context) instead of dead-ending.
+    assert!(
+        pd_impact.callers.iter().all(|c| !c.id.is_empty()),
+        "every caller handle must carry a non-empty id for further traversal"
+    );
+
     // Verify modularity is reasonable
     assert!(
         result.modularity >= -1.0 && result.modularity <= 1.0,

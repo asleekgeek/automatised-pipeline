@@ -72,14 +72,16 @@ pub struct DiffAnalysis {
 // Diff parsing — unified diff format
 // ---------------------------------------------------------------------------
 
-struct FileHunk {
-    file_path: String,
-    changed_lines: Vec<u64>,
-    is_new: bool,
-    is_deleted: bool,
+// pub(crate): reused by the history module, which parses per-commit
+// `git show` diffs into the same hunk shape to attribute changes to entities.
+pub(crate) struct FileHunk {
+    pub(crate) file_path: String,
+    pub(crate) changed_lines: Vec<u64>,
+    pub(crate) is_new: bool,
+    pub(crate) is_deleted: bool,
 }
 
-fn parse_unified_diff(diff_text: &str) -> Result<Vec<FileHunk>, String> {
+pub(crate) fn parse_unified_diff(diff_text: &str) -> Result<Vec<FileHunk>, String> {
     let mut hunks: Vec<FileHunk> = Vec::new();
     let mut current_file: Option<String> = None;
     let mut current_lines: Vec<u64> = Vec::new();

@@ -20,6 +20,7 @@
 mod clustering;
 mod git_diff;
 mod graph_store;
+mod history;
 mod indexer;
 mod lsp_client;
 mod lsp_resolver;
@@ -2334,6 +2335,26 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     let store = graph_store::GraphStore::open_or_create(graph_path)?;
     let impact = clustering::get_impact(&store, qn)?;
 
+    // Serialize reverse-dependency endpoints as re-queryable handles so the
+    // caller can keep traversing through MCP (get_symbol/get_context on `id`)
+    // rather than receiving a flattened terminal digest.
+    let to_handles = |nodes: &[clustering::ImpactNode]| -> Vec<Value> {
+        nodes
+            .iter()
+            .map(|n| {
+                json!({
+                    "id": n.id,
+                    "qualified_name": n.qualified_name,
+                    "label": n.label,
+                })
+            })
+            .collect()
+    };
+    let dependents_total = impact.callers.len()
+        + impact.importers.len()
+        + impact.users.len()
+        + impact.implementors.len();
+
     Ok(json!({
         "stage": 3,
         "status": "ok",
@@ -2343,6 +2364,55 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "communities_affected": impact.communities.len(),
         "processes": impact.processes,
         "processes_affected": impact.processes.len(),
+        "callers": to_handles(&impact.callers),
+        "importers": to_handles(&impact.importers),
+        "users": to_handles(&impact.users),
+        "implementors": to_handles(&impact.implementors),
+        "dependents_total": dependents_total,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// History — index_history (temporal layer over the structural snapshot)
+// ---------------------------------------------------------------------------
+
+fn run_index_history(arguments: &Value) -> Value {
+    match do_index_history(arguments) {
+        Ok(v) => v,
+        Err(msg) => json!({
+            "stage": 3, "status": "error", "reason": "index_history_failed", "message": msg
+        }),
+    }
+}
+
+fn do_index_history(arguments: &Value) -> Result<Value, String> {
+    let args = arguments.as_object().ok_or("arguments must be an object")?;
+    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+        .ok_or("missing required field 'graph_path'")?;
+    let codebase_str = args.get("codebase_path").and_then(|v| v.as_str())
+        .ok_or("missing required field 'codebase_path'")?;
+    let max_commits = args.get("max_commits").and_then(|v| v.as_u64()).map(|n| n as usize);
+
+    let graph_path = Path::new(graph_str);
+    if !graph_path.exists() {
+        return Err(format!("graph_path does not exist: {graph_str}"));
+    }
+    let codebase_path = Path::new(codebase_str);
+    if !codebase_path.exists() {
+        return Err(format!("codebase_path does not exist: {codebase_str}"));
+    }
+
+    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    let result = history::index_history(&store, codebase_path, max_commits)?;
+
+    Ok(json!({
+        "stage": 3,
+        "status": "ok",
+        "tool": "index_history",
+        "commits": result.commits,
+        "versions": result.versions,
+        "commit_edges": result.commit_edges,
+        "version_edges": result.version_edges,
     }))
 }
 
@@ -2373,14 +2443,13 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
-    // Set search index dir hint for hybrid search.
-    // Convention: search_index/ is a sibling of graph/ under the output dir.
-    if let Some(parent) = graph_path.parent() {
-        let search_index_dir = parent.join("search_index");
-        if search_index_dir.exists() {
-            std::env::set_var("AA_SEARCH_INDEX_DIR", search_index_dir.to_string_lossy().as_ref());
-        }
-    }
+    // The search index lives in a sibling ``search_index/`` of the graph dir.
+    // Pass it explicitly to search_graph — no process-global env hand-off
+    // (that channel raced across parallel callers; see search::search_graph).
+    let search_index_dir = graph_path
+        .parent()
+        .map(|p| p.join("search_index"))
+        .filter(|p| p.exists());
 
     let start = std::time::Instant::now();
     let store = graph_store::GraphStore::open_or_create(graph_path)?;
@@ -2389,7 +2458,8 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         label_filter,
         min_score: 0.01,
     };
-    let results = search::search_graph(&store, query, &options)?;
+    let results =
+        search::search_graph(&store, query, &options, search_index_dir.as_deref())?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
     let items: Vec<Value> = results.iter().map(|r| json!({
@@ -2834,18 +2904,34 @@ fn stage4_error_response(msg: &str) -> Value {
 
 fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
+    // run_id defaults to "adhoc" — required only as a path segment. In feature
+    // mode the caller often has no pipeline run.
     let run_id = args
         .get("run_id")
         .and_then(|v| v.as_str())
-        .ok_or("missing required field 'run_id'")?
+        .unwrap_or("adhoc")
         .to_string();
     validate_safe_id("run_id", &run_id)?;
-    let finding_id = args
-        .get("finding_id")
+    // finding_id is OPTIONAL now: present → finding mode (verified stage-2
+    // gate); absent → feature mode (requires feature_description).
+    let finding_id = match args.get("finding_id").and_then(|v| v.as_str()) {
+        Some(fid) => {
+            validate_safe_id("finding_id", fid)?;
+            Some(fid.to_string())
+        }
+        None => None,
+    };
+    let feature_description = args
+        .get("feature_description")
         .and_then(|v| v.as_str())
-        .ok_or("missing required field 'finding_id'")?
-        .to_string();
-    validate_safe_id("finding_id", &finding_id)?;
+        .map(|s| s.to_string());
+    if finding_id.is_none() && feature_description.is_none() {
+        return Err(
+            "missing input: provide 'finding_id' (finding mode) or \
+             'feature_description' (feature mode)"
+                .to_string(),
+        );
+    }
     let output_dir_str = args
         .get("output_dir")
         .and_then(|v| v.as_str())
@@ -2865,6 +2951,7 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         &prd_input::PrdInputArgs {
             run_id: run_id.clone(),
             finding_id: finding_id.clone(),
+            feature_description: feature_description.clone(),
             output_dir,
             graph_path,
         },
@@ -2875,6 +2962,7 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         "stage": 4,
         "status": "ok",
         "tool": "prepare_prd_input",
+        "mode": if finding_id.is_some() { "finding" } else { "feature" },
         "run_id": run_id,
         "finding_id": finding_id,
         "artifact_path": outcome.artifact_path.to_string_lossy(),
@@ -2882,6 +2970,9 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         "matched_symbol_count": outcome.matched_symbol_count,
         "impacted_community_count": outcome.impacted_community_count,
         "impacted_process_count": outcome.impacted_process_count,
+        // Grounding returned inline so the PRD generator can inject it without
+        // a second read of artifact_path.
+        "prd_context": outcome.prd_context,
         "preparer_version": prd_input::PREPARER_VERSION,
     }))
 }
@@ -3291,6 +3382,7 @@ fn handle_tool_call(params: &Value) -> Value {
         "cluster_graph" => run_cluster_graph(&arguments),
         "get_processes" => run_get_processes(&arguments),
         "get_impact" => run_get_impact(&arguments),
+        "index_history" => run_index_history(&arguments),
         "search_codebase" => run_search_codebase(&arguments),
         "get_context" => run_get_context(&arguments),
         "analyze_codebase" => run_analyze_codebase(&arguments),

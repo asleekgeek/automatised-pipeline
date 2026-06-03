@@ -1,0 +1,151 @@
+use crate::parser::Language;
+use std::path::{Path, PathBuf};
+
+// ---------------------------------------------------------------------------
+// Directory walking
+// ---------------------------------------------------------------------------
+
+/// Recursively collects source files, skipping hidden dirs, target/, node_modules/.
+/// When `language_filter` is Some, only collects files for that language.
+/// When None, collects all files with recognized extensions.
+///
+/// Symlinks are intentionally NOT followed — source: security hardening (C4).
+/// This prevents a symlink inside the codebase from causing `read_dir` to
+/// silently traverse outside the tree (e.g. to `/etc/passwd` or `~/.ssh`).
+pub(super) fn collect_source_files(
+    root: &Path,
+    language_filter: Option<Language>,
+) -> Result<Vec<PathBuf>, String> {
+    let mut result = Vec::new();
+    walk_dir_recursive(root, &mut result, language_filter, 0)?;
+    if result.len() > super::MAX_FILES {
+        return Err(format!(
+            "too_many_files: codebase contains {} files, MAX_FILES is {}",
+            result.len(), super::MAX_FILES
+        ));
+    }
+    result.sort();
+    Ok(result)
+}
+
+fn walk_dir_recursive(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    language_filter: Option<Language>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > super::MAX_DEPTH {
+        return Err(format!(
+            "walk_too_deep: exceeded MAX_DEPTH ({}) at {}",
+            super::MAX_DEPTH,
+            dir.display()
+        ));
+    }
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if should_skip(&name_str) {
+            continue;
+        }
+        // Use symlink_metadata (lstat) instead of metadata (stat) so symlinks
+        // are detected and skipped rather than silently followed.
+        // source: C4 fix — POSIX lstat(2), does not follow the final symlink.
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_symlink() {
+            continue; // intentionally skip symlinks
+        }
+        if meta.is_dir() {
+            walk_dir_recursive(&path, out, language_filter, depth + 1)?;
+            if out.len() > super::MAX_FILES {
+                return Err(format!(
+                    "too_many_files: exceeded MAX_FILES ({}) during walk",
+                    super::MAX_FILES
+                ));
+            }
+        } else if meta.is_file() {
+            if meta.len() > super::MAX_FILE_BYTES {
+                eprintln!(
+                    "indexer: skipping oversized file ({} bytes > MAX_FILE_BYTES {}): {}",
+                    meta.len(), super::MAX_FILE_BYTES, path.display()
+                );
+                continue;
+            }
+            // File collection policy:
+            //   * language_filter = Some(L): collect ONLY files of language L
+            //     (a scoped re-index of a single language).
+            //   * language_filter = None: ALL-FILE indexing — collect every
+            //     file regardless of extension. Code files in a supported
+            //     language get a full AST; every other file still becomes a
+            //     File node (path/name/extension/size), and .js-family files
+            //     are light-linked (import/require → Imports_File_File) in a
+            //     post-pass. Oversized files are already skipped above and
+            //     build/dependency dirs are pruned by should_skip.
+            //     source: "the pipeline should index any kind of files" — so
+            //     every file a session touches is navigable in the graph.
+            match language_filter {
+                Some(filter) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if Language::from_extension(ext) == Some(filter) {
+                            out.push(path);
+                        }
+                    }
+                }
+                None => out.push(path),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns true for directories that should be skipped during walk.
+///
+/// Covers build / dependency / cache directories across the languages
+/// the indexer supports. source: empirical — without ``build`` and
+/// ``Pods`` excluded, an Android repo's ``app/build/intermediates/``
+/// alone produces tens of thousands of stat() calls and many hundred
+/// MB of *.dex / *.aar / *.jar files that the indexer rejects per-file
+/// after walking into them. Filtering at the directory level avoids
+/// the descent entirely.
+fn should_skip(name: &str) -> bool {
+    name.starts_with('.')
+        // Rust
+        || name == "target"
+        // JS / TS / Node
+        || name == "node_modules"
+        // Python
+        || name == "__pycache__"
+        || name == ".venv"
+        || name == "venv"
+        || name == ".pytest_cache"
+        || name == ".mypy_cache"
+        || name == ".tox"
+        || name == ".eggs"
+        // JVM / Android (Gradle / Maven / Eclipse / IntelliJ)
+        || name == "build"
+        || name == "out"
+        || name == ".gradle"
+        || name == ".idea"
+        // Apple (Xcode / SPM / CocoaPods / Carthage)
+        || name == "Pods"
+        || name == "DerivedData"
+        || name == ".build"
+        || name == "Carthage"
+        || name == ".swiftpm"
+        // Go
+        || name == "vendor"
+        // General build output
+        || name == "dist"
+        || name == "bin"
+        || name == "obj"
+        // Test / coverage
+        || name == "coverage"
+        || name == ".nyc_output"
+        // VCS already filtered by ``starts_with('.')`` (covers .git)
+}

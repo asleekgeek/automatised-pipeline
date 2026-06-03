@@ -24,6 +24,7 @@ pub fn tools_list() -> Value {
             cluster_graph_schema(),
             get_processes_schema(),
             get_impact_schema(),
+            index_history_schema(),
             search_codebase_schema(),
             get_context_schema(),
             analyze_codebase_schema(),
@@ -341,7 +342,7 @@ fn get_processes_schema() -> Value {
 fn get_impact_schema() -> Value {
     json!({
         "name": "get_impact",
-        "description": "Stage 3c — Blast radius analysis for a symbol. Returns which communities the symbol belongs to and which processes it participates in. Requires cluster_graph to have been called first.",
+        "description": "Stage 3c — Blast radius analysis for a symbol. Returns the symbol's reverse dependencies — callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements) — each as a re-queryable {id, qualified_name, label} handle you can traverse further via get_symbol/get_context/query_graph, plus the communities the symbol belongs to and the processes it participates in. Community/process fields require cluster_graph to have been called first; reverse-dependency fields work on any resolved graph.",
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "qualified_name"],
@@ -354,6 +355,33 @@ fn get_impact_schema() -> Value {
                 "qualified_name": {
                     "type": "string",
                     "description": "The qualified name of the symbol to analyze (e.g., 'src/main.rs::handle_tool_call')."
+                }
+            }
+        }
+    })
+}
+
+fn index_history_schema() -> Value {
+    json!({
+        "name": "index_history",
+        "description": "History layer — ingests git commit history into an already-indexed graph as a traversable version spine (not a flat diff report). Creates Commit nodes with author/timestamp/message, PreviousVersion commit ancestry, and a Version node per (entity, commit) for every File and symbol a commit changed — linked by ChangedIn (version→commit) and VersionOf (version→entity), and chained by PreviousVersion (version→prior version). Lets a consumer walk: entity ← VersionOf ← Version → ChangedIn → Commit → PreviousVersion → Commit, and the reverse. File attribution is exact; symbol attribution maps changed lines onto the current graph's symbol ranges (best-effort on older commits). Call after index_codebase + resolve_graph on the same graph_path.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["graph_path", "codebase_path"],
+            "additionalProperties": false,
+            "properties": {
+                "graph_path": {
+                    "type": "string",
+                    "description": "Path to the graph directory (must already be indexed)."
+                },
+                "codebase_path": {
+                    "type": "string",
+                    "description": "Path to the git working tree that was indexed. Must be inside a git repository."
+                },
+                "max_commits": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum number of commits to walk, newest first. Defaults to 200."
                 }
             }
         }
@@ -492,16 +520,17 @@ fn lsp_resolve_schema() -> Value {
 fn prepare_prd_input_schema() -> Value {
     json!({
         "name": "prepare_prd_input",
-        "description": "Stage 4 — Bundle the verified stage-2 finding + graph intel (matched symbols, impacted communities, impacted processes, graph stats) into stage-4.prd_input.json. Read-only against the graph. Writes one JSON artifact under <output_dir>/runs/<run_id>/findings/<finding_id>/ and updates the run's index.json with stage4 markers. Consumed by the TypeScript PRD generator.",
+        "description": "Stage 4 — Bundle graph intel (matched symbols, impacted communities, impacted processes, graph stats) into stage-4.prd_input.json for the PRD generator. Read-only against the graph. TWO modes: (1) FINDING mode — pass finding_id to bundle a VERIFIED stage-2 finding (writes under runs/<run_id>/findings/<finding_id>/ and updates index.json); (2) FEATURE mode — pass feature_description (no finding_id) to ground a free-text feature directly on the code graph, skipping the stage-2 gate (writes under runs/<run_id>/features/<slug>/). Provide finding_id OR feature_description.",
         "inputSchema": {
             "type": "object",
-            "required": ["run_id", "finding_id", "output_dir", "graph_path"],
+            "required": ["output_dir", "graph_path"],
             "additionalProperties": false,
             "properties": {
-                "run_id":     { "type": "string" },
-                "finding_id": { "type": "string" },
-                "output_dir": { "type": "string", "pattern": "^/.+" },
-                "graph_path": { "type": "string", "pattern": "^/.+" }
+                "run_id":              { "type": "string", "description": "Pipeline run id (path segment). Defaults to 'adhoc' in feature mode." },
+                "finding_id":          { "type": "string", "description": "Finding mode: the verified stage-2 finding to bundle. Omit for feature mode." },
+                "feature_description": { "type": "string", "description": "Feature mode: free-text feature/intent to ground on the graph. Used when finding_id is absent." },
+                "output_dir":          { "type": "string", "pattern": "^/.+" },
+                "graph_path":          { "type": "string", "pattern": "^/.+" }
             }
         }
     })
