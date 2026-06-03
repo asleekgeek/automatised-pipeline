@@ -62,6 +62,14 @@ impl Language {
             "c" | "h" => Some(Language::C),
             "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" => Some(Language::Cpp),
             "go" => Some(Language::Go),
+            // JavaScript family — parsed with the TypeScript grammar.
+            // JS is a subset of TS and tree-sitter is error-tolerant, so
+            // functions/classes are extracted (JSX recovers gracefully).
+            // Previously .js was light-link-only (import edges, no symbols),
+            // so the AST/impact diagram was empty for JavaScript — only
+            // Python/TS produced symbols. source: viz "AST regardless of
+            // file type" requirement, 2026-06-03.
+            "js" | "jsx" | "mjs" | "cjs" => Some(Language::TypeScript),
             _ => None,
         }
     }
@@ -200,8 +208,10 @@ mod tests {
         assert_eq!(Language::from_extension("tsx"), Some(Language::TypeScript));
         assert_eq!(Language::from_extension("java"), Some(Language::Java));
         assert_eq!(Language::from_extension("go"), Some(Language::Go));
-        // js has no tree-sitter parser wired in — stays unsupported.
-        assert_eq!(Language::from_extension("js"), None);
+        // JS family is parsed with the TypeScript grammar (JS ⊂ TS).
+        assert_eq!(Language::from_extension("js"), Some(Language::TypeScript));
+        assert_eq!(Language::from_extension("jsx"), Some(Language::TypeScript));
+        assert_eq!(Language::from_extension("mjs"), Some(Language::TypeScript));
     }
 
     #[test]
