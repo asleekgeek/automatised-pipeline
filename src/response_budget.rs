@@ -26,6 +26,35 @@
 //! average, we accumulate the *actual* serialized size of each item and stop
 //! before the running total would exceed the budget. This is the byte-budget
 //! the plan prefers over a row cap.
+//!
+//! # Why no safety factor is applied (the byte budget is inherently conservative)
+//!
+//! The host's token estimator runs on JavaScript `String.length`, which counts
+//! **UTF-16 code units**. Our budget is measured with `serde_json::to_string`,
+//! whose `.len()` counts **UTF-8 bytes**. For every Unicode scalar value, the
+//! UTF-8 byte length is `>=` the UTF-16 code-unit length, proven per scalar
+//! class:
+//!   - ASCII (U+0000..U+007F):        1 UTF-8 byte  >= 1 UTF-16 unit.
+//!   - BMP non-ASCII (U+0080..U+FFFF): 2 or 3 bytes  >= 1 UTF-16 unit.
+//!   - Astral / non-BMP (U+10000..):   4 bytes       >= 2 UTF-16 units (surrogate pair).
+//! Summing over any string, `utf8_bytes >= utf16_units`. Therefore the byte
+//! budget enforced by `bound_values` can NEVER overshoot the host's UTF-16-unit
+//! count — it only ever under-fills relative to the host estimate, which is the
+//! safe direction. No safety factor is needed and none is applied; introducing
+//! one would only waste budget. (See the `utf8_bytes_dominate_utf16_units`
+//! test for the executable witness of this invariant.)
+//!
+//! Note the asymmetry with the Cortex Python sibling
+//! (`mcp_server/core/response_budget.py`), which applies
+//! `SAFETY_FACTOR = 0.75`. Python `len()` counts **Unicode code points**, and a
+//! code point can UNDERCOUNT UTF-16 units (a single non-BMP scalar is 1 code
+//! point but 2 UTF-16 units). That divergence runs the *unsafe* direction — the
+//! measured size can be below the host's count — so Cortex must discount. Rust's
+//! byte count diverges the *safe* direction, so the two repos legitimately
+//! differ on whether a safety factor is required.
+//! source: ai-prd-builder `ContextManager.swift`, commit 462de01 — the original
+//! UTF-16-units-vs-code-points estimator divergence that motivates the Cortex
+//! `SAFETY_FACTOR`.
 
 use serde_json::Value;
 
@@ -82,9 +111,11 @@ pub fn bound_values(values: Vec<Value>, char_budget: usize) -> Bounded {
 
     for v in values {
         // serde_json::to_string is the same compact serialization the host
-        // measures; its char count is the byte count for ASCII and an upper
-        // bound is unnecessary because we compare against a char budget that is
-        // itself derived from the host's char-based estimator.
+        // measures. Its `.len()` is the UTF-8 byte count, which is >= the host's
+        // UTF-16 code-unit count for every string (see module docs, "Why no
+        // safety factor is applied"). Counting bytes therefore only ever
+        // overestimates payload size against the host budget — the safe
+        // direction — so no inflation or safety factor is needed here.
         let size = serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
         // Always admit the first item so the caller never gets an empty section
         // purely because one row is large; otherwise stop before overflowing.
@@ -156,6 +187,31 @@ mod tests {
         assert_eq!(b.items.len(), 1); // big kept, small dropped
         assert!(b.truncated);
         assert_eq!(b.total_count, 2);
+    }
+
+    #[test]
+    fn utf8_bytes_dominate_utf16_units() {
+        // Executable witness for the module-doc invariant: the UTF-8 byte length
+        // serde_json measures is never less than the UTF-16 code-unit length the
+        // host's String.length estimator counts. Mixed string spans all three
+        // scalar classes: ASCII, BMP non-ASCII, and astral (non-BMP).
+        let mixed = "abcé🦀"; // ASCII x3 + 'é' (U+00E9, BMP) + '🦀' (U+1F980, astral)
+        let utf8_bytes = mixed.len();
+        let utf16_units = mixed.encode_utf16().count();
+
+        // Per-class arithmetic, documented by exact counts:
+        //   'a','b','c' : 1 byte  / 1 unit each -> 3 bytes / 3 units
+        //   'é'         : 2 bytes / 1 unit       -> 5 bytes / 4 units
+        //   '🦀'        : 4 bytes / 2 units (surrogate pair) -> 9 bytes / 6 units
+        assert_eq!(utf8_bytes, 9, "expected 3 + 2 + 4 UTF-8 bytes");
+        assert_eq!(utf16_units, 6, "expected 3 + 1 + 2 UTF-16 code units");
+
+        // The invariant the budget relies on: bytes >= units, so a byte budget
+        // can never overshoot the host's UTF-16-unit count.
+        assert!(
+            utf8_bytes >= utf16_units,
+            "UTF-8 byte len {utf8_bytes} must be >= UTF-16 unit count {utf16_units}"
+        );
     }
 
     #[test]
