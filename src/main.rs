@@ -30,6 +30,7 @@ mod prd_input;
 mod prd_validator;
 mod resolver;
 mod resolver_layers;
+mod response_budget;
 mod rust_parser;
 mod search;
 mod security_gates;
@@ -1990,13 +1991,34 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
+    // Bound caller-supplied Cypher: if it has no LIMIT clause, inject one so an
+    // unbounded MATCH cannot return enough rows to blow the host's MCP
+    // tool-result cap. Queries that already declare a LIMIT are left untouched.
+    let (effective_query, limit_injected) = inject_limit_if_absent(query);
+
     let start = std::time::Instant::now();
     let store = graph_store::GraphStore::open_or_create(graph_path)?;
-    let qr = store.execute_query(query)?;
+    let qr = store.execute_query(&effective_query)?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
-    let rows: Vec<Value> = qr.rows.iter()
+    // Second-stage guard: even with the row LIMIT, wide rows (e.g. `RETURN n`
+    // serializing whole nodes) can exceed the byte budget. Bound by serialized
+    // size and flag truncation so the caller can detect a cut.
+    let all_rows: Vec<Value> = qr.rows.iter()
         .map(|row| Value::Array(row.iter().map(|c| json!(c)).collect()))
+        .collect();
+    let bounded = response_budget::bound_values(
+        all_rows,
+        response_budget::MAX_RESPONSE_CHARS,
+    );
+    let returned_rows = &bounded.items;
+
+    // Rebuild the human-readable string from only the rows we are returning so
+    // it stays within budget alongside the structured `rows`.
+    let returned_string_rows: Vec<Vec<String>> = qr.rows
+        .iter()
+        .take(returned_rows.len())
+        .cloned()
         .collect();
 
     Ok(json!({
@@ -2004,10 +2026,68 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
         "status": "ok",
         "tool": "query_graph",
         "columns": qr.columns,
-        "rows": rows,
-        "result": format_query_result(&qr.columns, &qr.rows),
+        "rows": returned_rows,
+        "result": format_query_result(&qr.columns, &returned_string_rows),
         "elapsed_ms": elapsed_ms,
+        "total_count": bounded.total_count,
+        "returned_count": returned_rows.len(),
+        "truncated": bounded.truncated,
+        "limit_injected": limit_injected,
     }))
+}
+
+/// Maximum rows injected into a caller's Cypher when it declares no LIMIT.
+///
+/// source: derived from the response budget — `MAX_RESPONSE_CHARS / typical
+/// row chars`. A typical structured row in this graph serializes to ~90–140
+/// chars (measured in `response_budget::tests::measure_representative_row_size`);
+/// `100_000 / 140 ≈ 714`. We round down to a conservative bound so the injected
+/// LIMIT alone keeps even moderately wide rows under the cap, with the
+/// byte-budget pass above as the exact backstop.
+const QUERY_GRAPH_ROW_LIMIT: usize = 500;
+
+/// Appends `LIMIT <QUERY_GRAPH_ROW_LIMIT>` to `query` when no LIMIT clause is
+/// already present. Returns the (possibly rewritten) query and whether a limit
+/// was injected.
+///
+/// precondition: `query` has already passed `forbidden_cypher_keyword` (it is a
+/// read-only query).
+/// postcondition: the returned query contains a LIMIT clause; if the input
+/// already had one the input is returned verbatim (`limit_injected == false`).
+fn inject_limit_if_absent(query: &str) -> (String, bool) {
+    if has_limit_clause(query) {
+        return (query.to_string(), false);
+    }
+    // Strip a trailing semicolon/whitespace before appending so we don't emit
+    // `... ; LIMIT n`, which Cypher rejects.
+    let trimmed = query.trim_end().trim_end_matches(';').trim_end();
+    (format!("{trimmed} LIMIT {QUERY_GRAPH_ROW_LIMIT}"), true)
+}
+
+/// Detects whether a Cypher query already declares a `LIMIT` clause.
+///
+/// Matches the keyword `LIMIT` (case-insensitive) only when it stands as a word
+/// — not as a substring of an identifier like `node_limit`. This is a syntactic
+/// guard, not a full parser: the graph engine itself rejects malformed Cypher.
+fn has_limit_clause(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut idx = 0;
+    while let Some(pos) = lower[idx..].find("limit") {
+        let start = idx + pos;
+        let end = start + "limit".len();
+        let prev_ok = start == 0 || !is_ident_char(bytes[start - 1]);
+        let next_ok = end >= bytes.len() || !is_ident_char(bytes[end]);
+        if prev_ok && next_ok {
+            return true;
+        }
+        idx = end;
+    }
+    false
+}
+
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 fn format_query_result(columns: &[String], rows: &[Vec<String>]) -> String {
@@ -2298,12 +2378,21 @@ fn do_get_processes(arguments: &Value) -> Result<Value, String> {
         "node_count": p.node_count,
     })).collect();
 
+    // Bound the array by serialized size so a graph with thousands of entry
+    // points cannot blow the host's MCP tool-result cap.
+    let bounded = response_budget::bound_values(
+        procs,
+        response_budget::per_section_chars(),
+    );
+
     Ok(json!({
         "stage": 3,
         "status": "ok",
         "tool": "get_processes",
-        "process_count": procs.len(),
-        "processes": procs,
+        "process_count": bounded.items.len(),
+        "total_count": bounded.total_count,
+        "truncated": bounded.truncated,
+        "processes": bounded.items,
     }))
 }
 
@@ -2350,10 +2439,29 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
             })
             .collect()
     };
+    // dependents_total is computed from the FULL, pre-truncation counts so the
+    // caller always sees the true blast-radius size even when a section is cut.
     let dependents_total = impact.callers.len()
         + impact.importers.len()
         + impact.users.len()
         + impact.implementors.len();
+
+    // Bound each handle section independently by serialized size. Each section
+    // gets a share of the budget so the assembled response — which carries four
+    // such arrays plus communities/processes — cannot exceed the host cap.
+    let callers = response_budget::bound_values(
+        to_handles(&impact.callers), response_budget::per_section_chars());
+    let importers = response_budget::bound_values(
+        to_handles(&impact.importers), response_budget::per_section_chars());
+    let users = response_budget::bound_values(
+        to_handles(&impact.users), response_budget::per_section_chars());
+    let implementors = response_budget::bound_values(
+        to_handles(&impact.implementors), response_budget::per_section_chars());
+
+    let any_truncated = callers.truncated
+        || importers.truncated
+        || users.truncated
+        || implementors.truncated;
 
     Ok(json!({
         "stage": 3,
@@ -2364,11 +2472,16 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "communities_affected": impact.communities.len(),
         "processes": impact.processes,
         "processes_affected": impact.processes.len(),
-        "callers": to_handles(&impact.callers),
-        "importers": to_handles(&impact.importers),
-        "users": to_handles(&impact.users),
-        "implementors": to_handles(&impact.implementors),
+        "callers": callers.items,
+        "callers_total": callers.total_count,
+        "importers": importers.items,
+        "importers_total": importers.total_count,
+        "users": users.items,
+        "users_total": users.total_count,
+        "implementors": implementors.items,
+        "implementors_total": implementors.total_count,
         "dependents_total": dependents_total,
+        "truncated": any_truncated,
     }))
 }
 
@@ -3447,6 +3560,40 @@ fn handle_request(req: Request) {
 #[cfg(test)]
 mod security_tests {
     use super::*;
+
+    #[test]
+    fn limit_injection_appends_when_absent() {
+        let (q, injected) = inject_limit_if_absent("MATCH (n) RETURN n");
+        assert!(injected);
+        assert_eq!(q, format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}"));
+    }
+
+    #[test]
+    fn limit_injection_strips_trailing_semicolon() {
+        let (q, injected) = inject_limit_if_absent("MATCH (n) RETURN n;");
+        assert!(injected);
+        assert_eq!(q, format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}"));
+    }
+
+    #[test]
+    fn limit_injection_respects_existing_limit() {
+        let (q, injected) = inject_limit_if_absent("MATCH (n) RETURN n LIMIT 5");
+        assert!(!injected);
+        assert_eq!(q, "MATCH (n) RETURN n LIMIT 5");
+        // Case-insensitive.
+        let (q2, injected2) = inject_limit_if_absent("MATCH (n) RETURN n limit 5");
+        assert!(!injected2);
+        assert_eq!(q2, "MATCH (n) RETURN n limit 5");
+    }
+
+    #[test]
+    fn limit_word_boundary_not_fooled_by_identifier() {
+        // `node_limit` is an identifier, not a LIMIT clause → still inject.
+        let (_q, injected) = inject_limit_if_absent("MATCH (n) RETURN n.node_limit");
+        assert!(injected);
+        // A real LIMIT after an identifier-named field is still detected.
+        assert!(has_limit_clause("MATCH (n) RETURN n.node_limit LIMIT 3"));
+    }
 
     #[test]
     fn test_query_graph_rejects_delete() {

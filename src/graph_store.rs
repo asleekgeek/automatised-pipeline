@@ -287,6 +287,16 @@ impl GraphStore {
     }
 
     /// Executes an arbitrary Cypher query and returns columns + rows.
+    ///
+    /// Intentionally UNBOUNDED. This is a shared internal primitive: 70+ callers
+    /// (resolvers, the indexer dedup pass, `node_count`/`edge_count`, history
+    /// persist) require the complete result set, and silently `.take(n)`-ing
+    /// here would corrupt graph resolution rather than just trim a response.
+    /// Per the bounded-I/O plan the host-cap bound belongs at the MCP response
+    /// boundary, not on this primitive — see `crate::response_budget` and the
+    /// LIMIT injection in `do_query_graph`, the byte-budget caps in
+    /// `do_get_impact` / `do_get_processes`, and the per-relation LIMITs in
+    /// `search::find_related_out` / `find_related_in`.
     pub fn execute_query(&self, cypher: &str) -> Result<QueryResult, String> {
         let mut result = self.run(cypher)?;
         let columns = result.get_column_names();

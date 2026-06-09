@@ -81,6 +81,19 @@ pub struct RelatedSymbol {
     pub label: String,
 }
 
+/// Maximum related symbols collected per direction (calls/called_by/etc.) in
+/// `find_related_out` / `find_related_in`.
+///
+/// source: derived from the response budget. `get_context` ships up to eight
+/// such arrays (imports/imported_by/calls/called_by/implements/implemented_by/
+/// uses/used_by). With the host cap at `response_budget::MAX_RESPONSE_CHARS`
+/// (100_000 chars) and a typical `RelatedSymbol` row serializing to ~80–140
+/// chars, dividing the budget across eight sections leaves ~12_500 chars each;
+/// at ~140 chars/row that admits ~89 rows. We round to 100 as a clean,
+/// slightly-conservative per-direction cap, and push the same value into the
+/// Cypher `LIMIT` so the engine never materializes more rows than we keep.
+const MAX_RELATED_PER_DIRECTION: usize = 100;
+
 pub struct CommunityInfo {
     pub id: String,
     pub name: String,
@@ -775,6 +788,7 @@ fn find_node_details(
 fn find_related_out(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<RelatedSymbol> {
     let mut related = Vec::new();
     for &(rel, from_label, to_label) in crate::graph_store::REL_TABLES {
+        if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
         if !rel.starts_with(prefix) { continue; }
         // source: stages/stage-3b-v2.md §5 — StdlibSymbol targets are
         // infrastructure-only (used for analysis + query_graph precision
@@ -783,13 +797,16 @@ fn find_related_out(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<Rela
         // user-code callees, not every framework/std method implicitly
         // invoked.
         if to_label == crate::graph_store::NODE_STDLIB_SYMBOL { continue; }
+        // LIMIT bounds the per-relation result so an unbounded fan-out cannot
+        // flood the accumulated Vec or the downstream MCP response.
         let cypher = format!(
             "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) \
              WHERE a.qualified_name = '{escaped}' OR a.id = '{escaped}' \
-             RETURN b.name, b.qualified_name"
+             RETURN b.name, b.qualified_name LIMIT {MAX_RELATED_PER_DIRECTION}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
+                if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
                 if row.len() >= 2 {
                     related.push(RelatedSymbol {
                         name: row[0].clone(),
@@ -806,16 +823,19 @@ fn find_related_out(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<Rela
 fn find_related_in(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<RelatedSymbol> {
     let mut related = Vec::new();
     for &(rel, from_label, to_label) in crate::graph_store::REL_TABLES {
+        if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
         if !rel.starts_with(prefix) { continue; }
         // source: see find_related_out — symmetric exclusion.
         if to_label == crate::graph_store::NODE_STDLIB_SYMBOL { continue; }
+        // LIMIT bounds the per-relation result; see find_related_out.
         let cypher = format!(
             "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) \
              WHERE b.qualified_name = '{escaped}' OR b.id = '{escaped}' \
-             RETURN a.name, a.qualified_name"
+             RETURN a.name, a.qualified_name LIMIT {MAX_RELATED_PER_DIRECTION}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
+                if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
                 if row.len() >= 2 {
                     related.push(RelatedSymbol {
                         name: row[0].clone(),
