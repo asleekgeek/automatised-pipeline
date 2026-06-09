@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "ai-architect": {
+    "automatised-pipeline": {
       "command": "python3",
       "args": [
         "-c",
