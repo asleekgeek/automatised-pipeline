@@ -19,7 +19,9 @@ Start, resume, or close a research session. Manages research context: question, 
    - Key findings from notebook entries
    - Open questions for future sessions
 
-   If Cortex is available, call `cortex:remember` with the summary tagged `["research", "session-close"]`.
+   Persist per zetetic-team-subagents memory/contract.md §8b — two endpoints, never one flat remember:
+   - **State** (question status, hypothesis ledger, open questions): `memory-tool.sh rethink /memories/research/checkpoint.md "<structured summary>"` (block verb; the sync drainer replicates it tagged `memory-replica`).
+   - **Facts** (confirmed/rejected hypotheses with evidence, lessons): one `cortex:remember` per self-contained finding with `tags: ["archival", "research", "session-close"]` AND `agent_topic: "research"`.
 
 5. If no subcommand is given, run `tools/research-session-manager.sh status` to show current state.
 
