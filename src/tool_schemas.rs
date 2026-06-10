@@ -252,6 +252,12 @@ fn query_graph_schema() -> Value {
                 "query": {
                     "type": "string",
                     "description": "Cypher query to execute against the graph."
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of result rows to skip before filling the byte budget (cursor pagination). Page through a large result by re-calling with offset = the previous response's next_offset until next_offset is absent. IMPORTANT: paging is only cursor-safe when your query declares an ORDER BY — the response reports order_stable; without ORDER BY the row order is unspecified and pages may skip or duplicate rows."
                 }
             }
         }
@@ -333,6 +339,12 @@ fn get_processes_schema() -> Value {
                 "graph_path": {
                     "type": "string",
                     "description": "Path to the graph directory."
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of processes to skip before filling the byte budget (cursor pagination). Processes are returned in a stable total order (name, then entry_point). Page through them all by re-calling with offset = the previous response's next_offset until next_offset is absent."
                 }
             }
         }
@@ -355,6 +367,12 @@ fn get_impact_schema() -> Value {
                 "qualified_name": {
                     "type": "string",
                     "description": "The qualified name of the symbol to analyze (e.g., 'src/main.rs::handle_tool_call')."
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of CALLERS to skip before filling the byte budget (cursor pagination). 'callers' is the PRIMARY paged list, ordered by a stable total order (qualified_name, then id); page through every caller via next_offset. The other reverse-dependency lists (importers, users, implementors) are byte-capped SUMMARIES starting at index 0, not cursored (secondary_lists_paged=false) — to page one of those at scale, query it directly via query_graph with an explicit ORDER BY."
                 }
             }
         }
@@ -408,7 +426,13 @@ fn search_codebase_schema() -> Value {
                 "limit": {
                     "type": "integer",
                     "default": 20,
-                    "description": "Maximum number of results to return."
+                    "description": "Maximum number of ranked candidate results to consider. Bounds the universe the cursor pages within."
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of ranked results to skip before filling the byte budget (cursor pagination). Results are in a stable total order: descending score, then ascending qualified_name. Page through them via next_offset until it is absent."
                 },
                 "label_filter": {
                     "type": "string",

@@ -1977,6 +1977,7 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
         .ok_or("missing required field 'graph_path'")?;
     let query = args.get("query").and_then(|v| v.as_str())
         .ok_or("missing required field 'query'")?;
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
 
     // source: H3 fix — query_graph is a read-only tool. Reject any query
     // containing mutation keywords before handing it to the engine.
@@ -2005,27 +2006,46 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
     let qr = store.execute_query(&effective_query)?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
+    // Cursor stability for query_graph is the caller's responsibility, and we
+    // report whether it holds rather than silently shipping an unsafe cursor.
+    // The row order here is whatever the caller's Cypher produces. Ladybug (like
+    // Cypher generally) does NOT guarantee a stable row order WITHOUT an
+    // `ORDER BY` clause — the scan order is an engine implementation detail. We
+    // cannot inject an `ORDER BY` into arbitrary Cypher safely (RETURN items may
+    // be aggregates/expressions with no addressable sort key) the way we inject
+    // `LIMIT`, so we instead detect whether the caller declared one and surface
+    // `order_stable` so a client knows whether paging over `offset` is safe.
+    // source: Cypher/Kuzu ordering semantics — without ORDER BY, result order is
+    // unspecified; see response_budget::BoundedPage docs for why an unstable
+    // order makes a cursor skip/duplicate rows.
+    let order_stable = has_order_by_clause(query);
+
     // Second-stage guard: even with the row LIMIT, wide rows (e.g. `RETURN n`
-    // serializing whole nodes) can exceed the byte budget. Bound by serialized
-    // size and flag truncation so the caller can detect a cut.
+    // serializing whole nodes) can exceed the byte budget. Page by serialized
+    // size from `offset` so the caller can pace through a large result set; the
+    // page is cursor-safe only when `order_stable` is true (see above).
     let all_rows: Vec<Value> = qr.rows.iter()
         .map(|row| Value::Array(row.iter().map(|c| json!(c)).collect()))
         .collect();
-    let bounded = response_budget::bound_values(
+    let page = response_budget::bound_values_paged(
         all_rows,
+        offset,
         response_budget::MAX_RESPONSE_CHARS,
     );
-    let returned_rows = &bounded.items;
+    let returned_rows = &page.items;
 
-    // Rebuild the human-readable string from only the rows we are returning so
-    // it stays within budget alongside the structured `rows`.
+    // Rebuild the human-readable string from only the rows on THIS page (the
+    // window [offset, offset + returned_count)) so it stays within budget
+    // alongside the structured `rows`.
+    let start = (offset as usize).min(qr.rows.len());
     let returned_string_rows: Vec<Vec<String>> = qr.rows
         .iter()
+        .skip(start)
         .take(returned_rows.len())
         .cloned()
         .collect();
 
-    Ok(json!({
+    let mut out = json!({
         "stage": 3,
         "status": "ok",
         "tool": "query_graph",
@@ -2033,11 +2053,17 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
         "rows": returned_rows,
         "result": format_query_result(&qr.columns, &returned_string_rows),
         "elapsed_ms": elapsed_ms,
-        "total_count": bounded.total_count,
+        "total_count": page.total_count,
         "returned_count": returned_rows.len(),
-        "truncated": bounded.truncated,
+        "offset": offset,
+        "truncated": page.truncated,
+        "order_stable": order_stable,
         "limit_injected": limit_injected,
-    }))
+    });
+    if let Some(next) = page.next_offset {
+        out["next_offset"] = json!(next);
+    }
+    Ok(out)
 }
 
 /// Maximum rows injected into a caller's Cypher when it declares no LIMIT.
@@ -2092,6 +2118,43 @@ fn has_limit_clause(query: &str) -> bool {
 
 fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Detects whether a Cypher query declares an `ORDER BY` clause.
+///
+/// Used to report `order_stable` on `query_graph` responses: an `offset` cursor
+/// over the rows is only safe when the caller pinned a deterministic order with
+/// `ORDER BY` (without it, the engine's row order is unspecified). Matches the
+/// two keywords `order` and `by` as whole words separated only by whitespace,
+/// case-insensitively. This is a syntactic guard, not a full parser — it can be
+/// fooled by `ORDER BY` inside a string literal, which is acceptable for an
+/// advisory flag (the engine remains the source of truth for the query plan).
+fn has_order_by_clause(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut idx = 0;
+    while let Some(pos) = lower[idx..].find("order") {
+        let start = idx + pos;
+        let end = start + "order".len();
+        let prev_ok = start == 0 || !is_ident_char(bytes[start - 1]);
+        if prev_ok {
+            // Skip whitespace after "order", then require the word "by".
+            let mut j = end;
+            let had_ws = j < bytes.len() && bytes[j].is_ascii_whitespace();
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if had_ws && lower[j..].starts_with("by") {
+                let by_end = j + "by".len();
+                let next_ok = by_end >= bytes.len() || !is_ident_char(bytes[by_end]);
+                if next_ok {
+                    return true;
+                }
+            }
+        }
+        idx = end;
+    }
+    false
 }
 
 fn format_query_result(columns: &[String], rows: &[Vec<String>]) -> String {
@@ -2372,9 +2435,23 @@ fn do_get_processes(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
+
     // Read-only tool: reuse cached handle. source: graph_cache module docs.
     let store = graph_cache::open_cached(graph_path)?;
-    let processes = clustering::get_processes(&store)?;
+    let mut processes = clustering::get_processes(&store)?;
+
+    // Cursor stability: get_processes runs `MATCH (p:Process) RETURN ...` with no
+    // ORDER BY (clustering::process::get_processes), so the Ladybug scan order is
+    // an engine implementation detail and is NOT guaranteed identical across
+    // calls — paging over it would skip/duplicate rows. We impose a deterministic
+    // total order here, at the read boundary, by (name, entry_point). Process
+    // names are entry-point-derived and entry_point is a node id, so the pair is
+    // unique, giving a total (tie-free) order. source: cursor-correctness
+    // requirement (response_budget::BoundedPage docs).
+    processes.sort_by(|a, b| {
+        a.name.cmp(&b.name).then_with(|| a.entry_point.cmp(&b.entry_point))
+    });
 
     let procs: Vec<Value> = processes.iter().map(|p| json!({
         "name": p.name,
@@ -2384,22 +2461,29 @@ fn do_get_processes(arguments: &Value) -> Result<Value, String> {
         "node_count": p.node_count,
     })).collect();
 
-    // Bound the array by serialized size so a graph with thousands of entry
-    // points cannot blow the host's MCP tool-result cap.
-    let bounded = response_budget::bound_values(
+    // Page the array by serialized size from `offset` so a graph with thousands
+    // of entry points cannot blow the host's MCP tool-result cap, and a client
+    // can retrieve the full list in budget-sized pages via `next_offset`.
+    let page = response_budget::bound_values_paged(
         procs,
+        offset,
         response_budget::per_section_chars(),
     );
 
-    Ok(json!({
+    let mut out = json!({
         "stage": 3,
         "status": "ok",
         "tool": "get_processes",
-        "process_count": bounded.items.len(),
-        "total_count": bounded.total_count,
-        "truncated": bounded.truncated,
-        "processes": bounded.items,
-    }))
+        "process_count": page.items.len(),
+        "total_count": page.total_count,
+        "offset": offset,
+        "truncated": page.truncated,
+        "processes": page.items,
+    });
+    if let Some(next) = page.next_offset {
+        out["next_offset"] = json!(next);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -2421,6 +2505,7 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         .ok_or("missing required field 'graph_path'")?;
     let qn = args.get("qualified_name").and_then(|v| v.as_str())
         .ok_or("missing required field 'qualified_name'")?;
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let graph_path = Path::new(graph_str);
     if !graph_path.exists() {
@@ -2429,7 +2514,24 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
 
     // Read-only tool: reuse cached handle. source: graph_cache module docs.
     let store = graph_cache::open_cached(graph_path)?;
-    let impact = clustering::get_impact(&store, qn)?;
+    let mut impact = clustering::get_impact(&store, qn)?;
+
+    // Cursor stability: each reverse-dependency list is assembled in
+    // clustering::impact::reverse_dependents by iterating REL_TABLES and, per
+    // table, the engine's unordered scan rows (no ORDER BY) — neither order is a
+    // guaranteed-stable contract across calls. We impose a deterministic total
+    // order at the read boundary by (qualified_name, id). `id` is the node's
+    // unique graph id, so the pair is tie-free, giving a total order safe to page.
+    // source: cursor-correctness requirement (response_budget::BoundedPage docs).
+    let sort_nodes = |nodes: &mut Vec<clustering::ImpactNode>| {
+        nodes.sort_by(|a, b| {
+            a.qualified_name.cmp(&b.qualified_name).then_with(|| a.id.cmp(&b.id))
+        });
+    };
+    sort_nodes(&mut impact.callers);
+    sort_nodes(&mut impact.importers);
+    sort_nodes(&mut impact.users);
+    sort_nodes(&mut impact.implementors);
 
     // Serialize reverse-dependency endpoints as re-queryable handles so the
     // caller can keep traversing through MCP (get_symbol/get_context on `id`)
@@ -2453,11 +2555,15 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         + impact.users.len()
         + impact.implementors.len();
 
-    // Bound each handle section independently by serialized size. Each section
-    // gets a share of the budget so the assembled response — which carries four
-    // such arrays plus communities/processes — cannot exceed the host cap.
-    let callers = response_budget::bound_values(
-        to_handles(&impact.callers), response_budget::per_section_chars());
+    // `callers` is the PRIMARY list and the only one the `offset` cursor pages:
+    // a caller can page callers to exhaustion via `next_offset`. The remaining
+    // three sections (importers/users/implementors) are bounded SUMMARIES — they
+    // start from index 0 and are byte-capped, not cursored. This is reported
+    // honestly (see `secondary_lists_paged: false`) rather than inventing a
+    // multi-cursor scheme. To page a secondary blast-radius dimension at scale,
+    // query it directly via query_graph (which carries its own ORDER BY + offset).
+    let callers = response_budget::bound_values_paged(
+        to_handles(&impact.callers), offset, response_budget::per_section_chars());
     let importers = response_budget::bound_values(
         to_handles(&impact.importers), response_budget::per_section_chars());
     let users = response_budget::bound_values(
@@ -2470,7 +2576,7 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         || users.truncated
         || implementors.truncated;
 
-    Ok(json!({
+    let mut out = json!({
         "stage": 3,
         "status": "ok",
         "tool": "get_impact",
@@ -2481,6 +2587,9 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "processes_affected": impact.processes.len(),
         "callers": callers.items,
         "callers_total": callers.total_count,
+        "offset": offset,
+        "primary_list": "callers",
+        "secondary_lists_paged": false,
         "importers": importers.items,
         "importers_total": importers.total_count,
         "users": users.items,
@@ -2489,7 +2598,11 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "implementors_total": implementors.total_count,
         "dependents_total": dependents_total,
         "truncated": any_truncated,
-    }))
+    });
+    if let Some(next) = callers.next_offset {
+        out["next_offset"] = json!(next);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -2556,6 +2669,7 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     let query = args.get("query").and_then(|v| v.as_str())
         .ok_or("missing required field 'query'")?;
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
     let label_filter = args.get("label_filter").and_then(|v| v.as_str()).map(String::from);
 
     let graph_path = Path::new(graph_str);
@@ -2583,6 +2697,13 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         search::search_graph(&store, query, &options, search_index_dir.as_deref())?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
+    // Cursor stability: search_graph returns results in a deterministic total
+    // order — descending score with an ascending-qualified_name tie-break added
+    // at every sort site (search::mod final sort, search::rrf::fuse). That total
+    // order is identical across calls for a fixed graph + query, so paging by
+    // `offset` over it neither skips nor duplicates rows. `limit` bounds the
+    // ranked candidate universe; `offset` + byte budget page within it.
+    // source: cursor-correctness requirement (response_budget::BoundedPage docs).
     let items: Vec<Value> = results.iter().map(|r| json!({
         "qualified_name": r.qualified_name,
         "name": r.name,
@@ -2595,15 +2716,32 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         "end_line": r.end_line,
     })).collect();
 
-    Ok(json!({
+    // Page the ranked results by serialized size from `offset`. Previously this
+    // tool relied solely on `limit`; a wide result set could still approach the
+    // host cap and offered no way to retrieve rows beyond the cut. Byte-budget
+    // paging makes the full ranked list retrievable in budget-sized pages.
+    let page = response_budget::bound_values_paged(
+        items,
+        offset,
+        response_budget::per_section_chars(),
+    );
+
+    let mut out = json!({
         "stage": 3,
         "status": "ok",
         "tool": "search_codebase",
         "query": query,
-        "result_count": items.len(),
-        "results": items,
+        "result_count": page.items.len(),
+        "total_count": page.total_count,
+        "offset": offset,
+        "truncated": page.truncated,
+        "results": page.items,
         "elapsed_ms": elapsed_ms,
-    }))
+    });
+    if let Some(next) = page.next_offset {
+        out["next_offset"] = json!(next);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -3646,6 +3784,22 @@ mod security_tests {
     }
 
     #[test]
+    fn order_by_detection_whole_word_and_case_insensitive() {
+        assert!(has_order_by_clause("MATCH (n) RETURN n ORDER BY n.id"));
+        assert!(has_order_by_clause("match (n) return n order by n.name"));
+        assert!(has_order_by_clause("MATCH (n) RETURN n ORDER   BY n.id")); // extra ws
+        // No ORDER BY → unstable order.
+        assert!(!has_order_by_clause("MATCH (n) RETURN n"));
+        assert!(!has_order_by_clause("MATCH (n) RETURN n LIMIT 5"));
+        // "order" without "by" is not an ORDER BY clause.
+        assert!(!has_order_by_clause("MATCH (n) RETURN n.order"));
+        // Identifier embedding 'order' must not trigger.
+        assert!(!has_order_by_clause("MATCH (n) RETURN n.reorder_by"));
+        // 'by' glued to an identifier must not satisfy the clause.
+        assert!(!has_order_by_clause("MATCH (n) RETURN n order byzantine"));
+    }
+
+    #[test]
     fn test_health_check_tool_count_matches_tools_list() {
         // source: C-correctness bug 3 — the health_check response must derive
         // the count from `tools_list()` dynamically. If a new tool is added
@@ -3710,6 +3864,251 @@ mod security_tests {
         assert!(validate_graph_path_safe(Path::new("/etc/graph")).is_err());
         assert!(validate_graph_path_safe(Path::new("//graph")).is_err()
             || validate_graph_path_safe(Path::new("//graph")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    //! End-to-end cursor pagination over a real fixture graph, one test per
+    //! bounded-read tool shape. Each test asserts the cursor's correctness
+    //! contract (see response_budget::BoundedPage docs):
+    //!   - page-through reconstruction: union of pages == unpaged full set,
+    //!     in order, no duplicates, no gaps;
+    //!   - next_offset absent on the final page;
+    //!   - offset beyond end → empty page, no next_offset;
+    //!   - stable order: two identical calls return the same order, so the
+    //!     cursor is safe.
+    use super::*;
+
+    // A fixture where one symbol (`helpers::sanitize`) is called from several
+    // call sites across modules, giving get_impact a multi-element `callers`
+    // list and query_graph/search several rows to page over.
+    const F_MAIN: &str = r#"
+use crate::svc;
+fn main() { let _ = svc::run_a(); let _ = svc::run_b(); }
+fn driver() { let _ = svc::run_c(); }
+"#;
+    const F_SVC: &str = r#"
+use crate::helpers;
+pub fn run_a() -> String { helpers::sanitize("a") }
+pub fn run_b() -> String { helpers::sanitize("b") }
+pub fn run_c() -> String { helpers::sanitize("c") }
+pub fn run_d() -> String { helpers::sanitize("d") }
+"#;
+    const F_HELPERS: &str = r#"
+pub fn sanitize(input: &str) -> String { input.trim().to_string() }
+"#;
+
+    /// Builds an indexed + resolved + clustered fixture graph, returns its dir.
+    fn build_fixture(tag: &str) -> std::path::PathBuf {
+        let tmp_root = std::env::temp_dir()
+            .join(format!("pagination_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp_root);
+        let src = tmp_root.join("fixture/src");
+        fs::create_dir_all(&src).expect("create fixture src");
+        fs::write(src.join("main.rs"), F_MAIN).unwrap();
+        fs::write(src.join("svc.rs"), F_SVC).unwrap();
+        fs::write(src.join("helpers.rs"), F_HELPERS).unwrap();
+
+        let graph_dir = tmp_root.join("graph");
+        indexer::index_codebase(&src, &graph_dir).expect("index");
+        let store = graph_store::GraphStore::open_or_create(&graph_dir).unwrap();
+        resolver::resolve_graph(&store).expect("resolve");
+        clustering::cluster_graph(&store, 1.0).expect("cluster");
+        // Drop the store handle so the read-path cache opens its own; the
+        // embedded DB is single-writer and tests share a process.
+        drop(store);
+        graph_dir
+    }
+
+    /// Drives a tool's cursor to exhaustion: repeatedly calls `call(offset)`,
+    /// extracting the primary list with `items` and the cursor with `next`.
+    /// Returns the concatenation of every page's items and the final-page flag
+    /// sequence. Asserts the cursor strictly advances (terminates).
+    fn page_through<F>(mut call: F) -> Vec<Value>
+    where
+        F: FnMut(u64) -> Value,
+    {
+        let mut all = Vec::new();
+        let mut offset: u64 = 0;
+        let mut guard = 0;
+        loop {
+            guard += 1;
+            assert!(guard < 10_000, "cursor failed to terminate");
+            let resp = call(offset);
+            let items = resp["__items"].as_array().cloned().unwrap_or_default();
+            all.extend(items.iter().cloned());
+            match resp.get("next_offset").and_then(|v| v.as_u64()) {
+                Some(n) => {
+                    assert!(n > offset, "cursor must advance: {n} <= {offset}");
+                    offset = n;
+                }
+                None => break,
+            }
+        }
+        all
+    }
+
+    // -- get_processes -----------------------------------------------------
+
+    #[test]
+    fn get_processes_pages_through_everything() {
+        let graph = build_fixture("procs");
+        let gp = graph.to_str().unwrap().to_string();
+
+        let call = |offset: u64| -> Value {
+            let mut r = do_get_processes(&json!({"graph_path": gp, "offset": offset}))
+                .expect("get_processes");
+            r["__items"] = r["processes"].clone();
+            r
+        };
+
+        // Full unpaged set (offset 0 returns all for this small fixture).
+        let full = call(0);
+        let total = full["total_count"].as_u64().unwrap() as usize;
+        assert!(total > 0, "fixture must yield processes");
+
+        // Page-through union == full set, no dupes, no gaps.
+        let paged = page_through(call);
+        assert_eq!(paged.len(), total, "paged count must equal total");
+        assert_eq!(paged, full["processes"].as_array().cloned().unwrap());
+
+        // Offset beyond end → empty, no cursor.
+        let beyond = do_get_processes(
+            &json!({"graph_path": gp, "offset": total as u64 + 100})).unwrap();
+        assert_eq!(beyond["processes"].as_array().unwrap().len(), 0);
+        assert!(beyond.get("next_offset").is_none());
+        assert!(!beyond["truncated"].as_bool().unwrap());
+
+        // Stable order: two identical calls return identical order.
+        let a = do_get_processes(&json!({"graph_path": gp})).unwrap();
+        let b = do_get_processes(&json!({"graph_path": gp})).unwrap();
+        assert_eq!(a["processes"], b["processes"], "order must be stable");
+    }
+
+    // -- get_impact (primary list = callers) -------------------------------
+
+    #[test]
+    fn get_impact_pages_callers_through_everything() {
+        let graph = build_fixture("impact");
+        let gp = graph.to_str().unwrap().to_string();
+
+        // Use the real node id from the graph (qualified_name format varies by
+        // resolver), exactly as stage3c_integration looks it up. `sanitize` is
+        // called from run_a/run_b/run_c/run_d → >=3 resolved callers.
+        let store = graph_store::GraphStore::open_or_create(&graph).unwrap();
+        let qr = store.execute_query(
+            "MATCH (f:Function) WHERE f.name = 'sanitize' RETURN f.id").unwrap();
+        assert!(!qr.rows.is_empty(), "sanitize node must exist");
+        let target = qr.rows[0][0].clone();
+        drop(store);
+
+        let call = |offset: u64| -> Value {
+            let mut r = do_get_impact(&json!({
+                "graph_path": gp, "qualified_name": target, "offset": offset
+            })).expect("get_impact");
+            r["__items"] = r["callers"].clone();
+            r
+        };
+
+        let full = call(0);
+        let total = full["callers_total"].as_u64().unwrap() as usize;
+        assert!(total >= 3, "sanitize should have >=3 callers, got {total}");
+        assert_eq!(full["primary_list"], json!("callers"));
+        assert_eq!(full["secondary_lists_paged"], json!(false));
+
+        let paged = page_through(call);
+        assert_eq!(paged.len(), total);
+        assert_eq!(paged, full["callers"].as_array().cloned().unwrap());
+
+        // Offset beyond end → empty callers, no cursor.
+        let beyond = do_get_impact(&json!({
+            "graph_path": gp, "qualified_name": target, "offset": total as u64 + 50
+        })).unwrap();
+        assert_eq!(beyond["callers"].as_array().unwrap().len(), 0);
+        assert!(beyond.get("next_offset").is_none());
+
+        // Stable order across identical calls.
+        let a = do_get_impact(&json!({"graph_path": gp, "qualified_name": target})).unwrap();
+        let b = do_get_impact(&json!({"graph_path": gp, "qualified_name": target})).unwrap();
+        assert_eq!(a["callers"], b["callers"], "callers order must be stable");
+    }
+
+    // -- search_codebase ---------------------------------------------------
+
+    #[test]
+    fn search_codebase_pages_through_everything() {
+        let graph = build_fixture("search");
+        let gp = graph.to_str().unwrap().to_string();
+
+        let call = |offset: u64| -> Value {
+            let mut r = do_search_codebase(&json!({
+                "graph_path": gp, "query": "run", "limit": 50, "offset": offset
+            })).expect("search");
+            r["__items"] = r["results"].clone();
+            r
+        };
+
+        let full = call(0);
+        let total = full["total_count"].as_u64().unwrap() as usize;
+        assert!(total > 0, "search must yield results for 'run'");
+
+        let paged = page_through(call);
+        assert_eq!(paged.len(), total);
+        assert_eq!(paged, full["results"].as_array().cloned().unwrap());
+
+        // Offset beyond end → empty, no cursor.
+        let beyond = do_search_codebase(&json!({
+            "graph_path": gp, "query": "run", "limit": 50, "offset": total as u64 + 100
+        })).unwrap();
+        assert_eq!(beyond["results"].as_array().unwrap().len(), 0);
+        assert!(beyond.get("next_offset").is_none());
+
+        // Stable order across identical calls (deterministic score+name sort).
+        let a = do_search_codebase(&json!({"graph_path": gp, "query": "run", "limit": 50})).unwrap();
+        let b = do_search_codebase(&json!({"graph_path": gp, "query": "run", "limit": 50})).unwrap();
+        assert_eq!(a["results"], b["results"], "search order must be stable");
+    }
+
+    // -- query_graph (caller-ordered; ORDER BY makes the cursor safe) -------
+
+    #[test]
+    fn query_graph_pages_through_ordered_query() {
+        let graph = build_fixture("query");
+        let gp = graph.to_str().unwrap().to_string();
+        // ORDER BY makes the row order stable → cursor is safe (order_stable).
+        let q = "MATCH (f:Function) RETURN f.qualified_name ORDER BY f.qualified_name";
+
+        let call = |offset: u64| -> Value {
+            let mut r = do_query_graph(&json!({
+                "graph_path": gp, "query": q, "offset": offset
+            })).expect("query_graph");
+            r["__items"] = r["rows"].clone();
+            r
+        };
+
+        let full = call(0);
+        assert_eq!(full["order_stable"], json!(true), "ORDER BY → order_stable");
+        let total = full["total_count"].as_u64().unwrap() as usize;
+        assert!(total > 0, "fixture has functions");
+
+        let paged = page_through(call);
+        assert_eq!(paged.len(), total);
+        assert_eq!(paged, full["rows"].as_array().cloned().unwrap());
+
+        // Offset beyond end → empty rows, no cursor.
+        let beyond = do_query_graph(&json!({
+            "graph_path": gp, "query": q, "offset": total as u64 + 100
+        })).unwrap();
+        assert_eq!(beyond["rows"].as_array().unwrap().len(), 0);
+        assert!(beyond.get("next_offset").is_none());
+
+        // A query WITHOUT ORDER BY must report order_stable=false (honest flag).
+        let unordered = do_query_graph(&json!({
+            "graph_path": gp, "query": "MATCH (f:Function) RETURN f.qualified_name"
+        })).unwrap();
+        assert_eq!(unordered["order_stable"], json!(false),
+            "no ORDER BY → order_stable must be false");
     }
 }
 

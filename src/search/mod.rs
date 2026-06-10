@@ -243,6 +243,18 @@ fn search_hybrid(
         }
     }
 
+    // Re-impose the same total order the non-hybrid path uses so both code
+    // paths expose ONE documented order to the cursor: descending score, then
+    // ascending qualified_name. `fused` is already deterministically ordered
+    // (rrf::fuse now tie-breaks on key), and enrich preserves that order; this
+    // final sort makes the guarantee explicit and uniform across paths.
+    // source: cursor-correctness requirement (response_budget::BoundedPage docs).
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.qualified_name.cmp(&b.qualified_name))
+    });
     results.truncate(options.limit);
     Ok(results)
 }
@@ -363,7 +375,19 @@ fn search_substring(
         }
     }
 
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    // Primary key: descending score. Secondary key: ascending qualified_name —
+    // a deterministic, total tie-break so equal-score rows have a single fixed
+    // order across calls. Without it, ties fall back to the unordered graph-scan
+    // input order (an engine implementation detail), which would make an offset
+    // cursor over these results skip/duplicate rows. source: cursor-correctness
+    // requirement (response_budget::BoundedPage docs); qualified_name is unique
+    // per symbol so the (score, qualified_name) pair is a total order.
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.qualified_name.cmp(&b.qualified_name))
+    });
     results.truncate(options.limit);
     Ok(results)
 }

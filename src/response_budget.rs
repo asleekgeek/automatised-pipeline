@@ -95,6 +95,85 @@ pub struct Bounded {
     pub truncated: bool,
 }
 
+/// Outcome of paginating a list of items by serialized size from a cursor.
+///
+/// This is the cursor-aware sibling of [`Bounded`]. Where `Bounded` always
+/// starts from item 0 and reports only whether a cut happened, `BoundedPage`
+/// starts from a caller-supplied `offset` and reports where the next page
+/// begins, turning truncation into pacing: a client can page
+/// `offset = next_offset` until `next_offset` is `None` and reconstruct the
+/// entire list in budget-sized pages with no duplicates and no gaps.
+///
+/// # Cursor correctness depends on a stable total order
+///
+/// A cursor that skips `offset` items only retrieves every row exactly once if
+/// the input list is in the **same order on every call**. If the order can
+/// shift between calls (e.g. an unordered graph scan whose row order is an
+/// engine implementation detail), paging silently skips and duplicates rows —
+/// a correctness bug. Therefore the caller MUST pass items already sorted by a
+/// deterministic total-order key, and document where that order comes from at
+/// the call site. This module bounds bytes; it does NOT impose order.
+pub struct BoundedPage {
+    /// The items in `[offset, offset + items.len())` that fit the budget.
+    pub items: Vec<Value>,
+    /// Total number of items in the full list, before offset or truncation.
+    pub total_count: usize,
+    /// True when items remain after this page (i.e. `next_offset` is `Some`).
+    pub truncated: bool,
+    /// Index at which the next page begins, present iff more data exists.
+    /// Equals `offset + items.len()` when items remain, else `None`.
+    pub next_offset: Option<u64>,
+}
+
+/// Pages a list of serialized JSON values: skips `offset` items, then fills the
+/// byte budget exactly as [`bound_values`] does, and reports the cursor for the
+/// next page.
+///
+/// precondition: `char_budget > 0`; `values` is in a deterministic total order
+/// that is identical across calls (see [`BoundedPage`] — the caller owns this).
+/// postcondition: let `tail = values[min(offset, len)..]`. `result.items` is the
+/// longest prefix of `tail` whose serialized sizes sum to `<= char_budget`
+/// (always at least one item if `tail` is non-empty, even if that one item
+/// alone exceeds the budget — never an empty page purely from a large row).
+/// `result.total_count == values.len()`. `result.next_offset ==
+/// Some(offset + items.len())` iff items remain after this page, else `None`,
+/// and `result.truncated == result.next_offset.is_some()`. An `offset >= len`
+/// yields empty items, `truncated == false`, `next_offset == None`.
+///
+/// Page-through invariant: starting at `offset = 0` and repeatedly calling with
+/// `offset = next_offset` until `next_offset` is `None` visits every element of
+/// `values` exactly once, in order — the union of pages equals the full list
+/// with no duplicates and no gaps.
+pub fn bound_values_paged(values: Vec<Value>, offset: u64, char_budget: usize) -> BoundedPage {
+    let total_count = values.len();
+    let start = (offset as usize).min(total_count);
+    let mut items = Vec::with_capacity(total_count - start);
+    let mut used: usize = 0;
+    let mut consumed: usize = 0; // items placed on this page
+
+    for v in values.into_iter().skip(start) {
+        let size = serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
+        // Always admit the first item of the page so a single large row never
+        // yields an empty page (mirrors bound_values). Otherwise stop before
+        // the running serialized total would exceed the budget.
+        if !items.is_empty() && used + size > char_budget {
+            break;
+        }
+        used += size;
+        items.push(v);
+        consumed += 1;
+    }
+
+    let next_index = start + consumed;
+    let more_remain = next_index < total_count;
+    BoundedPage {
+        items,
+        total_count,
+        truncated: more_remain,
+        next_offset: if more_remain { Some(next_index as u64) } else { None },
+    }
+}
+
 /// Accumulates serialized JSON values until the next one would push the running
 /// serialized size past `char_budget`, then stops.
 ///
@@ -212,6 +291,97 @@ mod tests {
             utf8_bytes >= utf16_units,
             "UTF-8 byte len {utf8_bytes} must be >= UTF-16 unit count {utf16_units}"
         );
+    }
+
+    // -- bound_values_paged ------------------------------------------------
+
+    /// Drives the cursor to exhaustion and returns the concatenation of every
+    /// page's items, plus the sequence of next_offset values observed.
+    fn page_through(values: Vec<Value>, budget: usize) -> (Vec<Value>, Vec<Option<u64>>) {
+        let mut all = Vec::new();
+        let mut cursors = Vec::new();
+        let mut offset: u64 = 0;
+        loop {
+            let page = bound_values_paged(values.clone(), offset, budget);
+            all.extend(page.items.iter().cloned());
+            cursors.push(page.next_offset);
+            match page.next_offset {
+                Some(n) => {
+                    assert!(n > offset, "cursor must advance: {n} <= {offset}");
+                    offset = n;
+                }
+                None => break,
+            }
+        }
+        (all, cursors)
+    }
+
+    #[test]
+    fn paging_reconstructs_full_list_no_dupes_no_gaps() {
+        // Generic page-through reconstruction: union of pages == full list, in
+        // order, exactly once each. Tiny budget forces many pages.
+        let vals: Vec<Value> = (0..200)
+            .map(|i| json!({"id": i, "qualified_name": format!("module::func_{i}"), "label": "Function"}))
+            .collect();
+        let (reconstructed, _) = page_through(vals.clone(), 300);
+        assert_eq!(reconstructed, vals, "paged union must equal unpaged full list");
+    }
+
+    #[test]
+    fn paging_single_page_when_everything_fits() {
+        let vals: Vec<Value> = (0..5)
+            .map(|i| json!({"id": i}))
+            .collect();
+        let page = bound_values_paged(vals.clone(), 0, per_section_chars());
+        assert_eq!(page.items.len(), 5);
+        assert!(!page.truncated);
+        assert_eq!(page.next_offset, None, "no next_offset on a complete final page");
+        assert_eq!(page.total_count, 5);
+    }
+
+    #[test]
+    fn paging_next_offset_absent_on_final_page() {
+        let vals: Vec<Value> = (0..50)
+            .map(|i| json!({"id": i, "qualified_name": format!("m::f{i}")}))
+            .collect();
+        let (_, cursors) = page_through(vals, 200);
+        assert!(cursors.len() >= 2, "tiny budget should force multiple pages");
+        assert_eq!(*cursors.last().unwrap(), None, "final page has no next_offset");
+        // Every non-final page must carry a cursor.
+        for c in &cursors[..cursors.len() - 1] {
+            assert!(c.is_some(), "non-final page must advance the cursor");
+        }
+    }
+
+    #[test]
+    fn paging_offset_beyond_end_is_empty_no_cursor() {
+        let vals: Vec<Value> = (0..3).map(|i| json!({"id": i})).collect();
+        let page = bound_values_paged(vals, 99, per_section_chars());
+        assert_eq!(page.items.len(), 0);
+        assert!(!page.truncated);
+        assert_eq!(page.next_offset, None);
+        assert_eq!(page.total_count, 3, "total still reflects the full list");
+    }
+
+    #[test]
+    fn paging_offset_at_exact_end_is_empty_no_cursor() {
+        let vals: Vec<Value> = (0..3).map(|i| json!({"id": i})).collect();
+        let page = bound_values_paged(vals, 3, per_section_chars());
+        assert_eq!(page.items.len(), 0);
+        assert_eq!(page.next_offset, None);
+    }
+
+    #[test]
+    fn paging_single_oversized_item_never_empty_page() {
+        // A row larger than the budget is still returned alone, so the cursor
+        // always advances and page-through terminates (no infinite loop).
+        let vals = vec![
+            json!({"blob": "x".repeat(2000)}),
+            json!({"blob": "y".repeat(2000)}),
+        ];
+        let (reconstructed, cursors) = page_through(vals.clone(), 100);
+        assert_eq!(reconstructed, vals);
+        assert_eq!(cursors, vec![Some(1), None]);
     }
 
     #[test]

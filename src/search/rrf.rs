@@ -42,7 +42,18 @@ pub fn fuse(rankings: &[&[RankedEntry]], limit: usize) -> Vec<RrfResult> {
     let mut results: Vec<RrfResult> = scores.into_iter()
         .map(|(key, score)| RrfResult { key: key.to_string(), score })
         .collect();
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    // Primary: descending RRF score. Secondary: ascending key — `scores` is a
+    // HashMap whose iteration order is nondeterministic, so without a total
+    // tie-break equal-score rows would reorder across calls, making a downstream
+    // offset cursor skip/duplicate rows. `key` is the unique qualified_name, so
+    // (score, key) is a total order. source: cursor-correctness requirement
+    // (response_budget::BoundedPage docs).
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.key.cmp(&b.key))
+    });
     results.truncate(limit);
     results
 }
