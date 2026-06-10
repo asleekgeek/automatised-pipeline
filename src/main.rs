@@ -19,6 +19,7 @@
 
 mod clustering;
 mod git_diff;
+mod graph_cache;
 mod graph_store;
 mod history;
 mod indexer;
@@ -1997,7 +1998,10 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
     let (effective_query, limit_injected) = inject_limit_if_absent(query);
 
     let start = std::time::Instant::now();
-    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    // Read-only tool: reuse the process-local cached handle instead of
+    // re-opening the embedded DB per request. Cache revalidates on-disk
+    // staleness on every call. source: graph_cache module docs.
+    let store = graph_cache::open_cached(graph_path)?;
     let qr = store.execute_query(&effective_query)?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
@@ -2124,7 +2128,8 @@ fn do_get_symbol(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
-    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(graph_path)?;
 
     // source: C-correctness bug 2 — three-layer lookup (exact → strip-path →
     // fuzzy). Resolves the natural `src/main.rs::foo` form to the stored
@@ -2367,7 +2372,8 @@ fn do_get_processes(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
-    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(graph_path)?;
     let processes = clustering::get_processes(&store)?;
 
     let procs: Vec<Value> = processes.iter().map(|p| json!({
@@ -2421,7 +2427,8 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
-    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(graph_path)?;
     let impact = clustering::get_impact(&store, qn)?;
 
     // Serialize reverse-dependency endpoints as re-queryable handles so the
@@ -2565,7 +2572,8 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         .filter(|p| p.exists());
 
     let start = std::time::Instant::now();
-    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(graph_path)?;
     let options = search::SearchOptions {
         limit,
         label_filter,
@@ -2623,7 +2631,8 @@ fn do_get_context(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
-    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(graph_path)?;
     let ctx = match search::get_context(&store, qn) {
         Ok(c) => c,
         Err(search::GetContextError::NotFound(nf)) => {
@@ -2954,7 +2963,8 @@ fn do_detect_changes(arguments: &Value) -> Result<Value, String> {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
 
-    let store = graph_store::GraphStore::open_or_create(graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(graph_path)?;
 
     let analysis = if let Some(text) = diff_text {
         git_diff::analyze_diff(&store, text)?
@@ -3201,7 +3211,8 @@ fn do_validate_prd_against_graph(arguments: &Value) -> Result<Value, String> {
     let affected_opt = args.get("affected_symbols_path").and_then(|v| v.as_str())
         .map(|s| require_absolute(s, "affected_symbols_path")).transpose()?;
 
-    let store = graph_store::GraphStore::open_or_create(&graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(&graph_path)?;
     let report = prd_validator::validate_prd(
         &store, &prd_path, affected_opt.as_deref(),
     )?;
@@ -3301,7 +3312,8 @@ fn do_check_security_gates(arguments: &Value) -> Result<Value, String> {
         .filter_map(|x| x.as_str().map(String::from))
         .collect();
 
-    let store = graph_store::GraphStore::open_or_create(&graph_path)?;
+    // Read-only tool: reuse cached handle. source: graph_cache module docs.
+    let store = graph_cache::open_cached(&graph_path)?;
     let report = security_gates::check_gates(&store, &changed_symbols)?;
     let checked_at = format_iso8601_utc(now_unix_seconds_nanos().0);
 
