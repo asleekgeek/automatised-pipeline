@@ -291,17 +291,18 @@ fn resolve_imports(
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
     let qr = store.execute_query(
-        "MATCH (i:Import) RETURN i.id, i.path, i.is_glob"
+        "MATCH (i:Import) RETURN i.id, i.path, i.is_glob, i.language"
     )?;
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
 
     for row in &qr.rows {
-        if row.len() < 3 {
+        if row.len() < 4 {
             continue;
         }
-        let (r, u) = resolve_one_import(idx, buf, &row[0], &row[1], &row[2]);
+        let provider = crate::language_provider::provider_for(&row[3]);
+        let (r, u) = resolve_one_import(idx, buf, provider, &row[0], &row[1], &row[2]);
         resolved += r;
         unresolved.extend(u);
     }
@@ -311,24 +312,25 @@ fn resolve_imports(
 fn resolve_one_import(
     idx: &SymbolIndex,
     buf: &mut EdgeBuffer,
+    provider: &dyn crate::language_provider::LanguageProvider,
     import_id: &str,
     path: &str,
     is_glob_str: &str,
 ) -> (u64, Vec<UnresolvedRef>) {
-    if is_external_crate(path) {
+    if provider.is_external_import(path) {
         return (0, vec![UnresolvedRef {
             kind: "Imports".to_string(), from_id: import_id.to_string(),
             target_text: path.to_string(), reason: "external crate".to_string(),
         }]);
     }
     let file_id = extract_file_from_import_id(import_id);
-    let normalized = normalize_import_path(path);
+    let normalized = provider.normalize_import_path(path).to_string();
     let is_glob = is_glob_str == "true" || is_glob_str == "True";
 
     if is_glob {
         return (resolve_glob_import(idx, buf, &file_id, &normalized), vec![]);
     }
-    match resolve_single_import(idx, buf, &file_id, &normalized) {
+    match resolve_single_import(idx, buf, provider, &file_id, &normalized) {
         Some(count) => (count, vec![]),
         None => (0, vec![UnresolvedRef {
             kind: "Imports".to_string(), from_id: import_id.to_string(),
@@ -340,10 +342,11 @@ fn resolve_one_import(
 fn resolve_single_import(
     idx: &SymbolIndex,
     buf: &mut EdgeBuffer,
+    provider: &dyn crate::language_provider::LanguageProvider,
     file_id: &str,
     normalized_path: &str,
 ) -> Option<u64> {
-    let last_segment = normalized_path.rsplit("::").next().unwrap_or(normalized_path);
+    let last_segment = provider.import_last_segment(normalized_path);
     let candidates = idx.by_name.get(last_segment)?;
     let matched = pick_best_candidate(candidates, normalized_path);
     let entry = matched?;
@@ -390,23 +393,24 @@ fn resolve_calls(
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
     let qr = store.execute_query(
-        "MATCH (cs:CallSite) RETURN cs.id, cs.callee_name"
+        "MATCH (cs:CallSite) RETURN cs.id, cs.callee_name, cs.language"
     )?;
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
 
     for row in &qr.rows {
-        if row.len() < 2 {
+        if row.len() < 3 {
             continue;
         }
         let cs_id = &row[0];
         let callee = &row[1];
+        let provider = crate::language_provider::provider_for(&row[2]);
         let caller_qn = extract_caller_from_callsite_id(cs_id);
         let file_id = extract_file_from_qn(&caller_qn);
         let caller_label = determine_caller_label(idx, &caller_qn);
 
-        match resolve_single_call(idx, file_imports, callee, &file_id) {
+        match resolve_single_call(idx, provider, file_imports, callee, &file_id) {
             Some(target) => {
                 // source: stages/stage-3b.md §2 — Calls is Function|Method
                 // -> Function|Method only. Names resolving to Struct/Enum/
@@ -469,20 +473,22 @@ fn resolve_calls(
 
 fn resolve_single_call(
     idx: &SymbolIndex,
+    provider: &dyn crate::language_provider::LanguageProvider,
     file_imports: &HashMap<String, Vec<String>>,
     callee: &str,
     file_id: &str,
 ) -> Option<SymbolEntry> {
-    // Fully qualified: resolve directly
-    if callee.contains("::") {
-        let last = callee.rsplit("::").next().unwrap_or(callee);
+    // Fully qualified: resolve directly. QNs are uniformly `::`-separated;
+    // a callee carrying the language separator is treated as qualified.
+    if callee.contains("::") || callee.contains(provider.import_separator()) {
+        let last = provider.import_last_segment(callee);
         let candidates = idx.by_name.get(last)?;
         return pick_best_candidate(candidates, callee).cloned();
     }
     // Unqualified: check imports for this file
     if let Some(imports) = file_imports.get(file_id) {
         for imp_path in imports {
-            let last = imp_path.rsplit("::").next().unwrap_or(imp_path);
+            let last = provider.import_last_segment(imp_path);
             if last == callee {
                 if let Some(candidates) = idx.by_name.get(callee) {
                     return pick_best_candidate(candidates, imp_path).cloned();
@@ -534,17 +540,18 @@ fn resolve_implements(
 
     // (A) Declared/derived trait names on Struct/Enum.
     for label in &["Struct", "Enum"] {
-        let q = format!("MATCH (s:{label}) RETURN s.id, s.implements");
+        let q = format!("MATCH (s:{label}) RETURN s.id, s.implements, s.language");
         let qr = match store.execute_query(&q) {
             Ok(r) => r,
             Err(_) => continue,
         };
         for row in &qr.rows {
-            if row.len() < 2 {
+            if row.len() < 3 {
                 continue;
             }
             let from_id = &row[0];
             let csv = &row[1];
+            let provider = crate::language_provider::provider_for(&row[2]);
             if csv.is_empty() || csv == "Null(String)" {
                 continue;
             }
@@ -555,7 +562,7 @@ fn resolve_implements(
                 }
                 total += 1;
                 if resolve_one_implements(
-                    store, idx, buf, label, from_id, name, &mut created_stdlib,
+                    store, idx, buf, provider, label, from_id, name, &mut created_stdlib,
                 )? {
                     resolved += 1;
                 } else {
@@ -587,12 +594,13 @@ fn resolve_one_implements(
     store: &GraphStore,
     idx: &SymbolIndex,
     buf: &mut EdgeBuffer,
+    provider: &dyn crate::language_provider::LanguageProvider,
     label: &str,
     from_id: &str,
     name: &str,
     created_stdlib: &mut HashSet<String>,
 ) -> Result<bool, String> {
-    let lookup = name.rsplit("::").next().unwrap_or(name);
+    let lookup = provider.import_last_segment(name);
     if let Some(t) = idx
         .by_name
         .get(lookup)
@@ -601,7 +609,13 @@ fn resolve_one_implements(
         let table = format!("Implements_{label}_Trait");
         return Ok(buf.add(&table, from_id, &t.id, 0.95, "declared-implements"));
     }
-    if let Some(exp) = crate::macro_expansion::lookup("rust", &format!("derive_{name}")) {
+    // Derive/decorator → stdlib-trait expansion, only for languages that
+    // declare such a table (Rust derives). `None` → no fabricated edges.
+    let macro_key = match provider.derive_macro_key() {
+        Some(k) => k,
+        None => return Ok(false),
+    };
+    if let Some(exp) = crate::macro_expansion::lookup(macro_key, &format!("derive_{name}")) {
         let mut any = false;
         let table = format!("Implements_{label}_StdlibSymbol");
         for canonical in exp.emit_implements {
@@ -772,17 +786,6 @@ fn resolve_extends(store: &GraphStore, idx: &SymbolIndex) -> PhaseResult {
 // source: stages/stage-3b.md §5.5
 // ---------------------------------------------------------------------------
 
-/// Primitive types to skip during type-usage resolution.
-/// source: Rust Reference, "Primitive Types" section
-const PRIMITIVES: &[&str] = &[
-    "i8", "i16", "i32", "i64", "i128", "isize",
-    "u8", "u16", "u32", "u64", "u128", "usize",
-    "f32", "f64", "bool", "char", "str",
-    "String", "Vec", "Option", "Result", "Box", "Arc", "Rc",
-    "HashMap", "HashSet", "BTreeMap", "BTreeSet",
-    "Self", "self",
-];
-
 fn resolve_uses(
     store: &GraphStore,
     idx: &SymbolIndex,
@@ -809,19 +812,20 @@ fn resolve_field_type_uses(
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
     let qr = store.execute_query(
-        "MATCH (f:Field) RETURN f.id, f.type_annotation"
+        "MATCH (f:Field) RETURN f.id, f.type_annotation, f.language"
     )?;
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
 
     for row in &qr.rows {
-        if row.len() < 2 {
+        if row.len() < 3 {
             continue;
         }
         let field_id = &row[0];
         let type_ann = &row[1];
-        let type_names = extract_type_identifiers(type_ann);
+        let provider = crate::language_provider::provider_for(&row[2]);
+        let type_names = extract_type_identifiers(type_ann, provider.primitives());
 
         for type_name in &type_names {
             if let Some(target) = find_type_target(idx, type_name) {
@@ -846,8 +850,11 @@ fn resolve_field_type_uses(
 }
 
 /// Extract type identifiers from a type annotation string.
-/// Strips generics, references, lifetimes, and finds nominal types.
-fn extract_type_identifiers(type_ann: &str) -> Vec<String> {
+/// Strips generics, references, lifetimes, and finds nominal types. The
+/// `primitives` skip-set is language-specific (provided by LanguageProvider);
+/// lowercase builtins are additionally skipped by the uppercase-identifier
+/// convention below.
+fn extract_type_identifiers(type_ann: &str, primitives: &[&str]) -> Vec<String> {
     let mut result = Vec::new();
     let cleaned = type_ann
         .replace('&', " ")
@@ -864,7 +871,7 @@ fn extract_type_identifiers(type_ann: &str) -> Vec<String> {
         if token.starts_with('\'') || token == "mut" || token == "dyn" || token == "impl" {
             continue;
         }
-        if PRIMITIVES.contains(&token) {
+        if primitives.contains(&token) {
             continue;
         }
         // Must start with uppercase to be a type name (convention)
@@ -912,65 +919,17 @@ fn build_file_import_map(store: &GraphStore) -> Result<HashMap<String, Vec<Strin
 // Path normalization helpers
 // ---------------------------------------------------------------------------
 
-fn is_external_crate(path: &str) -> bool {
-    // External crates/packages: std::, core::, or known stdlib prefixes.
-    // source: Spike B' BUG #2 fix — the previous catch-all
-    // `!first_segment.is_empty() && !... && !contains('/')` treated EVERY
-    // unknown import as external (e.g., `from file_b import helper` → "file_b"
-    // → unknown but ≠ "crate" → considered external → resolve_one_import
-    // returned an UnresolvedRef without trying). That blocked all cross-file
-    // imports between sibling modules. Now we only mark as external when the
-    // prefix is explicitly known.
-    let known_external = [
-        // Rust
-        "std", "core", "alloc", "serde", "serde_json",
-        "sha2", "lbug", "tree_sitter", "tree_sitter_rust",
-        "tree_sitter_python", "tree_sitter_typescript",
-        // Python stdlib (common)
-        "os", "sys", "io", "re", "json", "typing", "collections",
-        "pathlib", "functools", "itertools", "abc", "dataclasses",
-        "logging", "unittest", "asyncio", "math", "datetime",
-        "__future__", "hashlib", "subprocess", "threading", "time",
-        "argparse", "shutil", "traceback", "contextlib", "urllib",
-        "http", "socketserver",
-        // Node built-ins
-        "fs", "path", "https", "crypto", "util", "events",
-        "stream", "child_process", "net", "url", "buffer",
-    ];
-    let first_segment = path.split("::").next().unwrap_or(path);
-    if first_segment == "crate" || first_segment == "self" || first_segment == "super" {
-        return false;
-    }
-    if first_segment.starts_with('.') {
-        return false; // relative import — internal
-    }
-    known_external.iter().any(|ext| first_segment == *ext)
-}
-
-fn normalize_import_path(path: &str) -> String {
-    let stripped = path.strip_prefix("crate::").unwrap_or(path);
-    stripped.to_string()
-}
-
 fn extract_file_from_import_id(import_id: &str) -> String {
-    // Import IDs have format: "file_path::import_display_name"
-    // Find the file extension to extract the file path.
-    // Supports .rs, .py, .ts, .tsx
-    for ext in &[".rs::", ".py::", ".ts::", ".tsx::"] {
-        if let Some(idx) = import_id.find(ext) {
-            return import_id[..idx + ext.len() - 2].to_string();
-        }
-    }
-    import_id.to_string()
+    // Import IDs have format: "file_path::import_display_name". The file path
+    // is recognized by its extension across ALL supported languages (the
+    // extension set is disjoint enough that no per-node language is needed).
+    // source: language_provider::ALL_EXTENSIONS (= parser::Language::from_extension).
+    crate::language_provider::extract_file_prefix(import_id)
+        .unwrap_or_else(|| import_id.to_string())
 }
 
 fn extract_file_from_qn(qn: &str) -> String {
-    for ext in &[".rs::", ".py::", ".ts::", ".tsx::"] {
-        if let Some(idx) = qn.find(ext) {
-            return qn[..idx + ext.len() - 2].to_string();
-        }
-    }
-    qn.to_string()
+    crate::language_provider::extract_file_prefix(qn).unwrap_or_else(|| qn.to_string())
 }
 
 fn extract_caller_from_callsite_id(cs_id: &str) -> String {
@@ -1036,6 +995,8 @@ mod tests {
 
     #[test]
     fn test_extract_type_identifiers() {
+        // Use the Rust primitive set (matches the prior module-level PRIMITIVES).
+        let prims = crate::language_provider::provider_for("rust").primitives();
         let cases = vec![
             ("String", vec![]),           // primitive
             ("GraphStore", vec!["GraphStore"]),
@@ -1046,25 +1007,29 @@ mod tests {
             ("HashMap<String, Value>", vec!["Value"]),
         ];
         for (input, expected) in cases {
-            let result = extract_type_identifiers(input);
+            let result = extract_type_identifiers(input, prims);
             assert_eq!(result, expected, "for input: {input}");
         }
     }
 
     #[test]
-    fn test_normalize_import_path() {
-        assert_eq!(normalize_import_path("crate::graph_store::GraphStore"), "graph_store::GraphStore");
-        assert_eq!(normalize_import_path("std::io"), "std::io");
-        assert_eq!(normalize_import_path("self::foo"), "self::foo");
+    fn test_normalize_import_path_via_provider() {
+        // normalize_import_path moved to LanguageProvider (Rust strips crate::).
+        let rust = crate::language_provider::provider_for("rust");
+        assert_eq!(rust.normalize_import_path("crate::graph_store::GraphStore"), "graph_store::GraphStore");
+        assert_eq!(rust.normalize_import_path("std::io"), "std::io");
+        assert_eq!(rust.normalize_import_path("self::foo"), "self::foo");
     }
 
     #[test]
-    fn test_is_external_crate() {
-        assert!(is_external_crate("std::io"));
-        assert!(is_external_crate("serde::Serialize"));
-        assert!(!is_external_crate("crate::graph_store"));
-        assert!(!is_external_crate("self::foo"));
-        assert!(!is_external_crate("super::bar"));
+    fn test_is_external_via_provider() {
+        // is_external_crate moved to LanguageProvider::is_external_import.
+        let rust = crate::language_provider::provider_for("rust");
+        assert!(rust.is_external_import("std::io"));
+        assert!(rust.is_external_import("serde::Serialize"));
+        assert!(!rust.is_external_import("crate::graph_store"));
+        assert!(!rust.is_external_import("self::foo"));
+        assert!(!rust.is_external_import("super::bar"));
     }
 
     #[test]

@@ -98,7 +98,7 @@ fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
                 start_line: n.start_position().row as u64 + 1,
                 end_line: n.end_position().row as u64 + 1,
                 visibility: "public".to_string(),
-                properties: vec![("target".to_string(), cleaned.clone())],
+                properties: vec![("path".to_string(), cleaned.clone())],
             });
             ctx.refs.push(ExtractedRef {
                 kind: "Imports".to_string(),

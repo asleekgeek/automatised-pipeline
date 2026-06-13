@@ -12,6 +12,7 @@ pub mod history;
 pub mod indexer;
 pub mod lsp_client;
 pub mod lsp_resolver;
+pub mod language_provider;
 pub mod macro_expansion;
 pub mod parser;
 pub mod prd_input;

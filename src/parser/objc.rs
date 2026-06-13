@@ -302,7 +302,7 @@ fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
         start_line: node.start_position().row as u64 + 1,
         end_line: node.end_position().row as u64 + 1,
         visibility: "public".to_string(),
-        properties: vec![("target".to_string(), cleaned.clone())],
+        properties: vec![("path".to_string(), cleaned.clone())],
     });
     ctx.refs.push(ExtractedRef {
         kind: "Imports".to_string(),
@@ -330,7 +330,7 @@ fn extract_module_import(ctx: &mut Ctx, node: Node, scope: &str) {
         start_line: node.start_position().row as u64 + 1,
         end_line: node.end_position().row as u64 + 1,
         visibility: "public".to_string(),
-        properties: vec![("target".to_string(), cleaned.clone())],
+        properties: vec![("path".to_string(), cleaned.clone())],
     });
     ctx.refs.push(ExtractedRef {
         kind: "Imports".to_string(),

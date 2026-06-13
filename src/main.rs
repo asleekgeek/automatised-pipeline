@@ -26,6 +26,7 @@ mod history;
 mod indexer;
 mod lsp_client;
 mod lsp_resolver;
+mod language_provider;
 mod macro_expansion;
 mod parser;
 mod prd_input;
