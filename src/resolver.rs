@@ -932,7 +932,7 @@ fn extract_file_from_qn(qn: &str) -> String {
     crate::language_provider::extract_file_prefix(qn).unwrap_or_else(|| qn.to_string())
 }
 
-fn extract_caller_from_callsite_id(cs_id: &str) -> String {
+pub(crate) fn extract_caller_from_callsite_id(cs_id: &str) -> String {
     // CallSite IDs: "caller_qn::call@line:col"
     if let Some(idx) = cs_id.rfind("::call@") {
         cs_id[..idx].to_string()

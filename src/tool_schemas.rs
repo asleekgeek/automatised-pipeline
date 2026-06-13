@@ -280,6 +280,11 @@ fn get_symbol_schema() -> Value {
                 "qualified_name": {
                     "type": "string",
                     "description": "The qualified name of the symbol to look up (e.g., 'src/main.rs::handle_tool_call')."
+                },
+                "sibling_graphs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional cross-repo bridge: paths to sibling repo graph directories. When the symbol is not defined in this graph, the bridge looks for its definition in these siblings and returns repo-tagged foreign_definitions (re-query the owning repo via the returned `repo`). Omit for single-repo lookups."
                 }
             }
         }
@@ -298,6 +303,11 @@ fn resolve_graph_schema() -> Value {
                 "graph_path": {
                     "type": "string",
                     "description": "Path to the graph directory (created by index_codebase)."
+                },
+                "sibling_graphs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional cross-repo bridge: paths to sibling repo graph directories. Reports cross_repo_resolvable — how many of this graph's unresolved references a sibling repo can define (a cross-service edge rather than a true third-party dependency) — plus a sample. Omit for single-repo resolution."
                 }
             }
         }
@@ -345,6 +355,11 @@ fn get_processes_schema() -> Value {
                     "minimum": 0,
                     "default": 0,
                     "description": "Number of processes to skip before filling the byte budget (cursor pagination). Processes are returned in a stable total order (name, then entry_point). Page through them all by re-calling with offset = the previous response's next_offset until next_offset is absent."
+                },
+                "sibling_graphs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Accepted for cross-repo API symmetry but NOT acted on: a Process is an intra-graph execution flow (BFS over one graph's call edges), and the bridge topology forbids the super-graph merge that a cross-repo process would require. To trace a flow across repos, follow get_impact's foreign_callers / get_symbol's foreign_definitions into the sibling graph and call get_processes there."
                 }
             }
         }
@@ -373,6 +388,11 @@ fn get_impact_schema() -> Value {
                     "minimum": 0,
                     "default": 0,
                     "description": "Number of CALLERS to skip before filling the byte budget (cursor pagination). 'callers' is the PRIMARY paged list, ordered by a stable total order (qualified_name, then id); page through every caller via next_offset. The other reverse-dependency lists (importers, users, implementors) are byte-capped SUMMARIES starting at index 0, not cursored (secondary_lists_paged=false) — to page one of those at scale, query it directly via query_graph with an explicit ORDER BY."
+                },
+                "sibling_graphs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional cross-repo bridge: paths to sibling repo graph directories. Adds a foreign_callers section — callers of this symbol that live in OTHER repos, repo-tagged and kept separate from the local callers (and from dependents_total) so blast radius distinguishes local from cross-repo impact. Foreign callers are name-matched without a shared linker (confidence 0.50) and make the blast radius a lower bound. Omit for single-repo impact."
                 }
             }
         }
@@ -438,6 +458,11 @@ fn search_codebase_schema() -> Value {
                     "type": "string",
                     "enum": ["Function", "Method", "Struct", "Enum", "Trait", "Module", "Constant", "TypeAlias"],
                     "description": "Optional: only return symbols of this kind."
+                },
+                "sibling_graphs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional cross-repo bridge: paths to sibling repo graph directories. Federates the query across them and returns a repo-tagged foreign_results section, kept separate from the primary cursored results so local pagination stays exact. Omit for single-repo search."
                 }
             }
         }

@@ -17,6 +17,7 @@
 //
 // Reference implementation (to read, not copy): /Users/cdeust/Developments/ai-architect
 
+mod bridge;
 mod clustering;
 mod epistemic;
 mod git_diff;
@@ -2202,6 +2203,34 @@ fn do_get_symbol(arguments: &Value) -> Result<Value, String> {
     let resolved_qn = match search::resolve_qualified_name(&store, qn) {
         Ok(q) => q,
         Err(nf) => {
+            // Cross-repo bridge: a symbol absent locally may be DEFINED in a
+            // sibling repo (the dangling reference the resolver marks external).
+            // Consult siblings before declaring it not-found. Absent the arg
+            // this is a no-op and the original error surfaces unchanged.
+            // source: cross-repo bridge spec (bridge module).
+            let siblings = bridge::SiblingGraphs::from_arg(arguments, graph_path);
+            let foreign = if siblings.is_empty() {
+                Vec::new()
+            } else {
+                bridge::resolve_definition(&siblings, qn)
+            };
+            if !foreign.is_empty() {
+                return Ok(json!({
+                    "stage": 3,
+                    "status": "ok",
+                    "tool": "get_symbol",
+                    "resolved_in": "sibling",
+                    "message": format!(
+                        "'{qn}' is not defined in this graph but is defined in \
+                         {} sibling location(s)", foreign.len()),
+                    "foreign_definitions": foreign.iter().map(|f| f.to_json()).collect::<Vec<_>>(),
+                    "did_you_mean": nf.did_you_mean,
+                    "next_steps": [
+                        "re-query the owning repo: get_symbol with graph_path set \
+                         to the `repo` of a foreign definition".to_string(),
+                    ],
+                }));
+            }
             return Ok(json!({
                 "stage": 3,
                 "status": "error",
@@ -2341,7 +2370,7 @@ fn do_resolve_graph(arguments: &Value) -> Result<Value, String> {
         0.0
     };
 
-    Ok(json!({
+    let mut out = json!({
         "stage": 3,
         "status": "ok",
         "tool": "resolve_graph",
@@ -2355,7 +2384,24 @@ fn do_resolve_graph(arguments: &Value) -> Result<Value, String> {
         "resolution_rate": format!("{:.2}", rate),
         "unresolved_count": result.unresolved.len(),
         "elapsed_ms": result.elapsed_ms,
-    }))
+    });
+
+    // Cross-repo bridge: report how many of the locally-unresolved references
+    // a sibling repo can define — i.e. how much of the dangling set is a
+    // cross-service edge rather than a true external/third-party dependency.
+    // Absent the arg this is a no-op. source: cross-repo bridge spec.
+    let siblings = bridge::SiblingGraphs::from_arg(arguments, graph_path);
+    if !siblings.is_empty() {
+        let targets: Vec<String> =
+            result.unresolved.iter().map(|u| u.target_text.clone()).collect();
+        let (resolvable, sample) = bridge::count_cross_repo_resolvable(&siblings, &targets);
+        out["cross_repo_resolvable"] = json!(resolvable);
+        out["cross_repo_sample"] = json!(sample);
+        if !siblings.skipped.is_empty() {
+            out["sibling_graphs_skipped"] = json!(siblings.skipped);
+        }
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -2620,6 +2666,39 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     }
     // Suggested follow-up traversals from this blast-radius result.
     out["next_steps"] = impact_next_steps(&impact, qn);
+
+    // Cross-repo bridge: when sibling graphs are supplied, also surface callers
+    // that live in OTHER repos. These are reported in their own section (not
+    // merged into the local `callers`/`dependents_total`) so blast radius keeps
+    // local and foreign impact distinct. Absent the arg this is a no-op.
+    // source: cross-repo bridge spec (bridge module).
+    let siblings = bridge::SiblingGraphs::from_arg(arguments, graph_path);
+    if !siblings.is_empty() {
+        let foreign = bridge::foreign_callers(&siblings, bridge::last_segment(qn));
+        let handles: Vec<Value> = foreign.iter().map(|f| f.to_json()).collect();
+        let foreign_page = response_budget::bound_values(
+            handles, response_budget::per_section_chars());
+        out["foreign_callers"] = json!(foreign_page.items);
+        out["foreign_callers_total"] = json!(foreign.len());
+        out["foreign_callers_paged"] = json!(false);
+        if !siblings.skipped.is_empty() {
+            out["sibling_graphs_skipped"] = json!(siblings.skipped);
+        }
+        // Cross-repo edges are name-matched without a shared linker, so any
+        // foreign caller makes the blast radius a lower bound (and stays one
+        // even if the local set was exact). source: epistemic module contract.
+        if !foreign.is_empty() {
+            out["epistemic"] = json!(epistemic::Boundary::LowerBound.as_str());
+            if let Some(reasons) = out["epistemic_reasons"].as_array_mut() {
+                reasons.push(json!(format!(
+                    "{} cross-repo caller(s) were matched by symbol name across \
+                     sibling graphs without a shared linker (confidence 0.50); \
+                     foreign blast radius is heuristic",
+                    foreign.len()
+                )));
+            }
+        }
+    }
     Ok(out)
 }
 
@@ -2808,6 +2887,25 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     if let Some(next) = page.next_offset {
         out["next_offset"] = json!(next);
     }
+
+    // Cross-repo bridge: federate the query across sibling graphs. Foreign hits
+    // are a bounded SECONDARY section (repo-tagged, not merged into the primary
+    // cursored `results`) so the local `offset` contract stays exact. Absent the
+    // arg this is a no-op. source: cross-repo bridge spec.
+    let siblings = bridge::SiblingGraphs::from_arg(arguments, graph_path);
+    if !siblings.is_empty() {
+        let hits = bridge::federated_search(&siblings, query, limit);
+        let foreign_items: Vec<Value> = hits.iter().map(|h| h.to_json()).collect();
+        let foreign_page = response_budget::bound_values(
+            foreign_items, response_budget::per_section_chars());
+        out["foreign_results"] = json!(foreign_page.items);
+        out["foreign_results_total"] = json!(hits.len());
+        out["foreign_results_paged"] = json!(false);
+        if !siblings.skipped.is_empty() {
+            out["sibling_graphs_skipped"] = json!(siblings.skipped);
+        }
+    }
+
     // Suggest how to act on a hit: top-ranked results are the natural next
     // traversal anchors. Gated on a non-empty page so we never suggest acting
     // on nothing.
