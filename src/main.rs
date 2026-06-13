@@ -2771,6 +2771,27 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         response_budget::per_section_chars(),
     );
 
+    // Process-grouped view: a lightweight secondary index over the returned
+    // page. Built from `page.items` (not the full ranked set) so every
+    // qualified_name it lists is present in `results` — the flat list stays the
+    // single source of truth; `by_process` never duplicates row payload and
+    // never references a row outside the page. source: search::group_hits_by_process.
+    let group_input: Vec<(String, Vec<String>)> = page.items.iter().map(|item| {
+        let qn = item.get("qualified_name").and_then(|v| v.as_str())
+            .unwrap_or_default().to_string();
+        let processes = item.get("processes").and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|p| p.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        (qn, processes)
+    }).collect();
+    let by_process: Vec<Value> = search::group_hits_by_process(&group_input)
+        .into_iter()
+        .map(|(process, qualified_names)| json!({
+            "process": process,
+            "qualified_names": qualified_names,
+        }))
+        .collect();
+
     let mut out = json!({
         "stage": 3,
         "status": "ok",
@@ -2781,6 +2802,7 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         "offset": offset,
         "truncated": page.truncated,
         "results": page.items,
+        "by_process": by_process,
         "elapsed_ms": elapsed_ms,
     });
     if let Some(next) = page.next_offset {
