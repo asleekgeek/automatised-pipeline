@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — Cross-repo bridge: link per-repo graphs at query time
+
+First tagged release since v0.2.2; folds in the untagged 0.3.0 and 0.4.0 work
+(those bumped Cargo.toml but were never tagged, so no binaries shipped).
+
+### Added
+
+- **Cross-repo bridge (`src/bridge.rs`).** Links separate per-repo property
+  graphs at QUERY TIME via a caller-supplied `sibling_graphs` argument — no
+  super-graph merge, no re-index. A reference that dangles in repo A (no local
+  definition) is resolved against registered sibling graphs on demand.
+  - `resolve_definition` (forward): an unresolved local ref → its definition in
+    a sibling repo. Surfaces in `get_symbol`'s miss path as repo-tagged
+    `foreign_definitions`.
+  - `foreign_callers` (reverse): sibling call sites of a local symbol. Homonym-
+    safe — a sibling that locally defines the same short name is skipped, so a
+    local call is never mis-reported as cross-repo. Surfaces in `get_impact` as
+    a `foreign_callers` section kept distinct from local blast radius, flipping
+    the epistemic boundary to lower-bound (name-matched, confidence 0.50).
+  - `resolve_graph` reports `cross_repo_resolvable` (how many unresolved refs a
+    sibling can define) + a sample.
+  - `search_codebase` federates the query across siblings into a bounded,
+    repo-tagged `foreign_results` section; the primary cursor stays exact.
+  - Optional `sibling_graphs` arg added to all five tool schemas; absent → no-op
+    (fully backward compatible). `get_processes` accepts it for API symmetry but
+    is documented as not-acted-on (intra-graph by construction; cross-repo would
+    require the forbidden super-graph).
+- **(0.4.0) Cursor pagination on all bounded reads** — truncation becomes
+  pacing across `get_processes`, `get_impact`, `search_codebase`.
+- **(0.3.0) Bounded-io** — byte-budgeted MCP responses + read-path graph cache.
+- **(0.3.0–0.4.0) Multi-language resolver** — `LanguageProvider` trait lights up
+  7 dormant grammars (C/C++/Go/Java/Kotlin/ObjC/Swift); process-grouped search
+  via an additive `by_process` index.
+
 ## [0.2.2] — Remove the search-index env-var channel (flaky-test root cause)
 
 ### Fixed
