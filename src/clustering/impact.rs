@@ -1,3 +1,4 @@
+use crate::epistemic::{self, Boundary};
 use crate::graph_store::GraphStore;
 
 /// A reverse-dependency edge endpoint, carried as a re-queryable handle
@@ -11,6 +12,11 @@ pub struct ImpactNode {
     pub id: String,
     pub qualified_name: String,
     pub label: String,
+    /// Confidence of the reverse-dependency edge connecting this dependent to
+    /// the target: the stored `confidence` edge property when present, else the
+    /// per-relation-type floor (`epistemic::relation_confidence_floor`). A value
+    /// < 1.0 means this dependency was resolved heuristically and may be wrong.
+    pub confidence: f64,
 }
 
 pub struct ImpactResult {
@@ -24,6 +30,11 @@ pub struct ImpactResult {
     pub users: Vec<ImpactNode>,
     /// Reverse `Implements` — types that implement the target trait.
     pub implementors: Vec<ImpactNode>,
+    /// Whether the captured dependent set is exhaustive (`Exact`) or a lower
+    /// bound on true impact (`LowerBound`) — see `epistemic` module.
+    pub epistemic: Boundary,
+    /// Human-readable carriers of epistemic uncertainty (empty when `Exact`).
+    pub epistemic_reasons: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +91,47 @@ pub fn get_impact(
     let users = reverse_dependents(store, &esc, "Uses_");
     let implementors = reverse_dependents(store, &esc, "Implements_");
 
+    // Epistemic boundary: the dependent set above is a LOWER BOUND on true
+    // impact when either (a) the target is a dynamic-dispatch surface (calls
+    // through the interface/trait bind to an implementor at runtime and are not
+    // exhaustively static), or (b) any contributing edge was resolved
+    // heuristically (confidence < 1.0). Otherwise it is exact.
+    // source: epistemic module contract.
+    let target_label = lookup_target_label(store, &esc);
+    let mut epistemic_reasons = Vec::new();
+
+    if let Some(label) = &target_label {
+        if epistemic::is_dynamic_dispatch_surface(label) {
+            epistemic_reasons.push(format!(
+                "target is a {label} (dynamic-dispatch surface): call sites that \
+                 invoke it polymorphically are not exhaustively captured by static \
+                 resolution; the {} implementor(s) and direct callers shown are a \
+                 lower bound",
+                implementors.len()
+            ));
+        }
+    }
+
+    let heuristic_count = callers
+        .iter()
+        .chain(importers.iter())
+        .chain(users.iter())
+        .chain(implementors.iter())
+        .filter(|n| epistemic::is_heuristic_edge(n.confidence))
+        .count();
+    if heuristic_count > 0 {
+        epistemic_reasons.push(format!(
+            "{heuristic_count} reverse-dependency edge(s) were resolved \
+             heuristically (confidence < 1.0) and may be incomplete or incorrect"
+        ));
+    }
+
+    let epistemic = if epistemic_reasons.is_empty() {
+        Boundary::Exact
+    } else {
+        Boundary::LowerBound
+    };
+
     Ok(ImpactResult {
         communities,
         processes,
@@ -87,7 +139,29 @@ pub fn get_impact(
         importers,
         users,
         implementors,
+        epistemic,
+        epistemic_reasons,
     })
+}
+
+/// Looks up the symbol label of the impact target by qualified_name or id.
+/// Returns the first matching `SYMBOL_LABELS` label, or `None` when the target
+/// is not a resolvable symbol node (e.g. a File). `esc` must already be
+/// single-quote-escaped (see `get_impact`).
+fn lookup_target_label(store: &GraphStore, esc: &str) -> Option<String> {
+    for label in super::SYMBOL_LABELS {
+        let cypher = format!(
+            "MATCH (n:{label}) \
+             WHERE n.id = '{esc}' OR n.qualified_name = '{esc}' \
+             RETURN n.id LIMIT 1"
+        );
+        if let Ok(qr) = store.execute_query(&cypher) {
+            if qr.rows.iter().any(|r| !r.is_empty()) {
+                return Some((*label).to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Reverse-traverses every `REL_TABLES` edge whose name starts with `prefix`,
@@ -101,6 +175,10 @@ pub fn get_impact(
 /// meaningful dependent and is captured by the direct `Calls_Function_*` /
 /// `Calls_Method_*` edges the resolver also emits.
 fn reverse_dependents(store: &GraphStore, esc: &str, prefix: &str) -> Vec<ImpactNode> {
+    // Per-relation-type floor for this traversal, used when an edge carries no
+    // stored confidence (older graphs / untyped edges) so a dependent is never
+    // silently treated as fully confident. source: epistemic module.
+    let floor = epistemic::relation_confidence_floor(prefix);
     let mut out = Vec::new();
     for &(rel, from_label, to_label) in crate::graph_store::REL_TABLES {
         if !rel.starts_with(prefix) {
@@ -109,18 +187,26 @@ fn reverse_dependents(store: &GraphStore, esc: &str, prefix: &str) -> Vec<Impact
         if from_label == crate::graph_store::NODE_CALL_SITE {
             continue;
         }
+        // Bind the edge as `r` so its stored `confidence` property surfaces; a
+        // resolution/provenance edge carries it, structural edges do not (then
+        // `r.confidence` is empty and we fall back to the relation floor).
         let cypher = format!(
-            "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) \
+            "MATCH (a:{from_label})-[r:{rel}]->(b:{to_label}) \
              WHERE b.id = '{esc}' OR b.qualified_name = '{esc}' \
-             RETURN a.id, a.qualified_name"
+             RETURN a.id, a.qualified_name, r.confidence"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
                 if row.len() >= 2 {
+                    let confidence = row
+                        .get(2)
+                        .and_then(|c| c.parse::<f64>().ok())
+                        .unwrap_or(floor);
                     out.push(ImpactNode {
                         id: row[0].clone(),
                         qualified_name: row[1].clone(),
                         label: from_label.to_string(),
+                        confidence,
                     });
                 }
             }

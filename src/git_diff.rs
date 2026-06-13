@@ -66,6 +66,21 @@ pub struct DiffAnalysis {
     pub communities_affected: Vec<String>,
     pub processes_affected: Vec<String>,
     pub risk_score: f64,
+    /// Mean confidence of the depth-1 reverse-dependency edges of the changed
+    /// symbols (stored edge `confidence`, else the per-relation-type floor).
+    /// 1.0 when the changed symbols have no resolved dependents. A value < 1.0
+    /// means the blast radius `risk_score` is computed over rests partly on
+    /// heuristically-resolved edges — read `risk_score` as itself uncertain.
+    /// source: epistemic module; clustering::get_impact per-edge confidence.
+    pub mean_dependency_confidence: f64,
+    /// `exact` when every changed symbol's blast radius is statically
+    /// exhaustive; `lower-bound` when at least one changed symbol is reached via
+    /// dynamic dispatch or through heuristic edges — true risk may exceed the
+    /// reported score. source: epistemic module.
+    pub epistemic: &'static str,
+    /// Carriers of epistemic uncertainty across the changed-symbol set (empty
+    /// when `exact`), each naming the symbol and why its impact under-counts.
+    pub epistemic_reasons: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +392,8 @@ fn build_analysis(
 
     let total_communities = count_total_communities(store);
     let risk_score = compute_risk_score(&all_symbols, total_communities);
+    let (mean_dependency_confidence, epistemic, epistemic_reasons) =
+        assess_dependency_confidence(store, &all_symbols);
 
     Ok(DiffAnalysis {
         files_changed,
@@ -384,7 +401,64 @@ fn build_analysis(
         communities_affected: communities,
         processes_affected: processes,
         risk_score,
+        mean_dependency_confidence,
+        epistemic,
+        epistemic_reasons,
     })
+}
+
+/// Qualifies `risk_score` with the epistemic reliability of the graph edges it
+/// rests on. For each changed symbol it pulls the depth-1 reverse-dependency
+/// edges via `clustering::get_impact` (which now carries per-edge confidence and
+/// a lower-bound flag), then reports the mean edge confidence and whether any
+/// changed symbol's blast radius is a lower bound. This SURFACES uncertainty
+/// rather than folding invented weights into the risk scalar — `risk_score`'s
+/// formula is unchanged. source: epistemic module; checkpoint Phase 1 #2.
+fn assess_dependency_confidence(
+    store: &GraphStore,
+    symbols: &[ChangedSymbol],
+) -> (f64, &'static str, Vec<String>) {
+    let mut confidence_sum = 0.0_f64;
+    let mut edge_count = 0_u64;
+    let mut reasons = Vec::new();
+    let mut any_lower_bound = false;
+
+    for sym in symbols {
+        let impact = match clustering::get_impact(store, &sym.qualified_name) {
+            Ok(i) => i,
+            Err(_) => continue, // symbol not in graph (e.g. deleted) — skip
+        };
+        for node in impact
+            .callers
+            .iter()
+            .chain(impact.importers.iter())
+            .chain(impact.users.iter())
+            .chain(impact.implementors.iter())
+        {
+            confidence_sum += node.confidence;
+            edge_count += 1;
+        }
+        if impact.epistemic == crate::epistemic::Boundary::LowerBound {
+            any_lower_bound = true;
+            for reason in impact.epistemic_reasons {
+                reasons.push(format!("{}: {reason}", sym.qualified_name));
+            }
+        }
+    }
+
+    // No resolved dependents → nothing heuristic to discount; confidence is
+    // vacuously full (1.0), epistemic status exact.
+    let mean = if edge_count == 0 {
+        1.0
+    } else {
+        confidence_sum / edge_count as f64
+    };
+    let epistemic = if any_lower_bound {
+        crate::epistemic::Boundary::LowerBound.as_str()
+    } else {
+        crate::epistemic::Boundary::Exact.as_str()
+    };
+    (mean, epistemic, reasons)
 }
 
 // ---------------------------------------------------------------------------

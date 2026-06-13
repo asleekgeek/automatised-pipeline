@@ -18,6 +18,7 @@
 // Reference implementation (to read, not copy): /Users/cdeust/Developments/ai-architect
 
 mod clustering;
+mod epistemic;
 mod git_diff;
 mod graph_cache;
 mod graph_store;
@@ -2225,6 +2226,10 @@ fn do_get_symbol(arguments: &Value) -> Result<Value, String> {
         "node": node,
         "edges_out": edges_out,
         "edges_in": edges_in,
+        "next_steps": [
+            format!("see relationship context: get_context on '{resolved_qn}'"),
+            format!("trace blast radius before changing it: get_impact on '{resolved_qn}'"),
+        ],
     }))
 }
 
@@ -2544,6 +2549,9 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
                     "id": n.id,
                     "qualified_name": n.qualified_name,
                     "label": n.label,
+                    // Confidence of the edge linking this dependent to the
+                    // target; < 1.0 marks a heuristically-resolved dependency.
+                    "confidence": format!("{:.2}", n.confidence),
                 })
             })
             .collect()
@@ -2598,11 +2606,47 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "implementors_total": implementors.total_count,
         "dependents_total": dependents_total,
         "truncated": any_truncated,
+        // Epistemic honesty: is this blast radius exhaustive, or a lower bound?
+        // `lower-bound` means real impact may exceed what is shown — because the
+        // target is reached via dynamic dispatch and/or some edges were resolved
+        // heuristically. `epistemic_reasons` names the carriers of uncertainty.
+        // source: epistemic module; clustering::get_impact.
+        "epistemic": impact.epistemic.as_str(),
+        "epistemic_reasons": impact.epistemic_reasons,
     });
     if let Some(next) = callers.next_offset {
         out["next_offset"] = json!(next);
     }
+    // Suggested follow-up traversals from this blast-radius result.
+    out["next_steps"] = impact_next_steps(&impact, qn);
     Ok(out)
+}
+
+/// Suggests the natural follow-up tool calls after a `get_impact` result, so a
+/// caller continues traversing the graph rather than stopping at the digest.
+/// Hints are graph-grounded (only suggested when the corresponding dimension is
+/// non-empty / relevant), never speculative.
+fn impact_next_steps(impact: &clustering::ImpactResult, qn: &str) -> Value {
+    let mut steps = Vec::new();
+    if !impact.callers.is_empty() {
+        steps.push(
+            "inspect a caller's own blast radius: get_impact on a `callers[].qualified_name`"
+                .to_string(),
+        );
+    }
+    if impact.epistemic == epistemic::Boundary::LowerBound {
+        steps.push(format!(
+            "this is a lower bound — run get_context on '{qn}' to review its \
+             interface relationships, or lsp_resolve to tighten dynamic-dispatch edges"
+        ));
+    }
+    if !impact.implementors.is_empty() {
+        steps.push(
+            "review an implementor directly: get_symbol on an `implementors[].qualified_name`"
+                .to_string(),
+        );
+    }
+    json!(steps)
 }
 
 // ---------------------------------------------------------------------------
@@ -2741,6 +2785,15 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     if let Some(next) = page.next_offset {
         out["next_offset"] = json!(next);
     }
+    // Suggest how to act on a hit: top-ranked results are the natural next
+    // traversal anchors. Gated on a non-empty page so we never suggest acting
+    // on nothing.
+    if let Some(first) = page.items.first().and_then(|r| r.get("qualified_name")).and_then(|v| v.as_str()) {
+        out["next_steps"] = json!([
+            format!("inspect the top hit: get_context on '{first}'"),
+            "narrow further with `label_filter` (e.g. Function, Struct, Trait)".to_string(),
+        ]);
+    }
     Ok(out)
 }
 
@@ -2808,6 +2861,37 @@ fn do_get_context(arguments: &Value) -> Result<Value, String> {
         "role": p.role,
     })).collect();
 
+    // Epistemic honesty: when the symbol is a dynamic-dispatch surface (a
+    // trait/interface), its reverse relationships (`called_by`, `used_by`) are a
+    // LOWER BOUND — polymorphic call sites that go through the interface are not
+    // exhaustively attributable to it by static resolution. Concrete symbols are
+    // exact. source: epistemic module.
+    let dynamic_surface = epistemic::is_dynamic_dispatch_surface(&ctx.label);
+    let (epistemic_status, epistemic_reasons) = if dynamic_surface {
+        (
+            epistemic::Boundary::LowerBound.as_str(),
+            vec![format!(
+                "'{}' is a {} (dynamic-dispatch surface): `called_by`/`used_by` \
+                 omit call sites that reach it polymorphically; treat the reverse \
+                 relationships as a lower bound and consult `implemented_by`",
+                ctx.qualified_name, ctx.label
+            )],
+        )
+    } else {
+        (epistemic::Boundary::Exact.as_str(), Vec::new())
+    };
+
+    let mut next_steps = vec![format!(
+        "trace blast radius: get_impact on '{}'",
+        ctx.qualified_name
+    )];
+    if dynamic_surface && !ctx.implemented_by.is_empty() {
+        next_steps.push(
+            "enumerate concrete behaviour: get_symbol on an `implemented_by[].qualified_name`"
+                .to_string(),
+        );
+    }
+
     Ok(json!({
         "stage": 3,
         "status": "ok",
@@ -2833,6 +2917,9 @@ fn do_get_context(arguments: &Value) -> Result<Value, String> {
         },
         "community": community_json,
         "processes": processes_json,
+        "epistemic": epistemic_status,
+        "epistemic_reasons": epistemic_reasons,
+        "next_steps": next_steps,
     }))
 }
 
@@ -3130,7 +3217,36 @@ fn do_detect_changes(arguments: &Value) -> Result<Value, String> {
         "processes_affected": analysis.processes_affected,
         "processes_affected_count": analysis.processes_affected.len(),
         "risk_score": format!("{:.4}", analysis.risk_score),
+        // Epistemic qualification of risk_score: the mean confidence of the
+        // reverse-dependency edges the risk rests on, and whether any changed
+        // symbol's blast radius is a lower bound (true risk may exceed score).
+        // source: git_diff::assess_dependency_confidence.
+        "mean_dependency_confidence": format!("{:.2}", analysis.mean_dependency_confidence),
+        "epistemic": analysis.epistemic,
+        "epistemic_reasons": analysis.epistemic_reasons,
+        "next_steps": detect_changes_next_steps(&analysis),
     }))
+}
+
+/// Suggests follow-up tools after a `detect_changes` result. Graph-grounded:
+/// each hint is gated on a present dimension of the analysis.
+fn detect_changes_next_steps(analysis: &git_diff::DiffAnalysis) -> Value {
+    let mut steps = Vec::new();
+    if !analysis.symbols_affected.is_empty() {
+        steps.push(
+            "drill into a changed symbol's blast radius: get_impact on a \
+             `symbols_affected[].qualified_name`"
+                .to_string(),
+        );
+    }
+    if analysis.epistemic == epistemic::Boundary::LowerBound.as_str() {
+        steps.push(
+            "risk is a lower bound (see `epistemic_reasons`) — run lsp_resolve to \
+             tighten dynamic-dispatch edges before trusting the score"
+                .to_string(),
+        );
+    }
+    json!(steps)
 }
 
 // ---------------------------------------------------------------------------
