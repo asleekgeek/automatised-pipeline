@@ -64,11 +64,23 @@ fn f3_broken_source_reports_nonzero_parse_errors() {
 
 #[test]
 fn f1_kotlin_imports_supertypes_calls_enums() {
+    // Class/interface bodies are multi-line on purpose: tree-sitter-kotlin-ng
+    // 1.1.0 requires a member separator (newline or `;`) before the closing
+    // `}` of a `class_body`. A single-line body like `interface G { fun f() }`
+    // is valid Kotlin but makes the grammar insert a MISSING `_class_member_semi`
+    // (and, in a multi-declaration file, cascade into an ERROR that swallows the
+    // following declarations). This is orthogonal to what F1 pins — the -ng node
+    // re-keying — so we exercise the re-keying on the form the grammar parses
+    // cleanly, which is also how real Kotlin is written.
     let src = r#"
 package com.example
 import kotlin.collections.List
-interface Greeter { fun greet(): String }
-class Dog : Greeter { override fun greet(): String { return bark() } }
+interface Greeter {
+    fun greet(): String
+}
+class Dog : Greeter {
+    override fun greet(): String { return bark() }
+}
 enum class Color { RED, GREEN }
 "#;
     let r = parse(src, "A.kt", Language::Kotlin);

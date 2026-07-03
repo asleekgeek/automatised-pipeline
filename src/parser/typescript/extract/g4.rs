@@ -18,6 +18,9 @@ pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_
     if callee.is_empty() {
         return;
     }
+    // Last path segment (obj.method -> method), matching the `callee_tail`
+    // convention the sister-language extractors use for their Calls refs.
+    let callee_tail = callee.rsplit('.').next().unwrap_or(&callee).to_string();
     let line = node.start_position().row as u64 + 1;
     let col = node.start_position().column as u64;
     // Chained calls (f()()) share start_byte; (start_byte, end_byte) span
@@ -41,6 +44,15 @@ pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_
         kind: "Defines".to_string(),
         from_qualified_name: caller_qn.to_string(),
         to_qualified_name: cs_id,
+    });
+    // Cross-language-consistent call edge: caller -> callee name. The sister
+    // extractors (c/cpp/go/java/kotlin/objc/swift) all emit this "Calls" ref;
+    // TypeScript previously emitted only the Defines edge to the call-site node,
+    // so call graphs over .ts/.tsx were missing every Calls edge (F4).
+    ctx.refs.push(ExtractedRef {
+        kind: "Calls".to_string(),
+        from_qualified_name: caller_qn.to_string(),
+        to_qualified_name: callee_tail,
     });
 }
 
