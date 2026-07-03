@@ -1,78 +1,10 @@
-// parser::java — tree-sitter-based Java source parser for code-intelligence graph.
-//
-// Parses a single `.java` file and extracts typed symbols matching the
-// graph_store schema. Shares the ParseResult/ExtractedNode/ExtractedRef
-// contract with parser::rust, parser::python, and parser::typescript.
-//
-// Grammar reference: https://github.com/tree-sitter/tree-sitter-java
+// parser::java::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
+use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
+use super::*;              // sibling extract fns (glob re-export)
 
-use super::{
-    node_field_text, node_text, qual, ExtractedNode, ExtractedRef, ParseResult, LABEL_CALL_SITE,
-    LABEL_CONSTANT, LABEL_ENUM, LABEL_FUNCTION, LABEL_IMPORT, LABEL_METHOD, LABEL_STRUCT,
-    LABEL_TRAIT,
-};
-
-// Tree-sitter node type constants — from
-// https://github.com/tree-sitter/tree-sitter-java/blob/master/src/node-types.json
-const TS_CLASS: &str = "class_declaration";
-const TS_INTERFACE: &str = "interface_declaration";
-const TS_ENUM: &str = "enum_declaration";
-const TS_RECORD: &str = "record_declaration";
-const TS_ANNOTATION: &str = "annotation_type_declaration";
-const TS_METHOD: &str = "method_declaration";
-const TS_CONSTRUCTOR: &str = "constructor_declaration";
-const TS_FIELD: &str = "field_declaration";
-// source: tree-sitter-java v0.23.5 — enum constants (`RED, GREEN`) are
-// enum_constant nodes inside enum_body; previously dropped.
-const TS_ENUM_CONSTANT: &str = "enum_constant";
-const TS_IMPORT: &str = "import_declaration";
-const TS_PACKAGE: &str = "package_declaration";
-const TS_CALL: &str = "method_invocation";
-const TS_OBJECT_CREATION: &str = "object_creation_expression";
-
-pub fn parse_java_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
-    let lang: tree_sitter::Language = tree_sitter_java::LANGUAGE.into();
-    let mut parser = Parser::new();
-    parser
-        .set_language(&lang)
-        .map_err(|e| format!("failed to set Java language: {e}"))?;
-    let tree = super::parse_with_timeout(&mut parser, source)?;
-
-    let mut ctx = Ctx {
-        source,
-        file_path,
-        nodes: Vec::new(),
-        refs: Vec::new(),
-        package: String::new(),
-        next_seq: 0,
-    };
-    // Java files carry a ``package X.Y;`` at the top that seeds the scope
-    // for every qualified name below; we capture it then prefix-qualify.
-    if let Some(pkg) = find_package(tree.root_node(), source) {
-        ctx.package = pkg;
-    }
-    extract_children(&mut ctx, tree.root_node(), file_path, None);
-    Ok(ParseResult {
-        nodes: ctx.nodes,
-        refs: ctx.refs,
-        parse_errors: super::count_parse_errors(tree.root_node()),
-    })
-}
-
-struct Ctx<'a> {
-    source: &'a str,
-    #[allow(dead_code)]
-    file_path: &'a str,
-    nodes: Vec<ExtractedNode>,
-    refs: Vec<ExtractedRef>,
-    package: String,
-    // See the note in parser::kotlin — a per-file sequence disambiguates
-    // overloaded methods and multiple call sites at the same position
-    // so the graph store's primary-key uniqueness holds.
-    next_seq: u64,
-}
 
 fn find_package(root: Node, source: &str) -> Option<String> {
     let mut cursor = root.walk();
@@ -88,6 +20,7 @@ fn find_package(root: Node, source: &str) -> Option<String> {
     }
     None
 }
+
 
 fn visibility_from_modifiers(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
@@ -108,6 +41,7 @@ fn visibility_from_modifiers(source: &str, node: Node) -> String {
     // Java default is package-private.
     "package".to_string()
 }
+
 
 fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
     let mut cursor = parent.walk();
@@ -138,6 +72,7 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
     }
 }
 
+
 /// Emits a Java enum constant as a Variant of the enclosing enum, with a
 /// HasVariant edge (mirrors the Rust parser's enum-variant handling). `scope` is
 /// the enum's qualified name (enum_constant nodes are reached while recursing
@@ -149,7 +84,7 @@ fn extract_enum_constant(ctx: &mut Ctx, node: Node, scope: &str) {
     }
     let qn = qual(scope, &name);
     ctx.nodes.push(ExtractedNode {
-        label: super::LABEL_VARIANT.to_string(),
+        label: crate::parser::LABEL_VARIANT.to_string(),
         name: name.clone(),
         qualified_name: qn.clone(),
         start_line: node.start_position().row as u64 + 1,
@@ -163,6 +98,7 @@ fn extract_enum_constant(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: qn,
     });
 }
+
 
 fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -224,6 +160,7 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     }
 }
 
+
 /// The `extends` superclass name for a class (single; empty if none).
 /// source: tree-sitter-java — the `superclass` field text is `extends Foo`.
 fn extract_superclass(source: &str, node: Node) -> String {
@@ -235,6 +172,7 @@ fn extract_superclass(source: &str, node: Node) -> String {
         None => String::new(),
     }
 }
+
 
 /// The implemented-interface names for a class (empty if none).
 /// source: tree-sitter-java — the `interfaces` field is a `super_interfaces`
@@ -249,6 +187,7 @@ fn extract_interfaces(source: &str, node: Node) -> Vec<String> {
     collect_type_names(source, ifaces, &mut names);
     names
 }
+
 
 /// Collects type_identifier / scoped_type_identifier names directly under
 /// `node`, descending one level through a `type_list` wrapper (the shape
@@ -268,6 +207,7 @@ fn collect_type_names(source: &str, node: Node, out: &mut Vec<String>) {
         }
     }
 }
+
 
 fn extract_method(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
     let name = node_field_text(ctx.source, node, "name");
@@ -310,115 +250,5 @@ fn extract_method(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option
     });
     if let Some(body) = node.child_by_field_name("body") {
         extract_calls(ctx, body, &qn);
-    }
-}
-
-fn extract_field(ctx: &mut Ctx, node: Node, scope: &str) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "variable_declarator" {
-            let name = node_field_text(ctx.source, child, "name");
-            if name.is_empty() {
-                continue;
-            }
-            let qn = qual(scope, &name);
-            ctx.nodes.push(ExtractedNode {
-                label: LABEL_CONSTANT.to_string(),
-                name: name.clone(),
-                qualified_name: qn.clone(),
-                start_line: child.start_position().row as u64 + 1,
-                end_line: child.end_position().row as u64 + 1,
-                visibility: visibility_from_modifiers(ctx.source, node),
-                properties: Vec::new(),
-            });
-            ctx.refs.push(ExtractedRef {
-                kind: "Defines".to_string(),
-                from_qualified_name: scope.to_string(),
-                to_qualified_name: qn,
-            });
-        }
-    }
-}
-
-fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
-    let text = node_text(ctx.source, node);
-    // ``import a.b.C;`` or ``import static a.b.C.method;``
-    let cleaned = text
-        .trim()
-        .trim_start_matches("import")
-        .trim()
-        .trim_start_matches("static")
-        .trim()
-        .trim_end_matches(';')
-        .trim()
-        .to_string();
-    if cleaned.is_empty() {
-        return;
-    }
-    let name = cleaned
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_string();
-    let qn = qual(scope, &format!("import:{cleaned}"));
-    ctx.nodes.push(ExtractedNode {
-        label: LABEL_IMPORT.to_string(),
-        name,
-        qualified_name: qn.clone(),
-        start_line: node.start_position().row as u64 + 1,
-        end_line: node.end_position().row as u64 + 1,
-        visibility: "package".to_string(),
-        properties: vec![("path".to_string(), cleaned.clone())],
-    });
-    ctx.refs.push(ExtractedRef {
-        kind: "Imports".to_string(),
-        from_qualified_name: scope.to_string(),
-        to_qualified_name: cleaned,
-    });
-}
-
-fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
-    let mut stack = vec![root];
-    while let Some(n) = stack.pop() {
-        if n.kind() == TS_CALL || n.kind() == TS_OBJECT_CREATION {
-            let callee = node_field_text(ctx.source, n, "name");
-            let callee = if callee.is_empty() {
-                // ``new X()`` uses the ``type`` field for the class name.
-                node_field_text(ctx.source, n, "type")
-            } else {
-                callee
-            };
-            if !callee.is_empty() {
-                let seq = {
-                    ctx.next_seq += 1;
-                    ctx.next_seq
-                };
-                let site_qn = format!(
-                    "{}::call@{}:{}#{}",
-                    caller_qn,
-                    n.start_position().row + 1,
-                    n.start_position().column + 1,
-                    seq,
-                );
-                ctx.nodes.push(ExtractedNode {
-                    label: LABEL_CALL_SITE.to_string(),
-                    name: callee.clone(),
-                    qualified_name: site_qn.clone(),
-                    start_line: n.start_position().row as u64 + 1,
-                    end_line: n.end_position().row as u64 + 1,
-                    visibility: "package".to_string(),
-                    properties: vec![("callee_name".to_string(), callee.clone())],
-                });
-                ctx.refs.push(ExtractedRef {
-                    kind: "Calls".to_string(),
-                    from_qualified_name: caller_qn.to_string(),
-                    to_qualified_name: callee,
-                });
-            }
-        }
-        let mut cursor = n.walk();
-        for c in n.children(&mut cursor) {
-            stack.push(c);
-        }
     }
 }

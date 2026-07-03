@@ -1,66 +1,10 @@
-// parser::go — tree-sitter-based Go source parser for code-intelligence graph.
-//
-// Handles ``.go``. Extracts package, import, function, method (with receiver),
-// struct, interface, type alias, const, var, and calls.
-//
-// Grammar reference: https://github.com/tree-sitter/tree-sitter-go
+// parser::go::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
+use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
+use super::*;              // sibling extract fns (glob re-export)
 
-use super::{
-    node_field_text, node_text, qual, ExtractedNode, ExtractedRef, ParseResult, LABEL_CALL_SITE,
-    LABEL_CONSTANT, LABEL_FUNCTION, LABEL_IMPORT, LABEL_METHOD, LABEL_STRUCT, LABEL_TRAIT,
-    LABEL_TYPE_ALIAS,
-};
-
-const TS_PACKAGE_CLAUSE: &str = "package_clause";
-const TS_IMPORT_DECL: &str = "import_declaration";
-const TS_TYPE_DECL: &str = "type_declaration";
-const TS_FUNCTION_DECL: &str = "function_declaration";
-const TS_METHOD_DECL: &str = "method_declaration";
-const TS_CONST_DECL: &str = "const_declaration";
-const TS_VAR_DECL: &str = "var_declaration";
-const TS_CALL_EXPR: &str = "call_expression";
-
-pub fn parse_go_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
-    let lang: tree_sitter::Language = tree_sitter_go::LANGUAGE.into();
-    let mut parser = Parser::new();
-    parser
-        .set_language(&lang)
-        .map_err(|e| format!("failed to set Go language: {e}"))?;
-    let tree = super::parse_with_timeout(&mut parser, source)?;
-
-    let mut ctx = Ctx {
-        source,
-        file_path,
-        nodes: Vec::new(),
-        refs: Vec::new(),
-        next_seq: 0,
-    };
-    extract_top(&mut ctx, tree.root_node(), file_path);
-    Ok(ParseResult {
-        nodes: ctx.nodes,
-        refs: ctx.refs,
-        parse_errors: super::count_parse_errors(tree.root_node()),
-    })
-}
-
-struct Ctx<'a> {
-    source: &'a str,
-    #[allow(dead_code)]
-    file_path: &'a str,
-    nodes: Vec<ExtractedNode>,
-    refs: Vec<ExtractedRef>,
-    next_seq: u64,
-}
-
-fn go_visibility(name: &str) -> String {
-    // Exported iff first letter is uppercase; idiomatic Go convention.
-    match name.chars().next() {
-        Some(c) if c.is_uppercase() => "public".to_string(),
-        _ => "package".to_string(),
-    }
-}
 
 fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
@@ -76,6 +20,7 @@ fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
         }
     }
 }
+
 
 fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
     // Two shapes: single ``import "x"`` or ``import ( "a"; "b" )``.
@@ -111,6 +56,7 @@ fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
+
 fn extract_types(ctx: &mut Ctx, node: Node, scope: &str) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -121,6 +67,7 @@ fn extract_types(ctx: &mut Ctx, node: Node, scope: &str) {
         }
     }
 }
+
 
 fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -159,6 +106,7 @@ fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
         extract_struct_fields(ctx, st, &qn);
     }
 }
+
 
 /// Extracts struct fields: descend `struct_type -> field_declaration_list ->
 /// field_declaration`. A field_declaration's `name` is a `multiple` field
@@ -203,7 +151,7 @@ fn extract_struct_fields(ctx: &mut Ctx, struct_type: Node, owner_qn: &str) {
                     props.push(("type_annotation".to_string(), type_text.clone()));
                 }
                 ctx.nodes.push(ExtractedNode {
-                    label: super::LABEL_FIELD.to_string(),
+                    label: crate::parser::LABEL_FIELD.to_string(),
                     name: fname.clone(),
                     qualified_name: fqn.clone(),
                     start_line: fd.start_position().row as u64 + 1,
@@ -220,6 +168,7 @@ fn extract_struct_fields(ctx: &mut Ctx, struct_type: Node, owner_qn: &str) {
         }
     }
 }
+
 
 fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -249,6 +198,7 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
         extract_calls(ctx, body, &qn);
     }
 }
+
 
 fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -292,93 +242,5 @@ fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
     });
     if let Some(body) = node.child_by_field_name("body") {
         extract_calls(ctx, body, &qn);
-    }
-}
-
-fn extract_value_decl(ctx: &mut Ctx, node: Node, scope: &str) {
-    let mut stack = vec![node];
-    while let Some(n) = stack.pop() {
-        if n.kind() == "const_spec" || n.kind() == "var_spec" {
-            let mut cursor = n.walk();
-            for child in n.children(&mut cursor) {
-                if child.kind() == "identifier" {
-                    let name = node_text(ctx.source, child);
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let qn = qual(scope, &name);
-                    ctx.nodes.push(ExtractedNode {
-                        label: LABEL_CONSTANT.to_string(),
-                        name: name.clone(),
-                        qualified_name: qn.clone(),
-                        start_line: child.start_position().row as u64 + 1,
-                        end_line: child.end_position().row as u64 + 1,
-                        visibility: go_visibility(&name),
-                        properties: Vec::new(),
-                    });
-                    ctx.refs.push(ExtractedRef {
-                        kind: "Defines".to_string(),
-                        from_qualified_name: scope.to_string(),
-                        to_qualified_name: qn,
-                    });
-                }
-            }
-        }
-        let mut cursor = n.walk();
-        for c in n.children(&mut cursor) {
-            stack.push(c);
-        }
-    }
-}
-
-fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
-    let mut stack = vec![root];
-    while let Some(n) = stack.pop() {
-        if n.kind() == TS_CALL_EXPR {
-            let callee = node_field_text(ctx.source, n, "function");
-            let tail = callee
-                .rsplit('.')
-                .next()
-                .unwrap_or("")
-                .trim_end_matches('(')
-                .trim()
-                .to_string();
-            if !tail.is_empty()
-                && tail
-                    .chars()
-                    .next()
-                    .map_or(false, |c| c.is_alphabetic() || c == '_')
-            {
-                let seq = {
-                    ctx.next_seq += 1;
-                    ctx.next_seq
-                };
-                let site_qn = format!(
-                    "{}::call@{}:{}#{}",
-                    caller_qn,
-                    n.start_position().row + 1,
-                    n.start_position().column + 1,
-                    seq,
-                );
-                ctx.nodes.push(ExtractedNode {
-                    label: LABEL_CALL_SITE.to_string(),
-                    name: tail.clone(),
-                    qualified_name: site_qn.clone(),
-                    start_line: n.start_position().row as u64 + 1,
-                    end_line: n.end_position().row as u64 + 1,
-                    visibility: "public".to_string(),
-                    properties: vec![("callee_name".to_string(), tail.clone())],
-                });
-                ctx.refs.push(ExtractedRef {
-                    kind: "Calls".to_string(),
-                    from_qualified_name: caller_qn.to_string(),
-                    to_qualified_name: tail,
-                });
-            }
-        }
-        let mut cursor = n.walk();
-        for c in n.children(&mut cursor) {
-            stack.push(c);
-        }
     }
 }
