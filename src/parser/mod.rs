@@ -22,7 +22,9 @@ pub mod typescript;
 // CLI (`--time-limit 5`). Parser::parse returns None when this is exceeded.
 pub(crate) const PARSE_TIMEOUT_MICROS: u64 = 5_000_000;
 
-use tree_sitter::Node;
+use std::time::{Duration, Instant};
+
+use tree_sitter::{Node, ParseOptions, ParseState, Parser, Tree};
 
 // ---------------------------------------------------------------------------
 // Supported languages
@@ -228,6 +230,35 @@ pub(crate) fn count_parse_errors(root: Node) -> u32 {
         }
     }
     errors
+}
+
+/// Parses `source` under the shared per-file timeout guard and returns the tree.
+///
+/// tree-sitter 0.25 deprecated `Parser::set_timeout_micros`; the supported
+/// replacement is a progress callback supplied through `ParseOptions`. Per the
+/// tree-sitter C API (`api.h`: "Parsing was cancelled due to the progress
+/// callback returning true"), the callback returns `true` to CANCEL — so we
+/// return `true` once the wall-clock deadline of `PARSE_TIMEOUT_MICROS` passes.
+/// `parse_with_options` takes an input-reader closure; for an in-memory `&str`
+/// it hands tree-sitter the remaining byte slice from each requested offset.
+/// Returns `Err` on timeout-cancel, source rejection, or a `None` tree.
+/// source: tree-sitter v0.25 api.h TSParseOptions / ts_parser_parse_with_options.
+pub(crate) fn parse_with_timeout(parser: &mut Parser, source: &str) -> Result<Tree, String> {
+    let deadline = Instant::now() + Duration::from_micros(PARSE_TIMEOUT_MICROS);
+    let mut past_deadline = |_state: &ParseState| Instant::now() >= deadline;
+    let options = ParseOptions::new().progress_callback(&mut past_deadline);
+    let bytes = source.as_bytes();
+    parser
+        .parse_with_options(
+            &mut |offset, _pos| bytes.get(offset..).unwrap_or(&[]),
+            None,
+            Some(options),
+        )
+        .ok_or_else(|| {
+            "parse_timeout_or_none: tree-sitter returned None \
+             (parse cancelled, timeout exceeded, or source rejected)"
+                .to_string()
+        })
 }
 
 // ---------------------------------------------------------------------------

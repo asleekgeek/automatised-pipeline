@@ -28,10 +28,7 @@ pub fn parse_go_file(source: &str, file_path: &str) -> Result<ParseResult, Strin
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set Go language: {e}"))?;
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = Ctx {
         source,

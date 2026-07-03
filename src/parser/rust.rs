@@ -61,13 +61,7 @@ pub fn parse_rust_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set language: {e}"))?;
-    // source: H2 fix — cap tree-sitter work at 5 s per file. `parse` returns
-    // None on timeout or if the parser is cancelled.
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None \
-                        (parse cancelled, timeout exceeded, or source rejected)".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = ExtractCtx {
         source,
