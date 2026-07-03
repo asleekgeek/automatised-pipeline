@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.cdeust/automatised-pipeline -->
+
 <p align="center">
   <img src="assets/banner.svg" alt="automatised-pipeline — codebase intelligence as an MCP server" width="100%"/>
 </p>
