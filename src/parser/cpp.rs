@@ -33,10 +33,7 @@ pub fn parse_cpp_file(source: &str, file_path: &str) -> Result<ParseResult, Stri
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set C++ language: {e}"))?;
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = Ctx {
         source,
@@ -49,6 +46,7 @@ pub fn parse_cpp_file(source: &str, file_path: &str) -> Result<ParseResult, Stri
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -191,12 +189,24 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str, is_cl
         from_qualified_name: scope.to_string(),
         to_qualified_name: qn.clone(),
     });
-    // Base-class list.
-    if let Some(bases) = node.child_by_field_name("bases") {
-        let mut cursor = bases.walk();
-        for child in bases.children(&mut cursor) {
-            if child.kind() == "base_class_clause" {
-                let t = node_text(ctx.source, child).trim().to_string();
+    // Base-class list. class_specifier has NO `bases` field — `base_class_clause`
+    // is a DIRECT child of class_specifier, and each base type is a
+    // type_identifier / qualified_identifier / template_type child of that clause
+    // (access specifiers like `public` and virtual/attribute tokens are skipped).
+    // source: tree-sitter-cpp v0.23.4 (class_specifier children include
+    // base_class_clause; base_class_clause has no `bases` field).
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "base_class_clause" {
+            continue;
+        }
+        let mut inner = child.walk();
+        for base in child.children(&mut inner) {
+            if matches!(
+                base.kind(),
+                "type_identifier" | "qualified_identifier" | "template_type"
+            ) {
+                let t = node_text(ctx.source, base).trim().to_string();
                 if !t.is_empty() {
                     ctx.refs.push(ExtractedRef {
                         kind: "Extends".to_string(),

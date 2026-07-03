@@ -297,6 +297,29 @@ impl GraphStore {
     /// LIMIT injection in `do_query_graph`, the byte-budget caps in
     /// `do_get_impact` / `do_get_processes`, and the per-relation LIMITs in
     /// `search::find_related_out` / `find_related_in`.
+    /// Flips `is_resolved = true` on all nodes of `label` whose id is in `ids`.
+    ///
+    /// Uses the codebase's prepared-UNWIND convention (parameterized `$rows`, no
+    /// Cypher string interpolation of data — mirrors bulk_insert_nodes) so a
+    /// codebase with tens of thousands of resolved imports/calls costs one
+    /// prepared statement per chunk. `label` is a fixed schema constant
+    /// ("Import"/"CallSite"), safe to embed. source: stages/stage-3.md §10.4.
+    pub(crate) fn mark_nodes_resolved(&self, label: &str, ids: &[&str]) -> Result<(), String> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let cypher = format!(
+            "UNWIND $rows AS rid MATCH (n:{label}) WHERE n.id = rid SET n.is_resolved = true"
+        );
+        for chunk in ids.chunks(BULK_BATCH_SIZE) {
+            let values: Vec<Value> =
+                chunk.iter().map(|id| Value::String((*id).to_string())).collect();
+            let list = Value::List(LogicalType::String, values);
+            self.run_prepared(&cypher, list)?;
+        }
+        Ok(())
+    }
+
     pub fn execute_query(&self, cypher: &str) -> Result<QueryResult, String> {
         let mut result = self.run(cypher)?;
         let columns = result.get_column_names();
@@ -533,7 +556,12 @@ fn node_table_ddl() -> Vec<String> {
     vec![
         // source: stages/stage-3.md §schema
         ddl_node(NODE_DIRECTORY, "id STRING, path STRING, name STRING"),
-        ddl_node(NODE_FILE, "id STRING, path STRING, name STRING, extension STRING, size_bytes INT64"),
+        // source: stages/stage-3.md §10.5 — `parse_errors` records the count of
+        // tree-sitter ERROR/MISSING nodes for this file's parse. A file that
+        // parses to few/zero symbols with parse_errors > 0 is a degraded parse
+        // (e.g. wrong grammar dialect), not a genuinely empty file; downstream
+        // tools must be able to tell the two apart.
+        ddl_node(NODE_FILE, "id STRING, path STRING, name STRING, extension STRING, size_bytes INT64, parse_errors INT64"),
         ddl_node(NODE_MODULE, "id STRING, name STRING, qualified_name STRING"),
         // source: Spike B' BUG #5 fix — every symbol-bearing node gets a
         // `language` STRING column populated by the indexer from the file's
@@ -572,25 +600,35 @@ fn node_table_ddl() -> Vec<String> {
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, language STRING, \
              bases STRING, implements STRING"),
+        // source: stages/stage-3.md §10.1 — every symbol carries its source
+        // span. The parser already emits start_line/end_line for these nodes;
+        // the columns were previously missing so the spans were dropped at persist.
         ddl_node(NODE_VARIANT,
-            "id STRING, name STRING, qualified_name STRING, language STRING"),
+            "id STRING, name STRING, qualified_name STRING, \
+             start_line INT64, end_line INT64, language STRING"),
         ddl_node(NODE_TRAIT,
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, language STRING, \
              bases STRING, implements STRING"),
         ddl_node(NODE_FIELD,
             "id STRING, name STRING, type_annotation STRING, visibility STRING, \
-             language STRING"),
+             start_line INT64, end_line INT64, language STRING"),
         ddl_node(NODE_CONSTANT,
             "id STRING, name STRING, qualified_name STRING, type_annotation STRING, \
-             language STRING"),
+             start_line INT64, end_line INT64, language STRING"),
         ddl_node(NODE_TYPE_ALIAS,
             "id STRING, name STRING, qualified_name STRING, target_type STRING, \
-             language STRING"),
+             start_line INT64, end_line INT64, language STRING"),
+        // source: stages/stage-3.md §10.1 (span) + §10.4 (`is_resolved` on Import
+        // and CallSite — Stage 4 must distinguish "resolved" from "attempted,
+        // failed" from "never attempted"; the indexer writes false, the resolver
+        // flips it to true when it emits the resolved edge).
         ddl_node(NODE_IMPORT,
-            "id STRING, path STRING, alias STRING, is_glob BOOLEAN, language STRING"),
+            "id STRING, path STRING, alias STRING, is_glob BOOLEAN, \
+             start_line INT64, end_line INT64, is_resolved BOOLEAN, language STRING"),
         ddl_node(NODE_CALL_SITE,
-            "id STRING, callee_name STRING, line INT64, col INT64, language STRING"),
+            "id STRING, callee_name STRING, line INT64, col INT64, \
+             is_resolved BOOLEAN, language STRING"),
         // 3c Community + Process — source: stages/stage-3c.md §4.1
         ddl_node(NODE_COMMUNITY,
             "id STRING, name STRING, algorithm STRING, \
@@ -745,6 +783,8 @@ const COLS_FILE: ColTypes = &[
     ("id", LogicalType::String), ("path", LogicalType::String),
     ("name", LogicalType::String), ("extension", LogicalType::String),
     ("size_bytes", LogicalType::Int64),
+    // source: stages/stage-3.md §10.5 — must mirror the NODE_FILE DDL.
+    ("parse_errors", LogicalType::Int64),
 ];
 // source: Spike B' BUG #5 + #9 — every symbol-bearing label gets a
 // `language` String column; Struct/Enum/Trait additionally gain `bases`.
@@ -757,6 +797,8 @@ const COLS_MODULE: ColTypes = &[
 const COLS_VARIANT: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
+    // source: stages/stage-3.md §10.1 — must mirror the NODE_VARIANT DDL.
+    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_FUNCTION: ColTypes = &[
@@ -784,32 +826,41 @@ const COLS_TYPEDECL: ColTypes = &[
     ("bases", LogicalType::String),
     ("implements", LogicalType::String),
 ];
+// source: stages/stage-3.md §10.1 — Field/Constant/TypeAlias/Import gain span
+// columns; §10.4 — Import/CallSite gain is_resolved. Each const MUST mirror the
+// corresponding node DDL exactly (column name + order feed the UNWIND type map).
 const COLS_FIELD: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("type_annotation", LogicalType::String),
     ("visibility", LogicalType::String),
+    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_CONSTANT: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("type_annotation", LogicalType::String),
+    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_TYPE_ALIAS: ColTypes = &[
     ("id", LogicalType::String), ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("target_type", LogicalType::String),
+    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_IMPORT: ColTypes = &[
     ("id", LogicalType::String), ("path", LogicalType::String),
     ("alias", LogicalType::String), ("is_glob", LogicalType::Bool),
+    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("is_resolved", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_CALL_SITE: ColTypes = &[
     ("id", LogicalType::String), ("callee_name", LogicalType::String),
     ("line", LogicalType::Int64), ("col", LogicalType::Int64),
+    ("is_resolved", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_COMMUNITY: ColTypes = &[

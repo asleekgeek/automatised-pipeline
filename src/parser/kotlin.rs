@@ -3,8 +3,11 @@
 // Parses ``.kt`` / ``.kts`` files using tree-sitter-kotlin-ng and emits
 // the same ParseResult shape as the sister parsers.
 //
-// Grammar reference: https://github.com/fwcd/tree-sitter-kotlin
-// (the -ng fork we depend on is an actively maintained descendant.)
+// Grammar reference: https://github.com/tree-sitter-grammars/tree-sitter-kotlin
+// pinned to v1.1.0 in Cargo.lock as crate `tree-sitter-kotlin-ng`. NOTE: this
+// is a ground-up rewrite, NOT the fwcd/tree-sitter-kotlin grammar — its node
+// kinds and (few) named fields differ. Verify any node kind / field name used
+// here against that tag's src/node-types.json before adding it.
 
 use tree_sitter::{Node, Parser};
 
@@ -14,15 +17,22 @@ use super::{
     LABEL_TRAIT,
 };
 
+// Grammar reference: tree-sitter-grammars/tree-sitter-kotlin (the -ng crate)
+// v1.1.0 src/node-types.json. The vocabulary below is verified against that
+// file — the earlier fwcd/tree-sitter-kotlin names (import_header, object_body,
+// simple_identifier, and the body/callee/receiver/delegation_specifiers FIELDS)
+// do not exist in this grammar and silently extracted nothing.
 const TS_PACKAGE_HEADER: &str = "package_header";
-const TS_IMPORT_HEADER: &str = "import_header";
+const TS_IMPORT: &str = "import"; // was "import_header" (fwcd)
 const TS_CLASS_DECL: &str = "class_declaration";
 const TS_OBJECT_DECL: &str = "object_declaration";
 const TS_FUNCTION_DECL: &str = "function_declaration";
 const TS_PROPERTY_DECL: &str = "property_declaration";
 const TS_CLASS_BODY: &str = "class_body";
-const TS_OBJECT_BODY: &str = "object_body";
+const TS_ENUM_CLASS_BODY: &str = "enum_class_body"; // enum members live here
+const TS_FUNCTION_BODY: &str = "function_body";
 const TS_ENUM_ENTRY: &str = "enum_entry";
+const TS_DELEGATION_SPECIFIERS: &str = "delegation_specifiers";
 const TS_CALL_EXPR: &str = "call_expression";
 
 pub fn parse_kotlin_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
@@ -31,10 +41,7 @@ pub fn parse_kotlin_file(source: &str, file_path: &str) -> Result<ParseResult, S
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set Kotlin language: {e}"))?;
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = Ctx {
         source,
@@ -47,6 +54,7 @@ pub fn parse_kotlin_file(source: &str, file_path: &str) -> Result<ParseResult, S
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -73,7 +81,10 @@ fn classify_class(source: &str, node: Node) -> &'static str {
         if kind == "interface" {
             return LABEL_TRAIT;
         }
-        if kind == "enum" {
+        // An `enum class` always carries an `enum_class_body` child (holding the
+        // enum_entry members) — the most reliable enum signal in the -ng grammar.
+        // The `enum` keyword token and the `enum` class_modifier are secondary.
+        if kind == "enum" || kind == TS_ENUM_CLASS_BODY {
             return LABEL_ENUM;
         }
         // ``modifiers`` node contains ``annotation``, ``class_modifier`` etc.
@@ -110,16 +121,13 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
             TS_CLASS_DECL | TS_OBJECT_DECL => extract_class_like(ctx, child, scope),
             TS_FUNCTION_DECL => extract_function(ctx, child, scope, enclosing_type),
             TS_PROPERTY_DECL => extract_property(ctx, child, scope),
-            TS_IMPORT_HEADER => extract_import(ctx, child, scope),
+            TS_IMPORT => extract_import(ctx, child, scope),
             TS_PACKAGE_HEADER => {}
             TS_ENUM_ENTRY => {
-                // Enum variant — emit as a constant of the enum type.
-                let name = node_field_text(ctx.source, child, "simple_identifier");
-                let name = if name.is_empty() {
-                    first_identifier(ctx.source, child)
-                } else {
-                    name
-                };
+                // Enum variant — emit as a constant of the enum type. In the -ng
+                // grammar an enum_entry's name is an `identifier` child (there is
+                // no `simple_identifier` node type), so use first_identifier.
+                let name = first_identifier(ctx.source, child);
                 if !name.is_empty() {
                     let qn = qual(scope, &name);
                     ctx.nodes.push(ExtractedNode {
@@ -138,7 +146,7 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
                     });
                 }
             }
-            TS_CLASS_BODY | TS_OBJECT_BODY => {
+            TS_CLASS_BODY | TS_ENUM_CLASS_BODY => {
                 extract_children(ctx, child, scope, enclosing_type);
             }
             _ => {}
@@ -182,8 +190,10 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
         from_qualified_name: scope.to_string(),
         to_qualified_name: qn.clone(),
     });
-    // Supertype list — ``: Parent, Interface`` after the class name.
-    if let Some(supers) = node.child_by_field_name("delegation_specifiers") {
+    // Supertype list — ``: Parent, Interface`` after the class name. In the -ng
+    // grammar `delegation_specifiers` is a CHILD node of class_declaration (not
+    // a field), containing one `delegation_specifier` per supertype. Walk to it.
+    if let Some(supers) = child_of_kind(node, TS_DELEGATION_SPECIFIERS) {
         let text = node_text(ctx.source, supers);
         for piece in text
             .split(',')
@@ -197,23 +207,26 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
             });
         }
     }
-    // Body — recurse with this type as the enclosing scope.
-    // Fall back from the ``body`` field to a child of the expected kind
-    // via a manual walk (the cursor-borrow pattern can't be closed over).
-    let body = node.child_by_field_name("body").or_else(|| {
-        let mut cursor = node.walk();
-        let mut found = None;
-        for c in node.children(&mut cursor) {
-            if c.kind() == TS_CLASS_BODY || c.kind() == TS_OBJECT_BODY {
-                found = Some(c);
-                break;
-            }
-        }
-        found
-    });
+    // Body — recurse with this type as the enclosing scope. The -ng grammar has
+    // no `body` field; the body is a `class_body` child, or an `enum_class_body`
+    // child for enums (which holds the enum_entry members).
+    let body = child_of_kind(node, TS_CLASS_BODY)
+        .or_else(|| child_of_kind(node, TS_ENUM_CLASS_BODY));
     if let Some(body) = body {
         extract_children(ctx, body, &qn, Some(&qn));
     }
+}
+
+/// Returns the first direct child of `node` whose kind matches `kind`.
+/// The cursor-borrow pattern can't be closed over, so this is a small helper
+/// used wherever the grammar exposes structure as child nodes rather than
+/// named fields (common in tree-sitter-kotlin-ng).
+fn child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    // Bind before returning so the `children` iterator temporary (borrowing
+    // `cursor`) drops before `cursor` rather than as the block tail (E0597).
+    let found = node.children(&mut cursor).find(|c| c.kind() == kind);
+    found
 }
 
 fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
@@ -245,7 +258,9 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Opti
         props.push(("receiver_type".to_string(), rec.to_string()));
     }
     // Kotlin extension functions declare a receiver: ``fun String.foo()``.
-    if let Some(recv) = node.child_by_field_name("receiver") {
+    // In the -ng grammar the receiver is a `receiver` node child (there is no
+    // `receiver` field), sitting before the function name.
+    if let Some(recv) = child_of_kind(node, "receiver") {
         props.push((
             "extension_receiver".to_string(),
             node_text(ctx.source, recv),
@@ -270,10 +285,12 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Opti
         from_qualified_name: scope.to_string(),
         to_qualified_name: qn.clone(),
     });
-    if let Some(body) = node.child_by_field_name("body") {
+    // The -ng grammar has no `body` field; the body is a `function_body` child
+    // (which wraps either a `block` or an expression). Fall back to scanning the
+    // whole declaration for expression-bodied functions: ``fun f() = x.bar()``.
+    if let Some(body) = child_of_kind(node, TS_FUNCTION_BODY) {
         extract_calls(ctx, body, &qn);
     } else {
-        // Expression-bodied function: ``fun f() = x.bar()``.
         extract_calls(ctx, node, &qn);
     }
 }
@@ -339,16 +356,23 @@ fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         if n.kind() == TS_CALL_EXPR {
-            // In tree-sitter-kotlin-ng the callee is the first named child.
-            let callee = if let Some(c) = n.child_by_field_name("callee") {
-                node_text(ctx.source, c)
-            } else {
-                let mut cursor = n.walk();
-                let first = n.children(&mut cursor).next();
-                first
-                    .map(|c| node_text(ctx.source, c))
-                    .unwrap_or_default()
-            };
+            // In tree-sitter-kotlin-ng call_expression has no `callee` field; its
+            // children are `expression, type_arguments, value_arguments,
+            // annotated_lambda`, where `expression` is a tree-sitter SUPERTYPE
+            // (it never appears as a node kind — only its concrete subtypes do,
+            // e.g. `navigation_expression` for `x.bar`, or a bare `identifier`).
+            // The callee is that first expression child, which is also simply the
+            // first child of the call_expression. For a method call it is a
+            // `navigation_expression`; the `.rsplit('.')` below reduces it to the
+            // tail identifier either way.
+            let callee = child_of_kind(n, "navigation_expression")
+                .or_else(|| {
+                    let mut cursor = n.walk();
+                    let first = n.children(&mut cursor).next();
+                    first
+                })
+                .map(|c| node_text(ctx.source, c))
+                .unwrap_or_default();
             // Keep only the tail identifier to match the file::name convention
             // used by the rest of the graph.
             let callee_tail = callee

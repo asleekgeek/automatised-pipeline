@@ -63,6 +63,10 @@ pub(super) fn insert_file_node(store: &GraphStore, abs_path: &Path, rel_path: &s
         ("name", &cypher_str(&name)),
         ("extension", &cypher_str(&ext)),
         ("size_bytes", &size.to_string()),
+        // Inserted before the parse runs; index_single_file backfills the real
+        // count via set_file_parse_errors once the file is parsed. 0 = "no
+        // errors" and also the correct value for non-code files (never parsed).
+        ("parse_errors", "0"),
     ])
 }
 
@@ -90,6 +94,7 @@ fn insert_dir_dir_edge(store: &GraphStore, parent_id: &str, child_id: &str) -> R
 // ---------------------------------------------------------------------------
 
 pub(super) fn index_single_file(
+    store: &GraphStore,
     batch: &mut SymbolBatch,
     abs_path: &Path,
     rel_path: &str,
@@ -121,9 +126,27 @@ pub(super) fn index_single_file(
         ));
     }
     let parsed = parser::parse_file(&source, rel_path, lang)?;
+    // Backfill the File node's parse-error count (inserted as 0 by the caller).
+    // Only issue the update when non-zero — the common clean-parse case pays no
+    // extra query. source: stages/stage-3.md §10.5.
+    if parsed.parse_errors > 0 {
+        set_file_parse_errors(store, rel_path, parsed.parse_errors)?;
+    }
     accumulate_parsed_nodes(batch, &parsed.nodes, label_by_qn, seen_node_ids, lang.as_str());
     accumulate_parsed_edges(batch, &parsed.refs, label_by_qn);
     Ok(())
+}
+
+/// Records the tree-sitter parse-error count on an already-inserted File node.
+/// The File node is created eagerly (before the parse) with parse_errors = 0;
+/// this flips it to the real count so a degraded parse is visible downstream.
+fn set_file_parse_errors(store: &GraphStore, rel_path: &str, errors: u32) -> Result<(), String> {
+    let cypher = format!(
+        "MATCH (f:File) WHERE f.id = {} SET f.parse_errors = {}",
+        cypher_str(rel_path),
+        errors
+    );
+    store.execute_query(&cypher).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -238,11 +261,19 @@ fn append_label_properties(props: &mut Vec<(String, String)>, node: &parser::Ext
             props.push(("path".to_string(), cypher_str(&find("path"))));
             props.push(("alias".to_string(), cypher_str(&find("alias"))));
             props.push(("is_glob".to_string(), find("is_glob")));
+            // §10.1 span for the import statement; §10.4 is_resolved starts false
+            // and is flipped by the resolver's resolve pass.
+            props.push(("start_line".to_string(), node.start_line.to_string()));
+            props.push(("end_line".to_string(), node.end_line.to_string()));
+            props.push(("is_resolved".to_string(), "false".to_string()));
         }
         "CallSite" => {
             props.push(("callee_name".to_string(), cypher_str(&find("callee_name"))));
             props.push(("line".to_string(), node.start_line.to_string()));
             props.push(("col".to_string(), "0".to_string()));
+            // §10.4 is_resolved starts false; the resolver flips it to true when
+            // it emits the resolved Calls edge for this site.
+            props.push(("is_resolved".to_string(), "false".to_string()));
         }
         _ => {}
     }
@@ -404,7 +435,15 @@ fn has_qualified_name_col(label: &str) -> bool {
 }
 
 fn has_line_cols(label: &str) -> bool {
-    matches!(label, "Function" | "Method" | "Struct" | "Enum" | "Trait")
+    // source: stages/stage-3.md §10.1 — every symbol carries its span. Variant,
+    // Field, Constant and TypeAlias now have span columns too (Import keeps its
+    // span via append_label_properties, alongside path/alias). CallSite records
+    // position via its own line/col columns, not start_line/end_line.
+    matches!(
+        label,
+        "Function" | "Method" | "Struct" | "Enum" | "Trait"
+            | "Variant" | "Field" | "Constant" | "TypeAlias"
+    )
 }
 
 fn has_visibility_col(label: &str) -> bool {

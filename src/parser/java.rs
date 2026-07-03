@@ -24,6 +24,9 @@ const TS_ANNOTATION: &str = "annotation_type_declaration";
 const TS_METHOD: &str = "method_declaration";
 const TS_CONSTRUCTOR: &str = "constructor_declaration";
 const TS_FIELD: &str = "field_declaration";
+// source: tree-sitter-java v0.23.5 — enum constants (`RED, GREEN`) are
+// enum_constant nodes inside enum_body; previously dropped.
+const TS_ENUM_CONSTANT: &str = "enum_constant";
 const TS_IMPORT: &str = "import_declaration";
 const TS_PACKAGE: &str = "package_declaration";
 const TS_CALL: &str = "method_invocation";
@@ -35,10 +38,7 @@ pub fn parse_java_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set Java language: {e}"))?;
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = Ctx {
         source,
@@ -57,6 +57,7 @@ pub fn parse_java_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -121,14 +122,46 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
                 extract_method(ctx, child, scope, enclosing_type)
             }
             TS_FIELD => extract_field(ctx, child, scope),
+            TS_ENUM_CONSTANT => extract_enum_constant(ctx, child, scope),
             TS_IMPORT => extract_import(ctx, child, scope),
             // ``class_body`` / ``interface_body`` / ``enum_body`` wrap members.
-            _ if child.kind().ends_with("_body") => {
+            // ``enum_body_declarations`` (methods/fields after the enum
+            // constants) does NOT end in ``_body`` — recurse it explicitly so
+            // those members aren't dropped.
+            _ if child.kind().ends_with("_body")
+                || child.kind() == "enum_body_declarations" =>
+            {
                 extract_children(ctx, child, scope, enclosing_type);
             }
             _ => {}
         }
     }
+}
+
+/// Emits a Java enum constant as a Variant of the enclosing enum, with a
+/// HasVariant edge (mirrors the Rust parser's enum-variant handling). `scope` is
+/// the enum's qualified name (enum_constant nodes are reached while recursing
+/// the enum_body). source: tree-sitter-java v0.23.5 enum_constant.name.
+fn extract_enum_constant(ctx: &mut Ctx, node: Node, scope: &str) {
+    let name = node_field_text(ctx.source, node, "name");
+    if name.is_empty() {
+        return;
+    }
+    let qn = qual(scope, &name);
+    ctx.nodes.push(ExtractedNode {
+        label: super::LABEL_VARIANT.to_string(),
+        name: name.clone(),
+        qualified_name: qn.clone(),
+        start_line: node.start_position().row as u64 + 1,
+        end_line: node.end_position().row as u64 + 1,
+        visibility: "public".to_string(),
+        properties: Vec::new(),
+    });
+    ctx.refs.push(ExtractedRef {
+        kind: "HasVariant".to_string(),
+        from_qualified_name: scope.to_string(),
+        to_qualified_name: qn,
+    });
 }
 
 fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {

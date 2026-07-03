@@ -28,10 +28,7 @@ pub fn parse_c_file(source: &str, file_path: &str) -> Result<ParseResult, String
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set C language: {e}"))?;
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = Ctx {
         source,
@@ -44,6 +41,7 @@ pub fn parse_c_file(source: &str, file_path: &str) -> Result<ParseResult, String
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -138,8 +136,87 @@ fn extract_struct(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     ctx.refs.push(ExtractedRef {
         kind: "Defines".to_string(),
         from_qualified_name: scope.to_string(),
-        to_qualified_name: qn,
+        to_qualified_name: qn.clone(),
     });
+    // Struct members. struct_specifier's `body` field is a field_declaration_list
+    // holding field_declaration nodes. Each field's name is a `field_identifier`
+    // inside the (possibly pointer/array) `declarator` field.
+    // source: tree-sitter-c v0.23.4 (struct_specifier/field_declaration).
+    if let Some(body) = node.child_by_field_name("body") {
+        extract_struct_fields(ctx, body, &qn);
+    }
+}
+
+/// Emits Field nodes + HasField edges for each field_declaration in a
+/// field_declaration_list. The field name is the first `field_identifier`
+/// descendant of the `declarator` field (handles `int *p;`, `char buf[8];`).
+fn extract_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
+    let mut cursor = body.walk();
+    for fd in body.children(&mut cursor) {
+        if fd.kind() != "field_declaration" {
+            continue;
+        }
+        let type_text = node_field_text(ctx.source, fd, "type");
+        // field_declaration's `declarator` field is `multiple` — `int a, b, c;`
+        // is ONE field_declaration carrying three declarators. child_by_field_name
+        // would return only the first; walk with the cursor.field_name() idiom
+        // (as go.rs) to emit one Field per declared variable. Each declarator may
+        // be wrapped (pointer/array), so descend for its field_identifier.
+        // source: tree-sitter-c v0.23.4 field_declaration.declarator (multiple:true).
+        let mut declarators: Vec<Node> = Vec::new();
+        let mut dc = fd.walk();
+        if dc.goto_first_child() {
+            loop {
+                if dc.field_name() == Some("declarator") {
+                    declarators.push(dc.node());
+                }
+                if !dc.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        for declarator in declarators {
+            let fname = find_field_identifier(ctx.source, declarator);
+            if fname.is_empty() {
+                continue; // anonymous / unnamed member
+            }
+            let fqn = qual(owner_qn, &fname);
+            let mut props = Vec::new();
+            if !type_text.is_empty() {
+                props.push(("type_annotation".to_string(), type_text.clone()));
+            }
+            ctx.nodes.push(ExtractedNode {
+                label: super::LABEL_FIELD.to_string(),
+                name: fname.clone(),
+                qualified_name: fqn.clone(),
+                start_line: fd.start_position().row as u64 + 1,
+                end_line: fd.end_position().row as u64 + 1,
+                visibility: "public".to_string(),
+                properties: props,
+            });
+            ctx.refs.push(ExtractedRef {
+                kind: "HasField".to_string(),
+                from_qualified_name: owner_qn.to_string(),
+                to_qualified_name: fqn,
+            });
+        }
+    }
+}
+
+/// Finds the first `field_identifier` anywhere under `node` (the field name,
+/// unwrapping pointer/array/function declarators).
+fn find_field_identifier(source: &str, node: Node) -> String {
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "field_identifier" {
+            return node_text(source, n);
+        }
+        let mut cursor = n.walk();
+        for c in n.children(&mut cursor) {
+            stack.push(c);
+        }
+    }
+    String::new()
 }
 
 fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {

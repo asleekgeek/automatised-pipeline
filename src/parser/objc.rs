@@ -4,7 +4,14 @@
 // covers ``@interface`` / ``@implementation`` / ``@protocol`` / method
 // declarations and definitions, as well as C constructs embedded inside.
 //
-// Grammar reference: https://github.com/jiyee/tree-sitter-objc
+// Grammar reference: https://github.com/tree-sitter-grammars/tree-sitter-objc
+// pinned to v3.0.2 in Cargo.lock as crate `tree-sitter-objc`. NOTE: this is the
+// tree-sitter-grammars grammar, NOT jiyee/tree-sitter-objc — its node kinds
+// differ. In particular: categories are a `category` FIELD on class_interface/
+// class_implementation (there are no category_interface / category_implementation
+// node kinds), and selectors are reconstructed from `keyword_declarator` children
+// (there are no keyword_selector / unary_selector / selector node kinds). Verify
+// any node kind / field name used here against that tag's src/node-types.json.
 
 use tree_sitter::{Node, Parser};
 
@@ -15,8 +22,6 @@ use super::{
 
 const TS_CLASS_INTERFACE: &str = "class_interface";
 const TS_CLASS_IMPL: &str = "class_implementation";
-const TS_CATEGORY_INTERFACE: &str = "category_interface";
-const TS_CATEGORY_IMPL: &str = "category_implementation";
 const TS_PROTOCOL_DECL: &str = "protocol_declaration";
 const TS_METHOD_DECL: &str = "method_declaration";
 const TS_METHOD_DEF: &str = "method_definition";
@@ -32,10 +37,7 @@ pub fn parse_objc_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set Objective-C language: {e}"))?;
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = Ctx {
         source,
@@ -48,6 +50,7 @@ pub fn parse_objc_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -80,8 +83,13 @@ fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
-            TS_CLASS_INTERFACE | TS_CLASS_IMPL => extract_class(ctx, child, scope, false),
-            TS_CATEGORY_INTERFACE | TS_CATEGORY_IMPL => extract_class(ctx, child, scope, true),
+            TS_CLASS_INTERFACE | TS_CLASS_IMPL => {
+                // A category is an @interface/@implementation that carries a
+                // `category` field (e.g. `@interface NSString (MyCategory)`).
+                // In grammar 3.0.2 this is a field, not a distinct node kind.
+                let is_category = child.child_by_field_name("category").is_some();
+                extract_class(ctx, child, scope, is_category);
+            }
             TS_PROTOCOL_DECL => extract_protocol(ctx, child, scope),
             TS_FUNCTION_DEF => extract_function(ctx, child, scope, None),
             TS_IMPORT => extract_import(ctx, child, scope),
@@ -104,6 +112,11 @@ fn extract_class(ctx: &mut Ctx, node: Node, scope: &str, is_category: bool) {
     let mut props = Vec::new();
     if is_category {
         props.push(("is_category".to_string(), "true".to_string()));
+        // The category name is the `category` field (e.g. `MyCategory`).
+        let cat = node_field_text(ctx.source, node, "category");
+        if !cat.is_empty() {
+            props.push(("category".to_string(), cat));
+        }
     }
     ctx.nodes.push(ExtractedNode {
         label: LABEL_STRUCT.to_string(),
@@ -119,6 +132,17 @@ fn extract_class(ctx: &mut Ctx, node: Node, scope: &str, is_category: bool) {
         from_qualified_name: scope.to_string(),
         to_qualified_name: qn.clone(),
     });
+    // Superclass — the `superclass` field (e.g. `@interface Foo : NSObject`).
+    // Emit an Extends ref so resolve_extends can link it. source: grammar 3.0.2
+    // class_interface.fields = {category, superclass}.
+    let superclass = node_field_text(ctx.source, node, "superclass");
+    if !superclass.is_empty() {
+        ctx.refs.push(ExtractedRef {
+            kind: "Extends".to_string(),
+            from_qualified_name: qn.clone(),
+            to_qualified_name: superclass,
+        });
+    }
     // Walk all children for method declarations / definitions.
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -164,31 +188,94 @@ fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 fn method_selector(source: &str, node: Node) -> String {
-    // Build the ObjC method selector from keyword_selector children.
+    // Reconstruct the ObjC selector from the grammar-3.0.2 shape:
+    //   - keyword selector: one or more `keyword_declarator` children, each
+    //     contributing `<identifier>:` (the label of one argument). The keyword
+    //     is the FIRST `identifier` child of the keyword_declarator (there is no
+    //     `keyword` field in this grammar).
+    //   - unary selector (no args): a single bare `identifier` child on the
+    //     method_declaration (e.g. `- (void)start;` → `start`).
+    // source: tree-sitter-objc v3.0.2 (method_declaration / keyword_declarator).
     let mut parts: Vec<String> = Vec::new();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "unary_selector" | "selector" => {
-                return node_text(source, child);
-            }
             "keyword_declarator" => {
-                let kw = node_field_text(source, child, "keyword");
+                let kw = first_identifier(source, child);
                 if !kw.is_empty() {
                     parts.push(format!("{kw}:"));
+                }
+            }
+            "identifier" => {
+                // Unary selector — the method name with no keyword args.
+                if parts.is_empty() {
+                    parts.push(node_text(source, child));
                 }
             }
             _ => {}
         }
     }
-    if parts.is_empty() {
-        // Fallback: the method's ``selector`` field if present.
-        let fs = node_field_text(source, node, "selector");
-        if !fs.is_empty() {
-            return fs;
+    parts.join("")
+}
+
+/// Returns the text of the first `identifier` child of `node`, or empty.
+fn first_identifier(source: &str, node: Node) -> String {
+    let mut cursor = node.walk();
+    // Bind before returning so the `children` iterator temporary (which borrows
+    // `cursor`) is dropped at the end of this statement, before `cursor` itself —
+    // otherwise it outlives `cursor` as the block's tail expression (E0597).
+    let text = node
+        .children(&mut cursor)
+        .find(|c| c.kind() == "identifier")
+        .map(|c| node_text(source, c))
+        .unwrap_or_default();
+    text
+}
+
+/// Reconstructs a message-send selector from a `message_expression`.
+///
+/// Grammar 3.0.2 exposes the selector keywords as the `method` field (which is
+/// `multiple` — one `identifier` per keyword) and the argument expressions as
+/// non-field `expression` children (the `receiver` is a separate field). A
+/// message with arguments is a keyword send → `doThing:andY:`; a message with no
+/// arguments is a unary send → `start`. source: tree-sitter-objc v3.0.2.
+fn message_selector(source: &str, node: Node) -> String {
+    let mut keywords: Vec<String> = Vec::new();
+    let mut arg_count: usize = 0;
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let field = cursor.field_name();
+            let child = cursor.node();
+            match field {
+                Some("method") => keywords.push(node_text(source, child)),
+                Some("receiver") => {}
+                _ => {
+                    // Arguments are the non-field NAMED children (concrete
+                    // subtypes of the `expression` supertype — `call_expression`,
+                    // `identifier`, `number_literal`, …). We cannot test for the
+                    // literal kind "expression": tree-sitter supertypes never
+                    // appear as runtime node kinds. Unnamed tokens (`[` `]` `:`)
+                    // are skipped by is_named(). A keyword selector always has
+                    // >=1 argument; a unary selector has none.
+                    if field.is_none() && child.is_named() {
+                        arg_count += 1;
+                    }
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
-    parts.join("")
+    if keywords.is_empty() {
+        return String::new();
+    }
+    if arg_count > 0 {
+        keywords.iter().map(|k| format!("{k}:")).collect::<String>()
+    } else {
+        keywords.join("")
+    }
 }
 
 fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
@@ -354,24 +441,12 @@ fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
                 emit_call(ctx, n, caller_qn, &callee);
             }
             TS_MSG_EXPR => {
-                // ``[receiver selector:arg]`` — emit the selector as callee.
-                let sel = node_field_text(ctx.source, n, "selector");
-                let sel = if sel.is_empty() {
-                    // Best-effort: first keyword from subtree. The children
-                    // iterator borrows the cursor, so capture the match into
-                    // a local before leaving the scope.
-                    let mut inner = n.walk();
-                    let mut picked: Option<Node> = None;
-                    for c in n.children(&mut inner) {
-                        if c.kind() == "keyword_selector" || c.kind() == "unary_selector" {
-                            picked = Some(c);
-                            break;
-                        }
-                    }
-                    picked.map(|c| node_text(ctx.source, c)).unwrap_or_default()
-                } else {
-                    sel
-                };
+                // ``[receiver method:arg other:arg]`` — the selector is the
+                // `method` field, which is `multiple` in grammar 3.0.2: one
+                // `identifier` per keyword. Concatenate them into the selector
+                // (`method:other:`); a unary message yields a single identifier.
+                // source: tree-sitter-objc v3.0.2 message_expression.method.
+                let sel = message_selector(ctx.source, n);
                 if !sel.is_empty() {
                     emit_call(ctx, n, caller_qn, &sel);
                 }

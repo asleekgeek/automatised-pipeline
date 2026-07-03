@@ -44,11 +44,7 @@ pub fn parse_python_file(source: &str, file_path: &str) -> Result<ParseResult, S
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set Python language: {e}"))?;
-    // source: H2 fix — 5 s per-file tree-sitter timeout (see super::PARSE_TIMEOUT_MICROS).
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = ExtractCtx {
         source,
@@ -61,6 +57,7 @@ pub fn parse_python_file(source: &str, file_path: &str) -> Result<ParseResult, S
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 

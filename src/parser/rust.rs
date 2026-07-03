@@ -28,6 +28,14 @@ const TS_TRAIT_ITEM: &str = "trait_item";
 const TS_IMPL_ITEM: &str = "impl_item";
 const TS_FIELD_DECL: &str = "field_declaration";
 const TS_CONST_ITEM: &str = "const_item";
+// source: tree-sitter-rust v0.23.3 — item kinds previously not dispatched.
+// static_item is const-like (name+type); union_item is struct-like
+// (name + field_declaration_list body); macro_definition / extern_crate carry a
+// name field. All were silently dropped before.
+const TS_STATIC_ITEM: &str = "static_item";
+const TS_UNION_ITEM: &str = "union_item";
+const TS_MACRO_DEFINITION: &str = "macro_definition";
+const TS_EXTERN_CRATE: &str = "extern_crate_declaration";
 const TS_TYPE_ITEM: &str = "type_item";
 const TS_USE_DECL: &str = "use_declaration";
 const TS_MOD_ITEM: &str = "mod_item";
@@ -53,13 +61,7 @@ pub fn parse_rust_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set language: {e}"))?;
-    // source: H2 fix — cap tree-sitter work at 5 s per file. `parse` returns
-    // None on timeout or if the parser is cancelled.
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None \
-                        (parse cancelled, timeout exceeded, or source rejected)".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = ExtractCtx {
         source,
@@ -71,6 +73,7 @@ pub fn parse_rust_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -122,8 +125,25 @@ fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str) {
                 extract_impl(ctx, child);
                 pending_derives.clear();
             }
-            TS_CONST_ITEM => {
+            TS_CONST_ITEM | TS_STATIC_ITEM => {
+                // A `static` is a constant-like symbol: same name/type fields as
+                // const_item, so extract_const handles both → Constant node.
                 extract_const(ctx, child, scope);
+                pending_derives.clear();
+            }
+            TS_UNION_ITEM => {
+                // A union is struct-like: name + field_declaration_list body.
+                // extract_struct reads the name field and its fields identically.
+                extract_struct(ctx, child, scope, &pending_derives);
+                emit_derive_implements(ctx, child, scope, &pending_derives);
+                pending_derives.clear();
+            }
+            TS_MACRO_DEFINITION => {
+                extract_macro_definition(ctx, child, scope);
+                pending_derives.clear();
+            }
+            TS_EXTERN_CRATE => {
+                extract_extern_crate(ctx, child, scope);
                 pending_derives.clear();
             }
             TS_TYPE_ITEM => {
@@ -533,6 +553,57 @@ fn extract_const(ctx: &mut ExtractCtx, node: Node, scope: &str) {
         kind: "Defines".to_string(),
         from_qualified_name: scope.to_string(),
         to_qualified_name: qn,
+    });
+}
+
+/// Emits a `macro_rules!` definition. AP has no dedicated Macro label, so it is
+/// recorded as a Constant carrying `is_macro=true` (queryable, and consistent
+/// with how macro *invocations* are already tracked as CallSites with a `!`
+/// marker). source: tree-sitter-rust v0.23.3 macro_definition.name.
+fn extract_macro_definition(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+    let name = node_field_text(ctx.source, node, "name");
+    if name.is_empty() {
+        return;
+    }
+    let qn = qual(scope, &name);
+    ctx.nodes.push(ExtractedNode {
+        label: LABEL_CONSTANT.to_string(),
+        name,
+        qualified_name: qn.clone(),
+        start_line: node.start_position().row as u64 + 1,
+        end_line: node.end_position().row as u64 + 1,
+        visibility: extract_visibility(ctx.source, node),
+        properties: vec![("is_macro".to_string(), "true".to_string())],
+    });
+    ctx.refs.push(ExtractedRef {
+        kind: "Defines".to_string(),
+        from_qualified_name: scope.to_string(),
+        to_qualified_name: qn,
+    });
+}
+
+/// Emits an `extern crate foo;` declaration as an Import (it brings an external
+/// crate into scope, the same role as a `use`). The imported name is the `name`
+/// field. source: tree-sitter-rust v0.23.3 extern_crate_declaration.
+fn extract_extern_crate(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+    let name = node_field_text(ctx.source, node, "name");
+    if name.is_empty() {
+        return;
+    }
+    let qn = qual(scope, &format!("import:{name}"));
+    ctx.nodes.push(ExtractedNode {
+        label: LABEL_IMPORT.to_string(),
+        name: name.clone(),
+        qualified_name: qn,
+        start_line: node.start_position().row as u64 + 1,
+        end_line: node.end_position().row as u64 + 1,
+        visibility: extract_visibility(ctx.source, node),
+        properties: vec![("path".to_string(), name.clone())],
+    });
+    ctx.refs.push(ExtractedRef {
+        kind: "Imports".to_string(),
+        from_qualified_name: scope.to_string(),
+        to_qualified_name: name,
     });
 }
 

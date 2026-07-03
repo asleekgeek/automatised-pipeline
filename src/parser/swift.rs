@@ -19,6 +19,12 @@ const TS_FUNCTION_DECL: &str = "function_declaration";
 const TS_PROPERTY_DECL: &str = "property_declaration";
 const TS_IMPORT_DECL: &str = "import_declaration";
 const TS_TYPEALIAS_DECL: &str = "typealias_declaration";
+// source: alex-pinkus/tree-sitter-swift v0.7.3 — member declaration kinds that
+// previously fell through the `_` arm and were dropped.
+const TS_INIT_DECL: &str = "init_declaration";
+const TS_DEINIT_DECL: &str = "deinit_declaration";
+const TS_SUBSCRIPT_DECL: &str = "subscript_declaration";
+const TS_ENUM_ENTRY: &str = "enum_entry";
 const TS_CALL_EXPR: &str = "call_expression";
 
 pub fn parse_swift_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
@@ -27,10 +33,7 @@ pub fn parse_swift_file(source: &str, file_path: &str) -> Result<ParseResult, St
     parser
         .set_language(&lang)
         .map_err(|e| format!("failed to set Swift language: {e}"))?;
-    parser.set_timeout_micros(super::PARSE_TIMEOUT_MICROS);
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| "parse_timeout_or_none: tree-sitter returned None".to_string())?;
+    let tree = super::parse_with_timeout(&mut parser, source)?;
 
     let mut ctx = Ctx {
         source,
@@ -43,6 +46,7 @@ pub fn parse_swift_file(source: &str, file_path: &str) -> Result<ParseResult, St
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -56,25 +60,21 @@ struct Ctx<'a> {
 }
 
 // ``class_declaration`` is the Swift grammar's umbrella for class, struct,
-// actor, extension, and enum. Disambiguate by the leading keyword in the
-// node's raw text — tree-sitter-swift doesn't expose a dedicated child
-// field for the kind of aggregate.
+// actor, extension, and enum. The grammar DOES expose the kind as the
+// ``declaration_kind`` field (values: class | struct | enum | extension |
+// actor), so classify off that instead of sniffing the node's head text —
+// head-text matching mis-classified e.g. an attributed/`public` declaration or
+// a struct whose name begins with "enum...". Returns (label, is_extension).
+// source: alex-pinkus/tree-sitter-swift v0.7.3 class_declaration.declaration_kind.
 fn classify_class(source: &str, node: Node) -> (&'static str, bool) {
-    let head = node_text(source, node);
-    let head = head.trim_start();
-    if head.starts_with("struct") || head.starts_with("public struct") || head.starts_with("internal struct") || head.starts_with("fileprivate struct") || head.starts_with("private struct") {
-        return (LABEL_STRUCT, false);
+    let kind = node_field_text(source, node, "declaration_kind");
+    match kind.trim() {
+        "enum" => (LABEL_ENUM, false),
+        "extension" => (LABEL_STRUCT, true),
+        // class, struct, actor all map to Struct (AP has no dedicated Class/
+        // Actor label); only enum and extension change behavior.
+        _ => (LABEL_STRUCT, false),
     }
-    if head.starts_with("enum") || head.contains(" enum ") {
-        return (LABEL_ENUM, false);
-    }
-    if head.starts_with("extension") {
-        return (LABEL_STRUCT, true);
-    }
-    if head.starts_with("actor") {
-        return (LABEL_STRUCT, false);
-    }
-    (LABEL_STRUCT, false)
 }
 
 fn visibility_modifier(source: &str, node: Node) -> String {
@@ -95,6 +95,16 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
             TS_CLASS_DECL => extract_class_like(ctx, child, scope),
             TS_PROTOCOL_DECL => extract_protocol(ctx, child, scope),
             TS_FUNCTION_DECL => extract_function(ctx, child, scope, enclosing_type),
+            // init/deinit/subscript are member "functions" — emit as Method when
+            // inside a type, else Function, with a synthesized name (the grammar
+            // has no `name` field for them). Body location differs by kind:
+            // init/deinit carry a `body` field (function_body); subscript has NO
+            // `body` field — its getter/setter live under a `computed_property`
+            // child. extract_member_fn handles both via find_block_child.
+            TS_INIT_DECL => extract_member_fn(ctx, child, scope, enclosing_type, "init"),
+            TS_DEINIT_DECL => extract_member_fn(ctx, child, scope, enclosing_type, "deinit"),
+            TS_SUBSCRIPT_DECL => extract_member_fn(ctx, child, scope, enclosing_type, "subscript"),
+            TS_ENUM_ENTRY => extract_enum_entry(ctx, child, scope),
             TS_PROPERTY_DECL => extract_property(ctx, child, scope),
             TS_IMPORT_DECL => extract_import(ctx, child, scope),
             TS_TYPEALIAS_DECL => extract_typealias(ctx, child, scope),
@@ -170,7 +180,14 @@ fn find_block_child(node: Node) -> Option<Node> {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         let k = child.kind();
-        if k.ends_with("_body") || k == "class_body" || k == "enum_class_body" {
+        // `computed_property` holds a subscript's / computed var's getter+setter
+        // (subscript_declaration has no `body` field). source: alex-pinkus/
+        // tree-sitter-swift v0.7.3.
+        if k.ends_with("_body")
+            || k == "class_body"
+            || k == "enum_class_body"
+            || k == "computed_property"
+        {
             return Some(child);
         }
     }
@@ -248,6 +265,107 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Opti
         .or_else(|| find_block_child(node))
     {
         extract_calls(ctx, body, &qn);
+    }
+}
+
+/// Emits init/deinit/subscript declarations as a Method (inside a type) or
+/// Function (rare, top level). These have no `name` field in the grammar, so a
+/// synthetic name is supplied by the caller. The body is a `function_body`
+/// field, so call extraction works the same as for a normal function.
+fn extract_member_fn(
+    ctx: &mut Ctx,
+    node: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+    synth_name: &str,
+) {
+    let seq = {
+        ctx.next_seq += 1;
+        ctx.next_seq
+    };
+    let qn = format!("{}::{}#{}", scope, synth_name, seq);
+    let label = if enclosing_type.is_some() {
+        LABEL_METHOD
+    } else {
+        LABEL_FUNCTION
+    };
+    let mut props = vec![("member_kind".to_string(), synth_name.to_string())];
+    if let Some(rec) = enclosing_type {
+        props.push(("receiver_type".to_string(), rec.to_string()));
+    }
+    ctx.nodes.push(ExtractedNode {
+        label: label.to_string(),
+        name: synth_name.to_string(),
+        qualified_name: qn.clone(),
+        start_line: node.start_position().row as u64 + 1,
+        end_line: node.end_position().row as u64 + 1,
+        visibility: visibility_modifier(ctx.source, node),
+        properties: props,
+    });
+    let edge_kind = if enclosing_type.is_some() {
+        "HasMethod"
+    } else {
+        "Defines"
+    };
+    ctx.refs.push(ExtractedRef {
+        kind: edge_kind.to_string(),
+        from_qualified_name: scope.to_string(),
+        to_qualified_name: qn.clone(),
+    });
+    if let Some(body) = node
+        .child_by_field_name("body")
+        .or_else(|| find_block_child(node))
+    {
+        extract_calls(ctx, body, &qn);
+    }
+}
+
+/// Emits an enum case (`enum_entry`) as a Variant of the enclosing enum. The
+/// case name is the `name` field (a `simple_identifier`).
+/// source: alex-pinkus/tree-sitter-swift v0.7.3 enum_entry.name.
+fn extract_enum_entry(ctx: &mut Ctx, node: Node, scope: &str) {
+    // enum_entry's `name` field is `multiple` — `case red, green, blue` is ONE
+    // enum_entry node carrying three simple_identifier names. Emit one Variant
+    // per name; child_by_field_name would return only the first and silently
+    // drop the rest. Uses the cursor.field_name() idiom (as objc.rs/go.rs).
+    // source: alex-pinkus/tree-sitter-swift v0.7.3 enum_entry.name (multiple:true).
+    let mut names: Vec<String> = Vec::new();
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            if cursor.field_name() == Some("name") {
+                let t = node_text(ctx.source, cursor.node());
+                if !t.is_empty() {
+                    names.push(t);
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    if names.is_empty() {
+        let fallback = find_name(ctx.source, node);
+        if !fallback.is_empty() {
+            names.push(fallback);
+        }
+    }
+    for name in names {
+        let qn = qual(scope, &name);
+        ctx.nodes.push(ExtractedNode {
+            label: super::LABEL_VARIANT.to_string(),
+            name: name.clone(),
+            qualified_name: qn.clone(),
+            start_line: node.start_position().row as u64 + 1,
+            end_line: node.end_position().row as u64 + 1,
+            visibility: "internal".to_string(),
+            properties: Vec::new(),
+        });
+        ctx.refs.push(ExtractedRef {
+            kind: "Defines".to_string(),
+            from_qualified_name: scope.to_string(),
+            to_qualified_name: qn,
+        });
     }
 }
 

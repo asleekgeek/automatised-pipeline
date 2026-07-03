@@ -205,3 +205,80 @@ export type Alias = string | number;
         .any(|r| r.kind == "Extends" && r.from_qualified_name.contains("Dog"));
     assert!(extends, "Dog should extend Animal");
 }
+
+#[test]
+fn test_swift_parser_standalone() {
+    // Regression guard for the ABI-15 defect: tree-sitter-swift 0.7.3 needs a
+    // runtime supporting grammar ABI 15 (tree-sitter >= 0.25). If the runtime is
+    // too old, `set_language` fails and `parse_swift_file` returns Err, so the
+    // `.expect` below panics — this test fails loudly instead of Swift being
+    // silently skipped by the indexer (the original defect). It also exercises
+    // every member kind swift.rs classifies, which had no fixture before.
+    // source: alex-pinkus/tree-sitter-swift v0.7.3 node kinds.
+    let src = r#"
+import Foundation
+import UIKit
+
+let maxRetries = 3
+
+func greet(name: String) -> String {
+    return "Hello, \(name)"
+}
+
+struct Point {
+    let x: Int
+    let y: Int
+
+    func distance() -> Double {
+        return compute(x, y)
+    }
+}
+
+class Animal {
+    var name: String
+    init(name: String) { self.name = name }
+    deinit { cleanup() }
+    func speak() -> String { return "" }
+    subscript(index: Int) -> Int { return index }
+}
+
+enum Color {
+    case red
+    case green, blue
+}
+
+protocol Serializable {
+    func serialize() -> String
+}
+
+extension Animal {
+    func describe() -> String { return name }
+}
+
+typealias Handler = () -> Void
+"#;
+    let result = parser::parse_file(src, "test.swift", Language::Swift)
+        .expect("Swift parse should succeed (ABI 15 runtime required)");
+
+    let fn_count = result.nodes.iter().filter(|n| n.label == "Function").count();
+    let struct_count = result.nodes.iter().filter(|n| n.label == "Struct").count();
+    let enum_count = result.nodes.iter().filter(|n| n.label == "Enum").count();
+    let variant_count = result.nodes.iter().filter(|n| n.label == "Variant").count();
+    let trait_count = result.nodes.iter().filter(|n| n.label == "Trait").count();
+    let method_count = result.nodes.iter().filter(|n| n.label == "Method").count();
+    let const_count = result.nodes.iter().filter(|n| n.label == "Constant").count();
+    let import_count = result.nodes.iter().filter(|n| n.label == "Import").count();
+
+    assert!(import_count >= 2, "should find imports (Foundation, UIKit), got {import_count}");
+    assert!(fn_count >= 1, "should find top-level func greet, got {fn_count}");
+    assert!(struct_count >= 2, "should find struct Point + class Animal (as Struct), got {struct_count}");
+    assert!(enum_count >= 1, "should find enum Color, got {enum_count}");
+    assert!(trait_count >= 1, "should find protocol Serializable (as Trait), got {trait_count}");
+    assert!(variant_count >= 3, "should find enum cases red/green/blue, got {variant_count}");
+    assert!(method_count >= 3, "should find methods (distance/speak/init/deinit/subscript/describe/serialize), got {method_count}");
+    assert!(const_count >= 3, "should find properties/typealias (x/y/name/maxRetries/Handler), got {const_count}");
+
+    // Call extraction: distance() calls compute, deinit calls cleanup.
+    let has_call = result.refs.iter().any(|r| r.kind == "Calls");
+    assert!(has_call, "should extract at least one Calls edge (compute/cleanup)");
+}
