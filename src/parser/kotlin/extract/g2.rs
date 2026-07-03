@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
         .trim()
@@ -42,7 +42,7 @@ fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
+pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         if n.kind() == TS_CALL_EXPR {

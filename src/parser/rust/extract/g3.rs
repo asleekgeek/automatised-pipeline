@@ -10,7 +10,7 @@ use super::*;              // sibling extract fns (glob re-export)
 /// recorded as a Constant carrying `is_macro=true` (queryable, and consistent
 /// with how macro *invocations* are already tracked as CallSites with a `!`
 /// marker). source: tree-sitter-rust v0.23.3 macro_definition.name.
-fn extract_macro_definition(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_macro_definition(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -36,7 +36,7 @@ fn extract_macro_definition(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 /// Emits an `extern crate foo;` declaration as an Import (it brings an external
 /// crate into scope, the same role as a `use`). The imported name is the `name`
 /// field. source: tree-sitter-rust v0.23.3 extern_crate_declaration.
-fn extract_extern_crate(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_extern_crate(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -63,7 +63,7 @@ fn extract_extern_crate(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 // Type alias extraction
 // ---------------------------------------------------------------------------
 
-fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -91,7 +91,7 @@ fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 // Use declaration extraction
 // ---------------------------------------------------------------------------
 
-fn extract_use(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_use(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let arg = match node.child_by_field_name("argument") {
         Some(a) => a,
         None => return,
@@ -111,7 +111,7 @@ fn extract_use(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 
 
 #[allow(clippy::too_many_arguments)]
-fn emit_import(
+pub(super) fn emit_import(
     ctx: &mut ExtractCtx,
     scope: &str,
     path: String,
@@ -157,7 +157,7 @@ fn emit_import(
 /// import in canonical `(path, alias, is_glob)` form. `prefix` is prepended
 /// (with `::`) to each path string — this is what carries the scope across
 /// nested brace lists like `use a::{b, c::{d, e}};`.
-fn collect_use_leaves(source: &str, node: Node, prefix: &str) -> Vec<(String, String, bool)> {
+pub(super) fn collect_use_leaves(source: &str, node: Node, prefix: &str) -> Vec<(String, String, bool)> {
     match node.kind() {
         "use_list" => walk_use_list_children(source, node, prefix),
         "scoped_use_list" => leaf_from_scoped_use_list(source, node, prefix),
@@ -168,7 +168,7 @@ fn collect_use_leaves(source: &str, node: Node, prefix: &str) -> Vec<(String, St
 }
 
 
-fn leaf_from_scoped_use_list(
+pub(super) fn leaf_from_scoped_use_list(
     source: &str,
     node: Node,
     prefix: &str,
@@ -185,7 +185,7 @@ fn leaf_from_scoped_use_list(
 }
 
 
-fn leaf_from_use_as_clause(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
+pub(super) fn leaf_from_use_as_clause(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
     let path = node
         .child_by_field_name("path")
         .map(|n| node_text(source, n))
@@ -198,7 +198,7 @@ fn leaf_from_use_as_clause(source: &str, node: Node, prefix: &str) -> (String, S
 }
 
 
-fn leaf_from_use_wildcard(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
+pub(super) fn leaf_from_use_wildcard(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
     // use_wildcard text is `<path>::*` (or just `*` when nested in
     // a brace list with an outer prefix). Strip the trailing `::*`
     // if present, otherwise treat the wildcard as attaching to the
@@ -210,7 +210,7 @@ fn leaf_from_use_wildcard(source: &str, node: Node, prefix: &str) -> (String, St
 }
 
 
-fn leaf_from_identifier(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
+pub(super) fn leaf_from_identifier(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
     // identifier, scoped_identifier, crate, self, super, etc.
     // Inside a brace list, `self` refers to the brace-list prefix itself
     // (`use std::io::{self, BufRead}` → import `std::io` and `std::io::BufRead`).
@@ -224,7 +224,7 @@ fn leaf_from_identifier(source: &str, node: Node, prefix: &str) -> (String, Stri
 }
 
 
-fn walk_use_list_children(source: &str, list: Node, prefix: &str) -> Vec<(String, String, bool)> {
+pub(super) fn walk_use_list_children(source: &str, list: Node, prefix: &str) -> Vec<(String, String, bool)> {
     let mut cursor = list.walk();
     let mut out: Vec<(String, String, bool)> = Vec::new();
     for child in list.children(&mut cursor) {
@@ -238,7 +238,7 @@ fn walk_use_list_children(source: &str, list: Node, prefix: &str) -> Vec<(String
 }
 
 
-fn join_use_path(prefix: &str, tail: &str) -> String {
+pub(super) fn join_use_path(prefix: &str, tail: &str) -> String {
     if prefix.is_empty() {
         tail.to_string()
     } else if tail.is_empty() {

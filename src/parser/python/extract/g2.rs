@@ -10,7 +10,7 @@ use super::*;              // sibling extract fns (glob re-export)
 // Import extraction
 // ---------------------------------------------------------------------------
 
-fn extract_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     // `import foo` / `import foo.bar` / `import foo as f`
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -33,7 +33,7 @@ fn extract_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 /// the generic `import_from_statement`, so it needs its own routing — see
 /// BUG #13. The module name is implicit (always `__future__`). Imported
 /// names appear as direct identifier/dotted_name/aliased_import children.
-fn extract_future_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_future_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let module_name = "__future__".to_string();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -69,7 +69,7 @@ fn extract_future_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 }
 
 
-fn extract_import_from(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_import_from(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     // `from foo import bar` / `from foo import *` / `from foo import bar as b`
     let module_name = node.child_by_field_name("module_name")
         .map(|n| node_text(ctx.source, n).replace('.', "::"))
@@ -114,7 +114,7 @@ fn extract_import_from(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 }
 
 
-fn emit_import(
+pub(super) fn emit_import(
     ctx: &mut ExtractCtx,
     scope: &str,
     path: &str,
@@ -158,7 +158,7 @@ fn emit_import(
 // Module-level constant extraction (UPPER_SNAKE assignments)
 // ---------------------------------------------------------------------------
 
-fn extract_module_constant(ctx: &mut ExtractCtx, expr_stmt: Node, scope: &str) {
+pub(super) fn extract_module_constant(ctx: &mut ExtractCtx, expr_stmt: Node, scope: &str) {
     let mut cursor = expr_stmt.walk();
     for child in expr_stmt.children(&mut cursor) {
         if child.kind() != TS_ASSIGNMENT {
@@ -199,7 +199,7 @@ fn extract_module_constant(ctx: &mut ExtractCtx, expr_stmt: Node, scope: &str) {
 // Call-site extraction
 // ---------------------------------------------------------------------------
 
-fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &str) {
+pub(super) fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &str) {
     let mut stack = vec![body];
     while let Some(node) = stack.pop() {
         if node.kind() == TS_CALL {

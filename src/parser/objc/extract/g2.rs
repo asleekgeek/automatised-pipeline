@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing: Option<&str>) {
+pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing: Option<&str>) {
     let decl = node.child_by_field_name("declarator");
     let name = decl
         .map(|d| node_field_text(ctx.source, d, "declarator"))
@@ -52,7 +52,7 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing: Option<&s
 }
 
 
-fn node_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+pub(super) fn node_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     let mut cursor = node.walk();
     for c in node.children(&mut cursor) {
         if c.kind() == kind {
@@ -66,7 +66,7 @@ fn node_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
 /// Emits a C `struct`/`union` declared in an ObjC file as a Struct plus its
 /// fields (mirrors the C parser). source: tree-sitter-grammars/tree-sitter-objc
 /// v3.0.2 struct_specifier/union_specifier.
-fn extract_c_struct(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_c_struct(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         first_identifier(ctx.source, node)
@@ -100,7 +100,7 @@ fn extract_c_struct(ctx: &mut Ctx, node: Node, scope: &str) {
 /// Field nodes + HasField edges for a C struct body. `field_declaration`'s
 /// `declarator` field is `multiple` (`int a, b;`) — walk all declarator children
 /// and descend each for its `field_identifier`.
-fn extract_c_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
+pub(super) fn extract_c_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
     let mut cursor = body.walk();
     for fd in body.children(&mut cursor) {
         if fd.kind() != "field_declaration" {
@@ -149,7 +149,7 @@ fn extract_c_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
 
 
 /// First `field_identifier` under a (possibly pointer/array) declarator.
-fn find_c_field_identifier(source: &str, node: Node) -> String {
+pub(super) fn find_c_field_identifier(source: &str, node: Node) -> String {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
         if n.kind() == "field_identifier" {
@@ -165,7 +165,7 @@ fn find_c_field_identifier(source: &str, node: Node) -> String {
 
 
 /// Emits a C `enum` as an Enum plus its enumerators as Variant constants.
-fn extract_c_enum(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_c_enum(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         first_identifier(ctx.source, node)
@@ -228,7 +228,7 @@ fn extract_c_enum(ctx: &mut Ctx, node: Node, scope: &str) {
 /// Emits a C `typedef` as a Constant marked `typedef=true` (mirrors the C
 /// parser, which AP models typedefs the same way). The declared name is the
 /// `type_identifier` at the tail of the `declarator` field.
-fn extract_c_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_c_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_c_typedef_name(ctx.source, node);
     if name.is_empty() {
         return;

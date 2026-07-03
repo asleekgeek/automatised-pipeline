@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn find_name(source: &str, node: Node) -> String {
+pub(super) fn find_name(source: &str, node: Node) -> String {
     // tree-sitter-objc uses ``name`` field or an inline ``identifier``.
     let n = node_field_text(source, node, "name");
     if !n.is_empty() {
@@ -23,7 +23,7 @@ fn find_name(source: &str, node: Node) -> String {
 }
 
 
-fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
+pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -51,7 +51,7 @@ fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
 }
 
 
-fn extract_class(ctx: &mut Ctx, node: Node, scope: &str, is_category: bool) {
+pub(super) fn extract_class(ctx: &mut Ctx, node: Node, scope: &str, is_category: bool) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
         return;
@@ -114,7 +114,7 @@ fn extract_class(ctx: &mut Ctx, node: Node, scope: &str, is_category: bool) {
 }
 
 
-fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
         return;
@@ -137,7 +137,7 @@ fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn method_selector(source: &str, node: Node) -> String {
+pub(super) fn method_selector(source: &str, node: Node) -> String {
     // Reconstruct the ObjC selector from the grammar-3.0.2 shape:
     //   - keyword selector: one or more `keyword_declarator` children, each
     //     contributing `<identifier>:` (the label of one argument). The keyword
@@ -176,7 +176,7 @@ fn method_selector(source: &str, node: Node) -> String {
 /// non-field `expression` children (the `receiver` is a separate field). A
 /// message with arguments is a keyword send → `doThing:andY:`; a message with no
 /// arguments is a unary send → `start`. source: tree-sitter-objc v3.0.2.
-fn message_selector(source: &str, node: Node) -> String {
+pub(super) fn message_selector(source: &str, node: Node) -> String {
     let mut keywords: Vec<String> = Vec::new();
     let mut arg_count: usize = 0;
     let mut cursor = node.walk();
@@ -216,7 +216,7 @@ fn message_selector(source: &str, node: Node) -> String {
 }
 
 
-fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
     let sel = method_selector(ctx.source, node);
     if sel.is_empty() {
         return;

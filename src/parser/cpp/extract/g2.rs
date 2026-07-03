@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_member_proto(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_member_proto(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);
     if name.is_empty() {
         return;
@@ -36,7 +36,7 @@ fn extract_member_proto(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_member_field(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_member_field(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);
     if name.is_empty() {
         return;
@@ -59,7 +59,7 @@ fn extract_member_field(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);
     if name.is_empty() {
         return;
@@ -82,7 +82,7 @@ fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
         .trim()
@@ -119,7 +119,7 @@ fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_using(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_using(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
         .trim()
@@ -149,7 +149,7 @@ fn extract_using(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
+pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         if n.kind() == TS_CALL {

@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
+pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     let func_node = match node.child_by_field_name("function") {
         Some(f) => f,
         None => return,
@@ -54,7 +54,7 @@ fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
 
 
 /// Detects async def by checking if "async" keyword precedes "def".
-fn is_async_function(source: &str, node: Node) -> bool {
+pub(super) fn is_async_function(source: &str, node: Node) -> bool {
     // In tree-sitter-python, async functions are still function_definition
     // but the parent or a sibling might be "async" keyword, or the node text starts with "async"
     let text = &source[node.byte_range()];

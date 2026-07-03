@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_variants(ctx: &mut ExtractCtx, enum_node: Node, enum_qn: &str) {
+pub(super) fn extract_variants(ctx: &mut ExtractCtx, enum_node: Node, enum_qn: &str) {
     let body = match enum_node.child_by_field_name("body") {
         Some(b) if b.kind() == TS_ENUM_VARIANT_LIST => b,
         _ => return,
@@ -43,7 +43,7 @@ fn extract_variants(ctx: &mut ExtractCtx, enum_node: Node, enum_qn: &str) {
 // Trait extraction
 // ---------------------------------------------------------------------------
 
-fn extract_trait(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_trait(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -80,7 +80,7 @@ fn extract_trait(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 }
 
 
-fn extract_trait_methods(ctx: &mut ExtractCtx, trait_node: Node, trait_qn: &str) {
+pub(super) fn extract_trait_methods(ctx: &mut ExtractCtx, trait_node: Node, trait_qn: &str) {
     let body = match trait_node.child_by_field_name("body") {
         Some(b) if b.kind() == TS_DECL_LIST => b,
         _ => return,
@@ -124,7 +124,7 @@ fn extract_trait_methods(ctx: &mut ExtractCtx, trait_node: Node, trait_qn: &str)
 // Impl extraction
 // ---------------------------------------------------------------------------
 
-fn extract_impl(ctx: &mut ExtractCtx, node: Node) {
+pub(super) fn extract_impl(ctx: &mut ExtractCtx, node: Node) {
     let impl_type = node_field_text(ctx.source, node, "type");
     if impl_type.is_empty() {
         return;
@@ -146,7 +146,7 @@ fn extract_impl(ctx: &mut ExtractCtx, node: Node) {
 }
 
 
-fn extract_impl_method(
+pub(super) fn extract_impl_method(
     ctx: &mut ExtractCtx,
     node: Node,
     receiver_qn: &str,
@@ -190,7 +190,7 @@ fn extract_impl_method(
 // Field extraction
 // ---------------------------------------------------------------------------
 
-fn extract_fields(ctx: &mut ExtractCtx, parent: Node, parent_qn: &str, list_kind: &str) {
+pub(super) fn extract_fields(ctx: &mut ExtractCtx, parent: Node, parent_qn: &str, list_kind: &str) {
     let body = match parent.child_by_field_name("body") {
         Some(b) if b.kind() == list_kind => b,
         _ => return,
@@ -229,7 +229,7 @@ fn extract_fields(ctx: &mut ExtractCtx, parent: Node, parent_qn: &str, list_kind
 // Const extraction
 // ---------------------------------------------------------------------------
 
-fn extract_const(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_const(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;

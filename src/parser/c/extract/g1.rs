@@ -33,7 +33,7 @@ pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
 }
 
 
-fn is_function_prototype(node: Node) -> bool {
+pub(super) fn is_function_prototype(node: Node) -> bool {
     let mut cursor = node.walk();
     for c in node.children(&mut cursor) {
         if c.kind() == "function_declarator" {
@@ -53,7 +53,7 @@ fn is_function_prototype(node: Node) -> bool {
 }
 
 
-fn find_identifier(source: &str, node: Node) -> String {
+pub(super) fn find_identifier(source: &str, node: Node) -> String {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
         if n.kind() == "identifier" || n.kind() == "type_identifier" {
@@ -68,7 +68,7 @@ fn find_identifier(source: &str, node: Node) -> String {
 }
 
 
-fn extract_struct(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
+pub(super) fn extract_struct(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         find_identifier(ctx.source, node)
@@ -106,7 +106,7 @@ fn extract_struct(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
 /// Emits Field nodes + HasField edges for each field_declaration in a
 /// field_declaration_list. The field name is the first `field_identifier`
 /// descendant of the `declarator` field (handles `int *p;`, `char buf[8];`).
-fn extract_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
+pub(super) fn extract_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
     let mut cursor = body.walk();
     for fd in body.children(&mut cursor) {
         if fd.kind() != "field_declaration" {
@@ -162,7 +162,7 @@ fn extract_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
 
 /// Finds the first `field_identifier` anywhere under `node` (the field name,
 /// unwrapping pointer/array/function declarators).
-fn find_field_identifier(source: &str, node: Node) -> String {
+pub(super) fn find_field_identifier(source: &str, node: Node) -> String {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
         if n.kind() == "field_identifier" {
@@ -177,7 +177,7 @@ fn find_field_identifier(source: &str, node: Node) -> String {
 }
 
 
-fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         find_identifier(ctx.source, node)
@@ -232,7 +232,7 @@ fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);
     if name.is_empty() {
         return;

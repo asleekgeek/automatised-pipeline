@@ -9,7 +9,7 @@ use super::*;              // sibling extract fns (glob re-export)
 /// The declared alias name of a typedef — the `type_identifier` reached through
 /// the `declarator` field (unwrapping pointer/array declarators). Falls back to
 /// the last `type_identifier` descendant.
-fn find_c_typedef_name(source: &str, node: Node) -> String {
+pub(super) fn find_c_typedef_name(source: &str, node: Node) -> String {
     let start = node.child_by_field_name("declarator").unwrap_or(node);
     let mut last = String::new();
     let mut stack = vec![start];
@@ -26,7 +26,7 @@ fn find_c_typedef_name(source: &str, node: Node) -> String {
 }
 
 
-fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
         .trim()
@@ -60,7 +60,7 @@ fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_module_import(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_module_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
         .trim()
@@ -89,7 +89,7 @@ fn extract_module_import(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
+pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         match n.kind() {
@@ -124,7 +124,7 @@ fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
 }
 
 
-fn emit_call(ctx: &mut Ctx, n: Node, caller_qn: &str, callee: &str) {
+pub(super) fn emit_call(ctx: &mut Ctx, n: Node, caller_qn: &str, callee: &str) {
     if callee.is_empty()
         || !callee
             .chars()

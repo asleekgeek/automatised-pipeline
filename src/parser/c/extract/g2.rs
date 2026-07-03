@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
     // ``declarator`` is a ``function_declarator``; its own ``declarator``
     // field carries the name (plus any pointer/reference qualifiers).
     let declarator = node.child_by_field_name("declarator");
@@ -41,7 +41,7 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_function_prototype(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_function_prototype(ctx: &mut Ctx, node: Node, scope: &str) {
     // Only emit a Function node for pure prototypes — skip forward
     // declarations of variables (``int x;``) which also land in ``declaration``.
     let name = find_identifier(ctx.source, node);
@@ -70,7 +70,7 @@ fn extract_function_prototype(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
         .trim()

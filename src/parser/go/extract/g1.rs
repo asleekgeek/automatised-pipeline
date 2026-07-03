@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
+pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -22,7 +22,7 @@ fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
 }
 
 
-fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
     // Two shapes: single ``import "x"`` or ``import ( "a"; "b" )``.
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
@@ -57,7 +57,7 @@ fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_types(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_types(ctx: &mut Ctx, node: Node, scope: &str) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
@@ -69,7 +69,7 @@ fn extract_types(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -113,7 +113,7 @@ fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
 /// (`X, Y int` declares two fields) — emit one Field node + HasField edge per
 /// name. Embedded fields (no name, just a type) are skipped.
 /// source: tree-sitter-go v0.23.4 (struct_type/field_declaration).
-fn extract_struct_fields(ctx: &mut Ctx, struct_type: Node, owner_qn: &str) {
+pub(super) fn extract_struct_fields(ctx: &mut Ctx, struct_type: Node, owner_qn: &str) {
     let mut c1 = struct_type.walk();
     for fdl in struct_type.children(&mut c1) {
         if fdl.kind() != "field_declaration_list" {
@@ -170,7 +170,7 @@ fn extract_struct_fields(ctx: &mut Ctx, struct_type: Node, owner_qn: &str) {
 }
 
 
-fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -200,7 +200,7 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;

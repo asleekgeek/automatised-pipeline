@@ -10,7 +10,7 @@ use super::*;              // sibling extract fns (glob re-export)
 // Interface extraction (maps to Trait label)
 // ---------------------------------------------------------------------------
 
-fn extract_interface(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
+pub(super) fn extract_interface(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -43,7 +43,7 @@ fn extract_interface(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported:
 }
 
 
-fn extract_interface_extends(ctx: &mut ExtractCtx, iface_node: Node, iface_qn: &str) {
+pub(super) fn extract_interface_extends(ctx: &mut ExtractCtx, iface_node: Node, iface_qn: &str) {
     let mut cursor = iface_node.walk();
     for child in iface_node.children(&mut cursor) {
         if child.kind() == "extends_type_clause" {
@@ -65,7 +65,7 @@ fn extract_interface_extends(ctx: &mut ExtractCtx, iface_node: Node, iface_qn: &
 }
 
 
-fn extract_interface_body(ctx: &mut ExtractCtx, body: Node, iface_qn: &str) {
+pub(super) fn extract_interface_body(ctx: &mut ExtractCtx, body: Node, iface_qn: &str) {
     if body.kind() != TS_INTERFACE_BODY && body.kind() != "object_type" {
         return;
     }
@@ -126,7 +126,7 @@ fn extract_interface_body(ctx: &mut ExtractCtx, body: Node, iface_qn: &str) {
 // Enum extraction
 // ---------------------------------------------------------------------------
 
-fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
+pub(super) fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -156,7 +156,7 @@ fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool
 }
 
 
-fn extract_enum_members(ctx: &mut ExtractCtx, body: Node, enum_qn: &str) {
+pub(super) fn extract_enum_members(ctx: &mut ExtractCtx, body: Node, enum_qn: &str) {
     if body.kind() != TS_ENUM_BODY {
         return;
     }
@@ -193,7 +193,7 @@ fn extract_enum_members(ctx: &mut ExtractCtx, body: Node, enum_qn: &str) {
 // Type alias extraction
 // ---------------------------------------------------------------------------
 
-fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
+pub(super) fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -225,7 +225,7 @@ fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported
 // Import extraction
 // ---------------------------------------------------------------------------
 
-fn extract_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let source_node = node.child_by_field_name("source");
     let path = source_node
         .map(|n| {

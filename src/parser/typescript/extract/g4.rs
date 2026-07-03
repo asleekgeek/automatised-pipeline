@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
+pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     let func_node = match node.child_by_field_name("function") {
         Some(f) => f,
         None => return,
@@ -49,7 +49,7 @@ fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn has_export_keyword(node: Node) -> bool {
+pub(super) fn has_export_keyword(node: Node) -> bool {
     if let Some(prev) = node.prev_sibling() {
         if prev.kind() == "export" {
             return true;
@@ -59,19 +59,19 @@ fn has_export_keyword(node: Node) -> bool {
 }
 
 
-fn has_async_keyword(source: &str, node: Node) -> bool {
+pub(super) fn has_async_keyword(source: &str, node: Node) -> bool {
     let text = &source[node.byte_range()];
     text.starts_with("async ")
 }
 
 
-fn is_const_declaration(source: &str, node: Node) -> bool {
+pub(super) fn is_const_declaration(source: &str, node: Node) -> bool {
     let text = &source[node.byte_range()];
     text.starts_with("const ")
 }
 
 
-fn extract_ts_member_visibility(source: &str, node: Node) -> String {
+pub(super) fn extract_ts_member_visibility(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "accessibility_modifier" {

@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_field(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_field(ctx: &mut Ctx, node: Node, scope: &str) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "variable_declarator" {
@@ -34,7 +34,7 @@ fn extract_field(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     // ``import a.b.C;`` or ``import static a.b.C.method;``
     let cleaned = text
@@ -72,7 +72,7 @@ fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
+pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         if n.kind() == TS_CALL || n.kind() == TS_OBJECT_CREATION {

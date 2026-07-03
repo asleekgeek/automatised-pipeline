@@ -9,7 +9,7 @@ use super::*;              // sibling extract fns (glob re-export)
 // Kotlin declaration kinds the grammar exposes as ``class_declaration``
 // are distinguished by a leading modifier: ``interface``, ``enum class``,
 // ``data class``, etc. We walk the node text once to classify.
-fn classify_class(source: &str, node: Node) -> &'static str {
+pub(super) fn classify_class(source: &str, node: Node) -> &'static str {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         let kind = child.kind();
@@ -34,7 +34,7 @@ fn classify_class(source: &str, node: Node) -> &'static str {
 }
 
 
-fn visibility_modifier(source: &str, node: Node) -> String {
+pub(super) fn visibility_modifier(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "modifiers" {
@@ -51,7 +51,7 @@ fn visibility_modifier(source: &str, node: Node) -> String {
 }
 
 
-fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -92,7 +92,7 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
 }
 
 
-fn first_identifier(source: &str, node: Node) -> String {
+pub(super) fn first_identifier(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "simple_identifier" || child.kind() == "identifier" {
@@ -103,7 +103,7 @@ fn first_identifier(source: &str, node: Node) -> String {
 }
 
 
-fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         first_identifier(ctx.source, node)
@@ -157,7 +157,7 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         first_identifier(ctx.source, node)
@@ -224,7 +224,7 @@ fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Opti
 }
 
 
-fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = first_identifier(ctx.source, node);
     if name.is_empty() {
         return;

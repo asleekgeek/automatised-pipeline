@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn extract_import_clause(
+pub(super) fn extract_import_clause(
     ctx: &mut ExtractCtx,
     clause: Node,
     scope: &str,
@@ -43,7 +43,7 @@ fn extract_import_clause(
 }
 
 
-fn extract_named_imports(
+pub(super) fn extract_named_imports(
     ctx: &mut ExtractCtx,
     node: Node,
     scope: &str,
@@ -64,7 +64,7 @@ fn extract_named_imports(
 }
 
 
-fn emit_ts_import(
+pub(super) fn emit_ts_import(
     ctx: &mut ExtractCtx,
     scope: &str,
     path: &str,
@@ -108,7 +108,7 @@ fn emit_ts_import(
 // Export statement extraction
 // ---------------------------------------------------------------------------
 
-fn extract_export(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_export(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     // Export wraps another declaration — extract the inner with is_exported=true
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -129,7 +129,7 @@ fn extract_export(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 // Lexical declaration extraction (const/let)
 // ---------------------------------------------------------------------------
 
-fn extract_lexical_decl(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
+pub(super) fn extract_lexical_decl(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
     let is_const = is_const_declaration(ctx.source, node);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -140,7 +140,7 @@ fn extract_lexical_decl(ctx: &mut ExtractCtx, node: Node, scope: &str, is_export
 }
 
 
-fn extract_variable_declarator(
+pub(super) fn extract_variable_declarator(
     ctx: &mut ExtractCtx,
     node: Node,
     scope: &str,
@@ -207,7 +207,7 @@ fn extract_variable_declarator(
 // Call-site extraction
 // ---------------------------------------------------------------------------
 
-fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &str) {
+pub(super) fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &str) {
     let mut stack = vec![body];
     while let Some(node) = stack.pop() {
         if node.kind() == TS_CALL_EXPR {

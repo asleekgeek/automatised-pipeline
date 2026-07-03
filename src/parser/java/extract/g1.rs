@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn find_package(root: Node, source: &str) -> Option<String> {
+pub(crate) fn find_package(root: Node, source: &str) -> Option<String> {
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         if child.kind() == TS_PACKAGE {
@@ -22,7 +22,7 @@ fn find_package(root: Node, source: &str) -> Option<String> {
 }
 
 
-fn visibility_from_modifiers(source: &str, node: Node) -> String {
+pub(super) fn visibility_from_modifiers(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "modifiers" {
@@ -43,7 +43,7 @@ fn visibility_from_modifiers(source: &str, node: Node) -> String {
 }
 
 
-fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -77,7 +77,7 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
 /// HasVariant edge (mirrors the Rust parser's enum-variant handling). `scope` is
 /// the enum's qualified name (enum_constant nodes are reached while recursing
 /// the enum_body). source: tree-sitter-java v0.23.5 enum_constant.name.
-fn extract_enum_constant(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_enum_constant(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -100,7 +100,7 @@ fn extract_enum_constant(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
+pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -163,7 +163,7 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
 
 /// The `extends` superclass name for a class (single; empty if none).
 /// source: tree-sitter-java — the `superclass` field text is `extends Foo`.
-fn extract_superclass(source: &str, node: Node) -> String {
+pub(super) fn extract_superclass(source: &str, node: Node) -> String {
     match node.child_by_field_name("superclass") {
         Some(supers) => node_text(source, supers)
             .trim_start_matches("extends")
@@ -178,7 +178,7 @@ fn extract_superclass(source: &str, node: Node) -> String {
 /// source: tree-sitter-java — the `interfaces` field is a `super_interfaces`
 /// node holding the `implements` keyword plus a `type_list`; the type names
 /// live one level down inside that `type_list`, so we descend into it.
-fn extract_interfaces(source: &str, node: Node) -> Vec<String> {
+pub(super) fn extract_interfaces(source: &str, node: Node) -> Vec<String> {
     let ifaces = match node.child_by_field_name("interfaces") {
         Some(i) => i,
         None => return Vec::new(),
@@ -192,7 +192,7 @@ fn extract_interfaces(source: &str, node: Node) -> Vec<String> {
 /// Collects type_identifier / scoped_type_identifier names directly under
 /// `node`, descending one level through a `type_list` wrapper (the shape
 /// tree-sitter-java uses for `implements`/`extends`-interfaces clauses).
-fn collect_type_names(source: &str, node: Node, out: &mut Vec<String>) {
+pub(super) fn collect_type_names(source: &str, node: Node, out: &mut Vec<String>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
@@ -209,7 +209,7 @@ fn collect_type_names(source: &str, node: Node, out: &mut Vec<String>) {
 }
 
 
-fn extract_method(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(super) fn extract_method(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;

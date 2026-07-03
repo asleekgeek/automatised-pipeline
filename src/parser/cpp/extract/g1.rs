@@ -6,7 +6,7 @@ use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
 use super::*;              // sibling extract fns (glob re-export)
 
 
-fn find_identifier(source: &str, node: Node) -> String {
+pub(super) fn find_identifier(source: &str, node: Node) -> String {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
         let k = n.kind();
@@ -22,7 +22,7 @@ fn find_identifier(source: &str, node: Node) -> String {
 }
 
 
-fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -61,7 +61,7 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
 }
 
 
-fn has_function_declarator(node: Node) -> bool {
+pub(super) fn has_function_declarator(node: Node) -> bool {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
         if n.kind() == "function_declarator" {
@@ -76,7 +76,7 @@ fn has_function_declarator(node: Node) -> bool {
 }
 
 
-fn extract_namespace(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_namespace(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         find_identifier(ctx.source, node)
@@ -111,7 +111,7 @@ fn extract_namespace(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str, is_class: bool) {
+pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str, is_class: bool) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         find_identifier(ctx.source, node)
@@ -174,7 +174,7 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str, is_cl
 }
 
 
-fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         find_identifier(ctx.source, node)
@@ -202,7 +202,7 @@ fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
     let declarator = node.child_by_field_name("declarator");
     let name = declarator
         .map(|d| find_identifier(ctx.source, d))

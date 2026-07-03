@@ -10,7 +10,7 @@ use super::*;              // sibling extract fns (glob re-export)
 // Top-level extraction
 // ---------------------------------------------------------------------------
 
-fn extract_top_level(
+pub(crate) fn extract_top_level(
     ctx: &mut ExtractCtx,
     parent: Node,
     scope: &str,
@@ -46,7 +46,7 @@ fn extract_top_level(
 // Function / Method extraction
 // ---------------------------------------------------------------------------
 
-fn extract_function_or_method(
+pub(super) fn extract_function_or_method(
     ctx: &mut ExtractCtx,
     node: Node,
     scope: &str,
@@ -120,7 +120,7 @@ fn extract_function_or_method(
 // Class extraction (maps to Struct label — closest equivalent)
 // ---------------------------------------------------------------------------
 
-fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -166,7 +166,7 @@ fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 /// Returns comma-separated base-class names (`identifier` and `attribute`
 /// children of the superclasses field). Attribute access like `typing.NamedTuple`
 /// is preserved verbatim — the resolver looks up by the last segment.
-fn collect_base_names(source: &str, class_node: Node) -> String {
+pub(super) fn collect_base_names(source: &str, class_node: Node) -> String {
     let superclasses = match class_node.child_by_field_name("superclasses") {
         Some(s) => s,
         None => return String::new(),
@@ -186,7 +186,7 @@ fn collect_base_names(source: &str, class_node: Node) -> String {
 }
 
 
-fn extract_base_classes(ctx: &mut ExtractCtx, class_node: Node, class_qn: &str) {
+pub(super) fn extract_base_classes(ctx: &mut ExtractCtx, class_node: Node, class_qn: &str) {
     let superclasses = match class_node.child_by_field_name("superclasses") {
         Some(s) => s,
         None => return,
@@ -214,7 +214,7 @@ fn extract_base_classes(ctx: &mut ExtractCtx, class_node: Node, class_qn: &str) 
 // Decorated definition extraction
 // ---------------------------------------------------------------------------
 
-fn extract_decorated(
+pub(super) fn extract_decorated(
     ctx: &mut ExtractCtx,
     node: Node,
     scope: &str,

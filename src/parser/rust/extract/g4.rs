@@ -10,7 +10,7 @@ use super::*;              // sibling extract fns (glob re-export)
 // Module extraction
 // ---------------------------------------------------------------------------
 
-fn extract_mod(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_mod(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -42,7 +42,7 @@ fn extract_mod(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 // Call-site extraction
 // ---------------------------------------------------------------------------
 
-fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &str) {
+pub(super) fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &str) {
     let mut stack = vec![body];
     while let Some(node) = stack.pop() {
         match node.kind() {
@@ -65,7 +65,7 @@ fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &str) {
 /// refs in file F) consults the CallSite table; macro CallSites must be
 /// flagged so they aren't counted as unresolved — the resolver wires them
 /// to StdlibSymbol targets. source: stages/stage-3b-v2.md §5 Layer 4.
-fn extract_macro_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
+pub(super) fn extract_macro_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     let macro_name = match node.child_by_field_name("macro") {
         Some(n) => node_text(ctx.source, n),
         None => return,
@@ -100,7 +100,7 @@ fn extract_macro_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
 }
 
 
-fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
+pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     let func_node = match node.child_by_field_name("function") {
         Some(f) => f,
         None => return,
@@ -142,7 +142,7 @@ fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
 // Supertrait extraction
 // ---------------------------------------------------------------------------
 
-fn extract_supertraits(source: &str, trait_node: Node) -> Vec<String> {
+pub(super) fn extract_supertraits(source: &str, trait_node: Node) -> Vec<String> {
     let mut supers = Vec::new();
     let bounds = match trait_node.child_by_field_name("bounds") {
         Some(b) => b,
@@ -165,7 +165,7 @@ fn extract_supertraits(source: &str, trait_node: Node) -> Vec<String> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn extract_visibility(source: &str, node: Node) -> String {
+pub(super) fn extract_visibility(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == TS_VIS_MOD {
@@ -176,7 +176,7 @@ fn extract_visibility(source: &str, node: Node) -> String {
 }
 
 
-fn has_async_modifier(node: Node) -> bool {
+pub(super) fn has_async_modifier(node: Node) -> bool {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == TS_FUNC_MODS {

@@ -13,7 +13,7 @@ use super::*;              // sibling extract fns (glob re-export)
 // head-text matching mis-classified e.g. an attributed/`public` declaration or
 // a struct whose name begins with "enum...". Returns (label, is_extension).
 // source: alex-pinkus/tree-sitter-swift v0.7.3 class_declaration.declaration_kind.
-fn classify_class(source: &str, node: Node) -> (&'static str, bool) {
+pub(super) fn classify_class(source: &str, node: Node) -> (&'static str, bool) {
     let kind = node_field_text(source, node, "declaration_kind");
     match kind.trim() {
         "enum" => (LABEL_ENUM, false),
@@ -25,7 +25,7 @@ fn classify_class(source: &str, node: Node) -> (&'static str, bool) {
 }
 
 
-fn visibility_modifier(source: &str, node: Node) -> String {
+pub(super) fn visibility_modifier(source: &str, node: Node) -> String {
     let text = node_text(source, node);
     let head = text.lines().next().unwrap_or("");
     for v in ["public", "private", "internal", "fileprivate", "open"] {
@@ -37,7 +37,7 @@ fn visibility_modifier(source: &str, node: Node) -> String {
 }
 
 
-fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -70,7 +70,7 @@ fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Op
 }
 
 
-fn find_name(source: &str, node: Node) -> String {
+pub(super) fn find_name(source: &str, node: Node) -> String {
     // Try the canonical field first.
     let n = node_field_text(source, node, "name");
     if !n.is_empty() {
@@ -91,7 +91,7 @@ fn find_name(source: &str, node: Node) -> String {
 }
 
 
-fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
     let (label, is_extension) = classify_class(ctx.source, node);
     let name = find_name(ctx.source, node);
     if name.is_empty() {
@@ -128,7 +128,7 @@ fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn find_block_child(node: Node) -> Option<Node> {
+pub(super) fn find_block_child(node: Node) -> Option<Node> {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         let k = child.kind();
@@ -147,7 +147,7 @@ fn find_block_child(node: Node) -> Option<Node> {
 }
 
 
-fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
         return;
@@ -176,7 +176,7 @@ fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
         return;

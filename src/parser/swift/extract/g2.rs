@@ -10,7 +10,7 @@ use super::*;              // sibling extract fns (glob re-export)
 /// Function (rare, top level). These have no `name` field in the grammar, so a
 /// synthetic name is supplied by the caller. The body is a `function_body`
 /// field, so call extraction works the same as for a normal function.
-fn extract_member_fn(
+pub(super) fn extract_member_fn(
     ctx: &mut Ctx,
     node: Node,
     scope: &str,
@@ -62,7 +62,7 @@ fn extract_member_fn(
 /// Emits an enum case (`enum_entry`) as a Variant of the enclosing enum. The
 /// case name is the `name` field (a `simple_identifier`).
 /// source: alex-pinkus/tree-sitter-swift v0.7.3 enum_entry.name.
-fn extract_enum_entry(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_enum_entry(ctx: &mut Ctx, node: Node, scope: &str) {
     // enum_entry's `name` field is `multiple` — `case red, green, blue` is ONE
     // enum_entry node carrying three simple_identifier names. Emit one Variant
     // per name; child_by_field_name would return only the first and silently
@@ -109,7 +109,7 @@ fn extract_enum_entry(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
         return;
@@ -132,7 +132,7 @@ fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_typealias(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_typealias(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
         return;
@@ -155,7 +155,7 @@ fn extract_typealias(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
+pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
         .trim()
@@ -183,7 +183,7 @@ fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
 }
 
 
-fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
+pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         if n.kind() == TS_CALL_EXPR {

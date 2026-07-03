@@ -10,7 +10,7 @@ use super::*;              // sibling extract fns (glob re-export)
 // Top-level extraction
 // ---------------------------------------------------------------------------
 
-fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str) {
+pub(crate) fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
     // Track derive-trait names accumulated from preceding #[derive(...)]
     // attribute_item siblings. Reset after each non-attribute item.
@@ -85,7 +85,7 @@ fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str) {
 /// Parse an `#[derive(...)]` attribute_item and append the trait names to
 /// `out`. Non-derive attributes are ignored. source: Rust Reference §9
 /// https://doc.rust-lang.org/reference/attributes/derive.html.
-fn collect_derives_from_attribute(source: &str, node: Node, out: &mut Vec<String>) {
+pub(super) fn collect_derives_from_attribute(source: &str, node: Node, out: &mut Vec<String>) {
     let text = node_text(source, node);
     // Attribute form: `#[derive(A, B, C)]` — strip prefix/suffix and split.
     let trimmed = text.trim();
@@ -116,7 +116,7 @@ fn collect_derives_from_attribute(source: &str, node: Node, out: &mut Vec<String
 /// resolve_implements can resolve each to a local Trait or a stdlib trait and
 /// emit the Implements edge. Empty when nothing is derived.
 /// source: implements fix — mirrors the `bases`/resolve_extends mechanism.
-fn implements_props(derives: &[String]) -> Vec<(String, String)> {
+pub(super) fn implements_props(derives: &[String]) -> Vec<(String, String)> {
     if derives.is_empty() {
         Vec::new()
     } else {
@@ -127,7 +127,7 @@ fn implements_props(derives: &[String]) -> Vec<(String, String)> {
 
 /// Emit synthetic `Implements` refs with kind `"DeriveImplements"` so the
 /// resolver's Layer 4 pass maps each derived trait through the macro table.
-fn emit_derive_implements(
+pub(super) fn emit_derive_implements(
     ctx: &mut ExtractCtx,
     item: Node,
     scope: &str,
@@ -155,7 +155,7 @@ fn emit_derive_implements(
 // Function extraction
 // ---------------------------------------------------------------------------
 
-fn extract_function(ctx: &mut ExtractCtx, node: Node, scope: &str) {
+pub(super) fn extract_function(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -187,7 +187,7 @@ fn extract_function(ctx: &mut ExtractCtx, node: Node, scope: &str) {
 // Struct extraction
 // ---------------------------------------------------------------------------
 
-fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str, derives: &[String]) {
+pub(super) fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str, derives: &[String]) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
@@ -216,7 +216,7 @@ fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str, derives: &[Stri
 // Enum extraction
 // ---------------------------------------------------------------------------
 
-fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, derives: &[String]) {
+pub(super) fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, derives: &[String]) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
