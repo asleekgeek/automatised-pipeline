@@ -44,6 +44,27 @@ pub enum Language {
 
 impl Language {
     /// Detects language from file extension. Returns None for unsupported.
+    ///
+    /// Ambiguity policy — a few extensions do not map 1:1 to a grammar. Each is
+    /// resolved to the most common case below; when a file is mapped to a
+    /// grammar that doesn't fit it, tree-sitter recovers into ERROR/MISSING
+    /// nodes and `ParseResult.parse_errors` (see stage-3.md §10.5) becomes
+    /// non-zero — so a mis-detection is observable rather than silent. Callers
+    /// that know better can override via `from_str_opt` (the tool's `language:`
+    /// arg). The specific rulings:
+    ///   - `.h`  → C. Ambiguous across C / C++ / Objective-C headers; C is the
+    ///     majority case and C constructs also parse under the C++ grammar. A
+    ///     C++-only header (templates, namespaces) will show parse_errors; pass
+    ///     `language: "cpp"` for such trees.
+    ///   - `.mm` → ObjC. This is Objective-C++; the Objective-C grammar covers
+    ///     the ObjC constructs and embedded C, but NOT full C++ (templates,
+    ///     namespaces) — those portions become parse_errors. Full fidelity would
+    ///     need a dedicated ObjC++ grammar, which tree-sitter has no crate for.
+    ///   - `.js/.jsx/.mjs/.cjs` → TypeScript enum, parsed with the TSX grammar
+    ///     dialect (see parser::typescript). JS is a syntactic subset of TSX
+    ///     (minus type annotations, which JS files don't use), so functions /
+    ///     classes / JSX all extract cleanly. source: viz "AST regardless of
+    ///     file type" requirement, 2026-06-03.
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext {
             "rs" => Some(Language::Rust),
@@ -52,23 +73,10 @@ impl Language {
             "java" => Some(Language::Java),
             "kt" | "kts" => Some(Language::Kotlin),
             "swift" => Some(Language::Swift),
-            // ``.m`` is ObjC; ``.mm`` is ObjC++ which we handle with the
-            // ObjC grammar (it supports mixed C++ constructs via embedded
-            // C++ rules; full fidelity would require a separate parser).
             "m" | "mm" => Some(Language::ObjC),
-            // ``.h`` is ambiguous (C/C++/ObjC). Default to C to cover the
-            // majority case; projects that need C++ headers parsed as C++
-            // can pass ``language: "cpp"`` explicitly.
             "c" | "h" => Some(Language::C),
             "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" => Some(Language::Cpp),
             "go" => Some(Language::Go),
-            // JavaScript family — parsed with the TypeScript grammar.
-            // JS is a subset of TS and tree-sitter is error-tolerant, so
-            // functions/classes are extracted (JSX recovers gracefully).
-            // Previously .js was light-link-only (import edges, no symbols),
-            // so the AST/impact diagram was empty for JavaScript — only
-            // Python/TS produced symbols. source: viz "AST regardless of
-            // file type" requirement, 2026-06-03.
             "js" | "jsx" | "mjs" | "cjs" => Some(Language::TypeScript),
             _ => None,
         }
@@ -132,6 +140,13 @@ pub const LABEL_CALL_SITE: &str = "CallSite";
 pub struct ParseResult {
     pub nodes: Vec<ExtractedNode>,
     pub refs: Vec<ExtractedRef>,
+    // source: stages/stage-3.md §6.1 (parse_errors on the parser-port output)
+    // and §10.5 ("Parse errors per file ... dropping it hides broken parses
+    // behind clean node counts"). Count of tree-sitter ERROR/MISSING nodes in
+    // the parsed tree — tree-sitter recovers from bad syntax into ERROR/MISSING
+    // nodes rather than failing, so a non-fatal parse can still be degraded.
+    // Cross-ref: GitNexus safe-parse.ts detects `root.hasError || root.isMissing`.
+    pub parse_errors: u32,
 }
 
 pub struct ExtractedNode {
@@ -190,6 +205,29 @@ pub(crate) fn node_field_text(source: &str, node: Node, field: &str) -> String {
 /// Builds a qualified name with `::` separator (normalized form).
 pub(crate) fn qual(scope: &str, name: &str) -> String {
     format!("{scope}::{name}")
+}
+
+/// Counts tree-sitter ERROR and MISSING nodes anywhere in the tree.
+///
+/// tree-sitter never throws on malformed input — it recovers into ERROR
+/// (unparseable span) and MISSING (inserted-to-recover) nodes and returns a
+/// tree anyway. A clean `Ok(ParseResult)` with zero symbols can therefore mean
+/// either "empty file" or "the parser is keyed to the wrong grammar and every
+/// construct became an ERROR node". This count is the quality signal that
+/// distinguishes the two. source: stages/stage-3.md §10.5.
+pub(crate) fn count_parse_errors(root: Node) -> u32 {
+    let mut errors: u32 = 0;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.is_error() || node.is_missing() {
+            errors += 1;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    errors
 }
 
 // ---------------------------------------------------------------------------

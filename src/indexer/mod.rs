@@ -175,7 +175,7 @@ pub fn index_codebase_with_language(
         label_by_qn.insert(rel_str.to_string(), "File".into());
         insert_dir_file_edge(&store, &rel)?;
         match index_single_file(
-            &mut batch, file_path, &rel_str, &mut label_by_qn, &mut seen_node_ids,
+            &store, &mut batch, file_path, &rel_str, &mut label_by_qn, &mut seen_node_ids,
         ) {
             Ok(()) => files_indexed += 1,
             Err(e) => eprintln!("indexer: skipping {}: {e}", rel_str),

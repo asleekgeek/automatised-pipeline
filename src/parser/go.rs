@@ -44,6 +44,7 @@ pub fn parse_go_file(source: &str, file_path: &str) -> Result<ParseResult, Strin
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -132,9 +133,13 @@ fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
     let qn = qual(scope, &name);
     // Classify by looking at the ``type`` field — struct/interface/other.
     let mut label = LABEL_TYPE_ALIAS;
+    let mut struct_type: Option<Node> = None;
     if let Some(ty) = node.child_by_field_name("type") {
         match ty.kind() {
-            "struct_type" => label = LABEL_STRUCT,
+            "struct_type" => {
+                label = LABEL_STRUCT;
+                struct_type = Some(ty);
+            }
             "interface_type" => label = LABEL_TRAIT,
             _ => {}
         }
@@ -151,8 +156,72 @@ fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
     ctx.refs.push(ExtractedRef {
         kind: "Defines".to_string(),
         from_qualified_name: scope.to_string(),
-        to_qualified_name: qn,
+        to_qualified_name: qn.clone(),
     });
+    if let Some(st) = struct_type {
+        extract_struct_fields(ctx, st, &qn);
+    }
+}
+
+/// Extracts struct fields: descend `struct_type -> field_declaration_list ->
+/// field_declaration`. A field_declaration's `name` is a `multiple` field
+/// (`X, Y int` declares two fields) — emit one Field node + HasField edge per
+/// name. Embedded fields (no name, just a type) are skipped.
+/// source: tree-sitter-go v0.23.4 (struct_type/field_declaration).
+fn extract_struct_fields(ctx: &mut Ctx, struct_type: Node, owner_qn: &str) {
+    let mut c1 = struct_type.walk();
+    for fdl in struct_type.children(&mut c1) {
+        if fdl.kind() != "field_declaration_list" {
+            continue;
+        }
+        let mut c2 = fdl.walk();
+        for fd in fdl.children(&mut c2) {
+            if fd.kind() != "field_declaration" {
+                continue;
+            }
+            let type_text = node_field_text(ctx.source, fd, "type");
+            // The `name` field is `multiple` (`X, Y int`); collect every child
+            // whose field name is "name". Uses the cursor.field_name() idiom
+            // (the same one objc.rs uses) rather than children_by_field_name.
+            let mut names: Vec<Node> = Vec::new();
+            let mut c3 = fd.walk();
+            if c3.goto_first_child() {
+                loop {
+                    if c3.field_name() == Some("name") {
+                        names.push(c3.node());
+                    }
+                    if !c3.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            for name_node in names {
+                let fname = node_text(ctx.source, name_node);
+                if fname.is_empty() {
+                    continue;
+                }
+                let fqn = qual(owner_qn, &fname);
+                let mut props = Vec::new();
+                if !type_text.is_empty() {
+                    props.push(("type_annotation".to_string(), type_text.clone()));
+                }
+                ctx.nodes.push(ExtractedNode {
+                    label: super::LABEL_FIELD.to_string(),
+                    name: fname.clone(),
+                    qualified_name: fqn.clone(),
+                    start_line: fd.start_position().row as u64 + 1,
+                    end_line: fd.end_position().row as u64 + 1,
+                    visibility: go_visibility(&fname),
+                    properties: props,
+                });
+                ctx.refs.push(ExtractedRef {
+                    kind: "HasField".to_string(),
+                    from_qualified_name: owner_qn.to_string(),
+                    to_qualified_name: fqn,
+                });
+            }
+        }
+    }
 }
 
 fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {

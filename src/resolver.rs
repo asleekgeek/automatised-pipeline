@@ -296,6 +296,9 @@ fn resolve_imports(
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
+    // §10.4 — Import nodes whose target was found; is_resolved is flipped to
+    // true for these (all others keep the false written at index time).
+    let mut resolved_ids: Vec<&str> = Vec::new();
 
     for row in &qr.rows {
         if row.len() < 4 {
@@ -304,8 +307,12 @@ fn resolve_imports(
         let provider = crate::language_provider::provider_for(&row[3]);
         let (r, u) = resolve_one_import(idx, buf, provider, &row[0], &row[1], &row[2]);
         resolved += r;
+        if r > 0 {
+            resolved_ids.push(&row[0]);
+        }
         unresolved.extend(u);
     }
+    store.mark_nodes_resolved("Import", &resolved_ids)?;
     Ok((resolved, total, unresolved))
 }
 
@@ -398,6 +405,8 @@ fn resolve_calls(
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
+    // §10.4 — CallSite nodes whose callee was resolved to a graph target.
+    let mut resolved_ids: Vec<String> = Vec::new();
 
     for row in &qr.rows {
         if row.len() < 3 {
@@ -447,6 +456,10 @@ fn resolve_calls(
                             "import-scope-lookup",
                         ) {
                             resolved += 1;
+                            // The callee resolved to a graph target — flip the
+                            // CallSite's is_resolved (§10.4). Applies to both
+                            // Calls and Uses edges (both mean "target found").
+                            resolved_ids.push(cs_id.clone());
                         }
                     }
                     None => unresolved.push(UnresolvedRef {
@@ -468,6 +481,8 @@ fn resolve_calls(
             }),
         }
     }
+    let id_refs: Vec<&str> = resolved_ids.iter().map(|s| s.as_str()).collect();
+    store.mark_nodes_resolved("CallSite", &id_refs)?;
     Ok((resolved, total, unresolved))
 }
 

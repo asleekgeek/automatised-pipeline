@@ -21,6 +21,14 @@ use super::{
 
 const TS_FUNC_DECL: &str = "function_declaration";
 const TS_CLASS_DECL: &str = "class_declaration";
+// source: tree-sitter-typescript v0.23.2 — abstract classes, generator
+// functions, and `var` declarations are distinct top-level node kinds that were
+// previously not dispatched (so `abstract class`, `function*`, and `var x`
+// symbols were dropped). They share extractor logic with their non-abstract /
+// non-generator / lexical counterparts.
+const TS_ABSTRACT_CLASS_DECL: &str = "abstract_class_declaration";
+const TS_GENERATOR_FUNC_DECL: &str = "generator_function_declaration";
+const TS_VARIABLE_DECL: &str = "variable_declaration";
 const TS_INTERFACE_DECL: &str = "interface_declaration";
 const TS_ENUM_DECL: &str = "enum_declaration";
 const TS_TYPE_ALIAS_DECL: &str = "type_alias_declaration";
@@ -44,7 +52,23 @@ const TS_METHOD_SIGNATURE: &str = "method_signature";
 
 /// Parses a single `.ts`/`.tsx` file and extracts typed symbols and relationships.
 pub fn parse_typescript_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
-    let lang: tree_sitter::Language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+    // tree-sitter-typescript ships two distinct grammars: `typescript` and
+    // `tsx`. JSX syntax (`<Component/>`) is ONLY in the tsx grammar — parsing a
+    // .tsx/.jsx file with LANGUAGE_TYPESCRIPT makes every JSX element an ERROR
+    // node and drops the symbols inside it. JS-family files (.js/.jsx/.mjs/.cjs)
+    // are routed here too and contain no type syntax, so tsx is safe for them.
+    // source: tree-sitter-typescript v0.23.2 (typescript vs tsx node-types.json);
+    // cross-ref GitNexus parser-loader.ts selects the `:tsx` variant for .tsx.
+    let use_tsx = file_path
+        .rsplit('.')
+        .next()
+        .map(|ext| matches!(ext, "tsx" | "jsx" | "js" | "mjs" | "cjs"))
+        .unwrap_or(false);
+    let lang: tree_sitter::Language = if use_tsx {
+        tree_sitter_typescript::LANGUAGE_TSX.into()
+    } else {
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+    };
     let mut parser = Parser::new();
     parser
         .set_language(&lang)
@@ -65,6 +89,7 @@ pub fn parse_typescript_file(source: &str, file_path: &str) -> Result<ParseResul
     Ok(ParseResult {
         nodes: ctx.nodes,
         refs: ctx.refs,
+        parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
 
@@ -88,14 +113,20 @@ fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str, is_exporte
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
-            TS_FUNC_DECL => extract_function(ctx, child, scope, is_exported),
-            TS_CLASS_DECL => extract_class(ctx, child, scope, is_exported),
+            TS_FUNC_DECL | TS_GENERATOR_FUNC_DECL => {
+                extract_function(ctx, child, scope, is_exported)
+            }
+            TS_CLASS_DECL | TS_ABSTRACT_CLASS_DECL => {
+                extract_class(ctx, child, scope, is_exported)
+            }
             TS_INTERFACE_DECL => extract_interface(ctx, child, scope, is_exported),
             TS_ENUM_DECL => extract_enum(ctx, child, scope, is_exported),
             TS_TYPE_ALIAS_DECL => extract_type_alias(ctx, child, scope, is_exported),
             TS_IMPORT_STMT => extract_import(ctx, child, scope),
             TS_EXPORT_STMT => extract_export(ctx, child, scope),
-            TS_LEXICAL_DECL => extract_lexical_decl(ctx, child, scope, is_exported),
+            TS_LEXICAL_DECL | TS_VARIABLE_DECL => {
+                extract_lexical_decl(ctx, child, scope, is_exported)
+            }
             _ => {}
         }
     }
@@ -634,12 +665,12 @@ fn extract_export(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            TS_FUNC_DECL => extract_function(ctx, child, scope, true),
-            TS_CLASS_DECL => extract_class(ctx, child, scope, true),
+            TS_FUNC_DECL | TS_GENERATOR_FUNC_DECL => extract_function(ctx, child, scope, true),
+            TS_CLASS_DECL | TS_ABSTRACT_CLASS_DECL => extract_class(ctx, child, scope, true),
             TS_INTERFACE_DECL => extract_interface(ctx, child, scope, true),
             TS_ENUM_DECL => extract_enum(ctx, child, scope, true),
             TS_TYPE_ALIAS_DECL => extract_type_alias(ctx, child, scope, true),
-            TS_LEXICAL_DECL => extract_lexical_decl(ctx, child, scope, true),
+            TS_LEXICAL_DECL | TS_VARIABLE_DECL => extract_lexical_decl(ctx, child, scope, true),
             _ => {}
         }
     }
