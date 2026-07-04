@@ -351,6 +351,7 @@ fn index_fixture(fixture_root: &Path, graph_path: &Path) -> Observed {
         fixture_root,
         graph_path,
         Some(Language::Python),
+        false,
     )
     .expect("indexer should succeed on a 1-file fixture");
 
