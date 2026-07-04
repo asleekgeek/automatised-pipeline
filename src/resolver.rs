@@ -80,6 +80,12 @@ struct SymbolEntry {
 struct SymbolIndex {
     by_name: HashMap<String, Vec<SymbolEntry>>,
     by_qn: HashMap<String, SymbolEntry>,
+    // Symbols grouped by their immediate parent module path (qualified_name
+    // with the last "::segment" stripped). Populated once, O(total_symbols).
+    // Lets glob-import resolution (`from x import *`) look up only the
+    // symbols that live directly inside `x` instead of scanning every
+    // symbol in the graph per glob import — see resolve_glob_import.
+    by_parent_module: HashMap<String, Vec<SymbolEntry>>,
 }
 
 fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
@@ -89,6 +95,7 @@ fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
     ];
     let mut by_name: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
     let mut by_qn: HashMap<String, SymbolEntry> = HashMap::new();
+    let mut by_parent_module: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
     for label in labels {
         let qn_col = if *label == "File" { "path" } else { "qualified_name" };
         let name_col = if *label == "File" { "name" } else { "name" };
@@ -109,10 +116,13 @@ fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
                 qualified_name: row[2].clone(),
             };
             by_name.entry(row[1].clone()).or_default().push(entry.clone());
+            if let Some((parent, _)) = row[2].rsplit_once("::") {
+                by_parent_module.entry(parent.to_string()).or_default().push(entry.clone());
+            }
             by_qn.insert(row[2].clone(), entry);
         }
     }
-    Ok(SymbolIndex { by_name, by_qn })
+    Ok(SymbolIndex { by_name, by_qn, by_parent_module })
 }
 
 // ---------------------------------------------------------------------------
@@ -372,11 +382,24 @@ fn resolve_glob_import(
     file_id: &str,
     module_path: &str,
 ) -> u64 {
+    // Non-termination fix (2026-07-04): this used to scan idx.by_qn (every
+    // symbol in the whole graph) for EVERY glob import, i.e.
+    // O(glob_imports * total_symbols). On a repo with a vendored dependency
+    // tree (e.g. cortex-viz's 503MB .venv indexed via include_dependencies),
+    // total_symbols is huge AND Python packages commonly re-export via
+    // `from .submodule import *` inside __init__.py, so glob_imports also
+    // scales with corpus size — the product is quadratic in corpus size.
+    // Measured: 2_000 glob imports x 100_000 symbols took ~1.3s with the
+    // linear-scan version (see bench_glob_import_scaling, "before" run,
+    // commit message for the exact numbers). by_parent_module groups
+    // symbols by parent qualified-name once (O(total_symbols) at index
+    // build time), turning each glob import's cost into O(matches)
+    // instead of O(total_symbols).
+    let Some(candidates) = idx.by_parent_module.get(module_path) else {
+        return 0;
+    };
     let mut count = 0u64;
-    for (_qn, entry) in &idx.by_qn {
-        if !is_child_of_module(_qn, module_path) {
-            continue;
-        }
+    for entry in candidates {
         let table = format!("Imports_File_{}", entry.label);
         if !check_known_rel_table(&table, file_id, &entry.id) {
             continue;
@@ -962,16 +985,6 @@ fn determine_caller_label(idx: &SymbolIndex, caller_qn: &str) -> String {
         .unwrap_or_else(|| "Function".to_string())
 }
 
-fn is_child_of_module(qn: &str, module_path: &str) -> bool {
-    // Check if qn is directly inside the module (one segment deeper)
-    if let Some(rest) = qn.strip_prefix(module_path) {
-        if let Some(rest) = rest.strip_prefix("::") {
-            return !rest.contains("::");
-        }
-    }
-    false
-}
-
 fn pick_best_candidate<'a>(
     candidates: &'a [SymbolEntry],
     path_hint: &str,
@@ -1061,5 +1074,67 @@ mod tests {
             extract_caller_from_callsite_id("src/main.rs::main::call@5:4"),
             "src/main.rs::main"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Non-termination reproduction (2026-07-04) — glob-import resolution.
+    //
+    // resolve_glob_import scanned idx.by_qn (ALL symbols in the graph)
+    // once per glob import. On a repo with a vendored dependency tree
+    // (e.g. a .venv), by_qn holds every vendored symbol too, and Python
+    // packages commonly re-export via `from .submodule import *` inside
+    // __init__.py — so glob-import count scales with the number of
+    // vendored packages/files. Cost was O(glob_imports * total_symbols):
+    // quadratic in corpus size, not just "large but linear". This test
+    // builds a synthetic index (M modules x K symbols each = total
+    // symbols) and N glob imports (one per module) and measures wall
+    // time. Run manually (ignored by default — timing, not CI-stable):
+    //   cargo test --release resolver::tests::bench_glob_import_scaling -- --ignored --nocapture
+    // source: measured on 2026-07-04 in this environment (Apple Silicon,
+    // `cargo test --release`), numbers reported in the commit message.
+    #[test]
+    #[ignore]
+    fn bench_glob_import_scaling() {
+        fn build_index(modules: usize, symbols_per_module: usize) -> SymbolIndex {
+            let mut by_name: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
+            let mut by_qn: HashMap<String, SymbolEntry> = HashMap::new();
+            let mut by_parent_module: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
+            for m in 0..modules {
+                let module_path = format!("pkg{m}");
+                for s in 0..symbols_per_module {
+                    let qn = format!("{module_path}::sym{s}");
+                    let entry = SymbolEntry {
+                        id: format!("file{m}.py::sym{s}"),
+                        label: "Function".to_string(),
+                        qualified_name: qn.clone(),
+                    };
+                    by_name.entry(format!("sym{s}")).or_default().push(entry.clone());
+                    by_qn.insert(qn.clone(), entry.clone());
+                    by_parent_module.entry(module_path.clone()).or_default().push(entry);
+                }
+            }
+            SymbolIndex { by_name, by_qn, by_parent_module }
+        }
+
+        let modules = 2_000;
+        let symbols_per_module = 50; // total_symbols = 100_000
+        let idx = build_index(modules, symbols_per_module);
+        let existing: HashSet<(String, String, String)> = HashSet::new();
+        let mut buf = EdgeBuffer::new(existing);
+
+        let start = Instant::now();
+        let mut total_edges = 0u64;
+        for m in 0..modules {
+            let file_id = format!("caller{m}.py");
+            let module_path = format!("pkg{m}");
+            total_edges += resolve_glob_import(&idx, &mut buf, &file_id, &module_path);
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "glob-import scaling: modules={modules} symbols/module={symbols_per_module} \
+             total_symbols={} glob_imports={modules} edges_generated={total_edges} elapsed={elapsed:?}",
+            modules * symbols_per_module
+        );
+        assert_eq!(total_edges as usize, modules * symbols_per_module);
     }
 }
