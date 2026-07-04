@@ -5,19 +5,36 @@ use std::path::{Path, PathBuf};
 // Directory walking
 // ---------------------------------------------------------------------------
 
+/// Options controlling a directory walk.
+///
+/// Bundled into one value so the recursive walker stays within the 4-parameter
+/// limit (coding-standards §4.4) as new traversal knobs are added.
+#[derive(Clone, Copy, Default)]
+pub(super) struct WalkOptions {
+    /// When `Some(L)`, only collect files of language `L`; `None` collects all.
+    pub language_filter: Option<Language>,
+    /// When true, descend into build/dependency directories (node_modules,
+    /// .venv, vendor, target, …) that are pruned by default. Only `.git` is
+    /// still skipped. source: checkpoint 2026-07-04 — full-dependency indexing
+    /// for the Cortex brain; every vendored file becomes a navigable node.
+    pub include_dependencies: bool,
+}
+
 /// Recursively collects source files, skipping hidden dirs, target/, node_modules/.
-/// When `language_filter` is Some, only collects files for that language.
+/// When `opts.language_filter` is Some, only collects files for that language.
 /// When None, collects all files with recognized extensions.
+/// When `opts.include_dependencies` is true, build/dependency dirs are also
+/// descended into (only `.git` is skipped).
 ///
 /// Symlinks are intentionally NOT followed — source: security hardening (C4).
 /// This prevents a symlink inside the codebase from causing `read_dir` to
 /// silently traverse outside the tree (e.g. to `/etc/passwd` or `~/.ssh`).
 pub(super) fn collect_source_files(
     root: &Path,
-    language_filter: Option<Language>,
+    opts: WalkOptions,
 ) -> Result<Vec<PathBuf>, String> {
     let mut result = Vec::new();
-    walk_dir_recursive(root, &mut result, language_filter, 0)?;
+    walk_dir_recursive(root, &mut result, opts, 0)?;
     if result.len() > super::MAX_FILES {
         return Err(format!(
             "too_many_files: codebase contains {} files, MAX_FILES is {}",
@@ -31,7 +48,7 @@ pub(super) fn collect_source_files(
 fn walk_dir_recursive(
     dir: &Path,
     out: &mut Vec<PathBuf>,
-    language_filter: Option<Language>,
+    opts: WalkOptions,
     depth: usize,
 ) -> Result<(), String> {
     if depth > super::MAX_DEPTH {
@@ -48,7 +65,7 @@ fn walk_dir_recursive(
         let path = entry.path();
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if should_skip(&name_str) {
+        if should_skip(&name_str, opts.include_dependencies) {
             continue;
         }
         // Use symlink_metadata (lstat) instead of metadata (stat) so symlinks
@@ -62,7 +79,7 @@ fn walk_dir_recursive(
             continue; // intentionally skip symlinks
         }
         if meta.is_dir() {
-            walk_dir_recursive(&path, out, language_filter, depth + 1)?;
+            walk_dir_recursive(&path, out, opts, depth + 1)?;
             if out.len() > super::MAX_FILES {
                 return Err(format!(
                     "too_many_files: exceeded MAX_FILES ({}) during walk",
@@ -89,7 +106,7 @@ fn walk_dir_recursive(
             //     build/dependency dirs are pruned by should_skip.
             //     source: "the pipeline should index any kind of files" — so
             //     every file a session touches is navigable in the graph.
-            match language_filter {
+            match opts.language_filter {
                 Some(filter) => {
                     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                         if Language::from_extension(ext) == Some(filter) {
@@ -113,7 +130,17 @@ fn walk_dir_recursive(
 /// MB of *.dex / *.aar / *.jar files that the indexer rejects per-file
 /// after walking into them. Filtering at the directory level avoids
 /// the descent entirely.
-fn should_skip(name: &str) -> bool {
+fn should_skip(name: &str, include_dependencies: bool) -> bool {
+    // `.git` is never source — its object store is large and binary — so it is
+    // skipped even in full-dependency mode. source: checkpoint 2026-07-04.
+    if name == ".git" {
+        return true;
+    }
+    // Full-dependency mode: descend into vendored/build/cache dirs so the
+    // graph covers node_modules, .venv, vendor, target, etc.
+    if include_dependencies {
+        return false;
+    }
     name.starts_with('.')
         // Rust
         || name == "target"
@@ -147,5 +174,6 @@ fn should_skip(name: &str) -> bool {
         // Test / coverage
         || name == "coverage"
         || name == ".nyc_output"
-        // VCS already filtered by ``starts_with('.')`` (covers .git)
+    // Other VCS dirs are filtered by ``starts_with('.')``; ``.git`` itself is
+    // handled explicitly above so it is excluded in full-dependency mode too.
 }

@@ -1814,6 +1814,8 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     let output_str = args.get("output_dir").and_then(|v| v.as_str())
         .ok_or("missing required field 'output_dir'")?;
     let lang_filter = parse_language_filter(args)?;
+    let include_dependencies = args.get("include_dependencies")
+        .and_then(|v| v.as_bool()).unwrap_or(false);
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -1833,7 +1835,8 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
             .map_err(|e| format!("remove stale graph dir: {e}"))?;
     }
 
-    let result = indexer::index_codebase_with_language(&codebase, &graph_dir, lang_filter)?;
+    let result = indexer::index_codebase_with_language(
+        &codebase, &graph_dir, lang_filter, include_dependencies)?;
     Ok(json!({
         "stage": 3,
         "status": "ok",
@@ -3066,6 +3069,8 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
     let gamma = args.get("resolution_param").and_then(|v| v.as_f64()).unwrap_or(1.0);
     let enable_lsp = args.get("lsp").and_then(|v| v.as_bool()).unwrap_or(false);
     let lang_filter = parse_language_filter(args)?;
+    let include_dependencies = args.get("include_dependencies")
+        .and_then(|v| v.as_bool()).unwrap_or(false);
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -3085,7 +3090,8 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
     let total_start = std::time::Instant::now();
 
     // Phase 1: index
-    let index_result = indexer::index_codebase_with_language(&codebase, &graph_dir, lang_filter)?;
+    let index_result = indexer::index_codebase_with_language(
+        &codebase, &graph_dir, lang_filter, include_dependencies)?;
 
     // Phase 2: resolve
     let store = graph_store::GraphStore::open_or_create(&index_result.graph_path)?;

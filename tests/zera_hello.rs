@@ -327,7 +327,7 @@ fn zera_hello_on_cortex_mcp_server() {
     let graph_path = tmp.join("graph.lbug");
 
     let t0 = Instant::now();
-    indexer::index_codebase_with_language(&target, &graph_path, Some(Language::Python))
+    indexer::index_codebase_with_language(&target, &graph_path, Some(Language::Python), false)
         .expect("index");
     let store = GraphStore::open_or_create(&graph_path).expect("open");
     let _ = resolver::resolve_graph(&store);

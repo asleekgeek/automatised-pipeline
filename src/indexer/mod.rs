@@ -14,7 +14,7 @@ mod walk;
 mod persist;
 mod light_link;
 
-use walk::collect_source_files;
+use walk::{collect_source_files, WalkOptions};
 use persist::{insert_ancestor_dirs, insert_dir_file_edge, insert_file_node, index_single_file};
 
 // ---------------------------------------------------------------------------
@@ -127,20 +127,26 @@ impl SymbolBatch {
 /// Convenience wrapper that auto-detects language by file extension.
 #[allow(dead_code)]
 pub fn index_codebase(codebase_path: &Path, graph_path: &Path) -> Result<IndexResult, String> {
-    index_codebase_with_language(codebase_path, graph_path, None)
+    index_codebase_with_language(codebase_path, graph_path, None, false)
 }
 
 /// Indexes source files with an optional language filter.
+///
+/// When `include_dependencies` is true, build/dependency directories
+/// (node_modules, .venv, vendor, target, …) are indexed as well; only `.git`
+/// is skipped. Default (false) prunes those dirs.
 pub fn index_codebase_with_language(
     codebase_path: &Path,
     graph_path: &Path,
     language_filter: Option<Language>,
+    include_dependencies: bool,
 ) -> Result<IndexResult, String> {
     let start = Instant::now();
     let store = GraphStore::open_or_create(graph_path)?;
     store.create_schema()?;
 
-    let source_files = collect_source_files(codebase_path, language_filter)?;
+    let walk_opts = WalkOptions { language_filter, include_dependencies };
+    let source_files = collect_source_files(codebase_path, walk_opts)?;
     // label_by_qn: qualified_name/id -> label, populated as nodes are created.
     // Used to resolve edge tables without probing the database.
     // source: Fermi audit — probe_node_label was firing up to 9 MATCH queries
@@ -405,10 +411,46 @@ mod tests {
         };
         symlink(target, &link).unwrap();
 
-        let files = collect_source_files(&root, None).unwrap();
+        let files = collect_source_files(&root, WalkOptions::default()).unwrap();
         // Only the real file is indexed; the symlink is skipped.
         assert_eq!(files.len(), 1, "symlink must not be collected: {files:?}");
         assert_eq!(files[0].file_name().unwrap(), "real.rs");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_include_dependencies_flag() {
+        // Proves the include_dependencies flag toggles descent into
+        // build/dependency dirs while always excluding `.git`.
+        // Fixture: root/app.rs, root/node_modules/dep.rs, root/.git/hook.rs.
+        let root = std::env::temp_dir().join(format!(
+            "indexer_include_deps_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("node_modules")).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join("app.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("node_modules/dep.rs"), "fn dep() {}\n").unwrap();
+        std::fs::write(root.join(".git/hook.rs"), "fn hook() {}\n").unwrap();
+
+        let names = |opts: WalkOptions| -> Vec<String> {
+            let mut v: Vec<String> = collect_source_files(&root, opts)
+                .unwrap()
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            v.sort();
+            v
+        };
+
+        // Default: node_modules and .git are both pruned.
+        assert_eq!(names(WalkOptions::default()), vec!["app.rs"]);
+
+        // include_dependencies=true: node_modules is descended, .git stays out.
+        let with_deps = WalkOptions { language_filter: None, include_dependencies: true };
+        assert_eq!(names(with_deps), vec!["app.rs", "dep.rs"]);
 
         let _ = std::fs::remove_dir_all(&root);
     }

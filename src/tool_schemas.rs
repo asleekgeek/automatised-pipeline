@@ -238,6 +238,11 @@ fn index_codebase_schema() -> Value {
                 "output_dir": {
                     "type": "string",
                     "description": "Absolute directory where the graph will be stored (at <output_dir>/graph/)."
+                },
+                "include_dependencies": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true, index build/dependency directories too (node_modules, .venv, vendor, target, dist, …); only .git is skipped. Default false prunes those dirs. Use for full-dependency graphs — expect a much larger node count."
                 }
             }
         }
@@ -541,6 +546,11 @@ fn analyze_codebase_schema() -> Value {
                     "type": "boolean",
                     "default": false,
                     "description": "Enable LSP-enhanced resolution after the static resolve pass. Requires the language server to be installed. Default: false."
+                },
+                "include_dependencies": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true, index build/dependency directories too (node_modules, .venv, vendor, target, dist, …); only .git is skipped. Default false prunes those dirs. Use for full-dependency graphs — expect a much larger node count."
                 }
             }
         }
