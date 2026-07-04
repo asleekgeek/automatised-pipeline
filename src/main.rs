@@ -1828,11 +1828,11 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     // source: H4 fix — validate the derived path ends in `/graph` and is not
     // a forbidden system root before any destructive op.
     validate_graph_path_safe(&graph_dir)?;
-    // lbug creates the database directory itself; if a stale directory exists
-    // from a prior run, remove it so lbug can initialise cleanly.
+    // lbug creates the database itself; if a stale graph artifact exists from a
+    // prior run, remove it so lbug can initialise cleanly.
     if graph_dir.exists() {
-        fs::remove_dir_all(&graph_dir)
-            .map_err(|e| format!("remove stale graph dir: {e}"))?;
+        // Prior run may have left a dir OR a single-file Kuzu db; remove either.
+        remove_stale_graph_artifact(&graph_dir)?;
     }
 
     let result = indexer::index_codebase_with_language(
@@ -1975,6 +1975,24 @@ fn validate_graph_path_safe(path: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Removes a stale graph artifact at `path`, whether the prior run left a
+/// directory (older Kuzu lays the database out as a dir) or a single database
+/// file (newer Kuzu). Plain `remove_dir_all` fails with `ENOTDIR (os error 20)`
+/// when the target is a file — the observed failure on re-index of an existing
+/// graph. `symlink_metadata` never traverses a symlink at the graph path, so a
+/// symlinked `graph` is unlinked, not followed.
+/// Caller MUST have run `validate_graph_path_safe` first.
+fn remove_stale_graph_artifact(path: &Path) -> Result<(), String> {
+    let meta = fs::symlink_metadata(path)
+        .map_err(|e| format!("stat stale graph path: {e}"))?;
+    let outcome = if meta.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    outcome.map_err(|e| format!("remove stale graph artifact: {e}"))
 }
 
 fn do_query_graph(arguments: &Value) -> Result<Value, String> {
@@ -3083,8 +3101,8 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
     // source: H4 fix — see do_index_codebase.
     validate_graph_path_safe(&graph_dir)?;
     if graph_dir.exists() {
-        fs::remove_dir_all(&graph_dir)
-            .map_err(|e| format!("remove stale graph dir: {e}"))?;
+        // Prior run may have left a dir OR a single-file Kuzu db; remove either.
+        remove_stale_graph_artifact(&graph_dir)?;
     }
 
     let total_start = std::time::Instant::now();
@@ -4107,6 +4125,37 @@ mod security_tests {
         assert!(validate_graph_path_safe(Path::new("/etc/graph")).is_err());
         assert!(validate_graph_path_safe(Path::new("//graph")).is_err()
             || validate_graph_path_safe(Path::new("//graph")).is_ok());
+    }
+
+    #[test]
+    fn remove_stale_graph_artifact_handles_file_and_dir() {
+        // source: ENOTDIR fix — a prior run can leave `graph` as a single-file
+        // Kuzu db; `remove_dir_all` on a file returns ENOTDIR (os error 20).
+        // The helper must delete both shapes and report a missing path as an
+        // error rather than panicking.
+        let base = std::env::temp_dir()
+            .join(format!("ap-remove-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let graph = base.join("graph");
+
+        // Case A: graph is a directory with nested content.
+        fs::create_dir_all(graph.join("nested")).unwrap();
+        fs::write(graph.join("nested/f.txt"), b"x").unwrap();
+        assert!(graph.is_dir());
+        remove_stale_graph_artifact(&graph).expect("dir removal");
+        assert!(!graph.exists());
+
+        // Case B: graph is a single file — the ENOTDIR regression case.
+        fs::write(&graph, b"kuzu-single-file-db").unwrap();
+        assert!(graph.is_file());
+        remove_stale_graph_artifact(&graph).expect("file removal (was ENOTDIR)");
+        assert!(!graph.exists());
+
+        // Missing path → surfaced as an error, never a panic.
+        assert!(remove_stale_graph_artifact(&graph).is_err());
+
+        let _ = fs::remove_dir_all(&base);
     }
 }
 

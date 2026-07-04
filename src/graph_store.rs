@@ -277,9 +277,11 @@ impl GraphStore {
         };
         let from_lit = cypher_str(from_id);
         let to_lit = cypher_str(to_id);
+        // source: Kuzu PK-index scan — inline `{id: ..}` avoids the A×B
+        // CrossProduct the comma+WHERE form plans (see build_edge_unwind).
         let cypher = format!(
-            "MATCH (a:{from_label}), (b:{to_label}) \
-             WHERE a.id = {from_lit} AND b.id = {to_lit} \
+            "MATCH (a:{from_label} {{id: {from_lit}}}) \
+             MATCH (b:{to_label} {{id: {to_lit}}}) \
              CREATE (a)-[:{rel_type}{props_clause}]->(b)"
         );
         self.run(&cypher)?;
@@ -308,8 +310,11 @@ impl GraphStore {
         if ids.is_empty() {
             return Ok(());
         }
+        // source: Kuzu PK-index scan — inline `{id: rid}` seeks the index per
+        // row; the `MATCH (n) WHERE n.id = rid` form scans all N nodes per row
+        // (O(rows·N)) on large graphs. Same fix class as the edge queries.
         let cypher = format!(
-            "UNWIND $rows AS rid MATCH (n:{label}) WHERE n.id = rid SET n.is_resolved = true"
+            "UNWIND $rows AS rid MATCH (n:{label} {{id: rid}}) SET n.is_resolved = true"
         );
         for chunk in ids.chunks(BULK_BATCH_SIZE) {
             let values: Vec<Value> =
@@ -1006,10 +1011,17 @@ fn build_edge_unwind(
             .collect();
         format!(" {{{}}}", assigns.join(", "))
     };
+    // source: Kuzu primary-key index scan. An inline PK predicate
+    // `(n:Label {id: expr})` seeks the PK index (one node); the comma form
+    // `MATCH (a:A), (b:B) WHERE a.id=.. AND b.id=..` plans as a CrossProduct
+    // over ALL A×B nodes filtered by string Equals. On a full-dependency
+    // graph (100k+ nodes) that cross product ran 5h+ at 100% CPU / 10.9G
+    // before this fix (measured 2026-07-04, `sample` of hung pid 41120:
+    // CrossProduct -> Filter selectUnFlatFlat<string_t,Equals> -> memcmp).
     let cypher = format!(
         "UNWIND $rows AS row \
-         MATCH (a:{from_label}), (b:{to_label}) \
-         WHERE a.id = row.from AND b.id = row.to \
+         MATCH (a:{from_label} {{id: row.from}}) \
+         MATCH (b:{to_label} {{id: row.to}}) \
          CREATE (a)-[:{rel_table}{props_clause}]->(b)",
     );
     let mut fields: Vec<(String, LogicalType)> = vec![
