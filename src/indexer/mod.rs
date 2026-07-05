@@ -14,7 +14,8 @@ mod walk;
 mod persist;
 mod light_link;
 
-use walk::{collect_source_files, WalkOptions};
+use walk::{collect_source_files, is_dependency_path, WalkOptions};
+pub use walk::DependencyScope;
 use persist::{insert_ancestor_dirs, insert_dir_file_edge, insert_file_node, index_single_file};
 
 // ---------------------------------------------------------------------------
@@ -127,25 +128,26 @@ impl SymbolBatch {
 /// Convenience wrapper that auto-detects language by file extension.
 #[allow(dead_code)]
 pub fn index_codebase(codebase_path: &Path, graph_path: &Path) -> Result<IndexResult, String> {
-    index_codebase_with_language(codebase_path, graph_path, None, false)
+    index_codebase_with_language(codebase_path, graph_path, None, DependencyScope::None)
 }
 
 /// Indexes source files with an optional language filter.
 ///
-/// When `include_dependencies` is true, build/dependency directories
-/// (node_modules, .venv, vendor, target, …) are indexed as well; only `.git`
-/// is skipped. Default (false) prunes those dirs.
+/// `dependency_scope` controls dependency-directory ingestion (see
+/// `DependencyScope`): `None` prunes build/dependency dirs; `PublicApi`
+/// descends into them but persists only publicly visible symbols from files
+/// under them; `Full` descends and persists everything.
 pub fn index_codebase_with_language(
     codebase_path: &Path,
     graph_path: &Path,
     language_filter: Option<Language>,
-    include_dependencies: bool,
+    dependency_scope: DependencyScope,
 ) -> Result<IndexResult, String> {
     let start = Instant::now();
     let store = GraphStore::open_or_create(graph_path)?;
     store.create_schema()?;
 
-    let walk_opts = WalkOptions { language_filter, include_dependencies };
+    let walk_opts = WalkOptions { language_filter, dependency_scope };
     let source_files = collect_source_files(codebase_path, walk_opts)?;
     // label_by_qn: qualified_name/id -> label, populated as nodes are created.
     // Used to resolve edge tables without probing the database.
@@ -175,13 +177,19 @@ pub fn index_codebase_with_language(
             ));
         }
         insert_ancestor_dirs(
-            &store, codebase_path, file_path, &mut dir_nodes_inserted, &mut label_by_qn,
+            &store, &mut batch, codebase_path, file_path, &mut dir_nodes_inserted, &mut label_by_qn,
         )?;
         insert_file_node(&store, file_path, &rel_str)?;
         label_by_qn.insert(rel_str.to_string(), "File".into());
-        insert_dir_file_edge(&store, &rel)?;
+        insert_dir_file_edge(&mut batch, &rel);
+        // PublicApi tier: filter to public-visibility symbols only for files
+        // under dependency directories. Project files are never restricted.
+        // source: ADR-4253701 §Decision 1.
+        let restrict_to_public_api = dependency_scope == DependencyScope::PublicApi
+            && is_dependency_path(codebase_path, file_path);
         match index_single_file(
             &store, &mut batch, file_path, &rel_str, &mut label_by_qn, &mut seen_node_ids,
+            restrict_to_public_api,
         ) {
             Ok(()) => files_indexed += 1,
             Err(e) => eprintln!("indexer: skipping {}: {e}", rel_str),
@@ -281,20 +289,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    #[test]
-    fn test_all_file_indexing_documents_and_links() {
-        // All-file indexing: EVERY file becomes a File node — code, plain-text
-        // docs, structured data, AND binary documents (.pdf/.docx). Text docs
-        // additionally get light links: Markdown `[..](path)` → References,
-        // JS import/require → Imports.
+    /// Shared fixture for the all-file-indexing tests below: code (AST) + JS
+    /// (light-link) + plain docs + structured data + BINARY docs, indexed
+    /// into a fresh graph. `tag` keeps each test's temp dirs distinct.
+    /// Split out of a single 96-line test (coding-standards §4.2) into two
+    /// focused tests that share this setup — one concern each (file-type
+    /// coverage vs. light-link edges), not a behavior change.
+    fn build_all_file_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, IndexResult) {
         use std::io::Write;
         let root = std::env::temp_dir()
-            .join(format!("indexer_allfile_test_{}", std::process::id()));
+            .join(format!("indexer_allfile_test_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("js")).unwrap();
         std::fs::create_dir_all(root.join("docs")).unwrap();
 
-        // Code (AST) + JS (light-link) + plain docs + structured + BINARY docs.
         std::fs::write(root.join("mod.py"), "def f():\n    return 1\n").unwrap();
         std::fs::write(
             root.join("js/app.js"),
@@ -322,10 +330,17 @@ mod tests {
             .unwrap();
 
         let tmp = std::env::temp_dir()
-            .join(format!("indexer_allfile_graph_{}", std::process::id()));
+            .join(format!("indexer_allfile_graph_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-
         let result = index_codebase(&root, &tmp).unwrap();
+        (root, tmp, result)
+    }
+
+    #[test]
+    fn test_all_file_indexing_covers_every_file_type() {
+        // All-file indexing: EVERY file becomes a File node — code, plain-text
+        // docs, structured data, AND binary documents (.pdf/.docx).
+        let (root, tmp, result) = build_all_file_fixture("counts");
         let store = GraphStore::open_or_create(&tmp).unwrap();
 
         // 9 files total — including the two BINARY documents.
@@ -347,6 +362,18 @@ mod tests {
                 .unwrap();
             assert!(!q.rows.is_empty(), "missing File node for document: {id}");
         }
+
+        assert!(result.node_count >= 9);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_all_file_indexing_light_links_markdown_and_js() {
+        // Text docs get light links: Markdown `[..](path)` → References,
+        // JS import/require → Imports.
+        let (root, tmp, _result) = build_all_file_fixture("links");
+        let store = GraphStore::open_or_create(&tmp).unwrap();
 
         // Markdown light-linking: guide.md references mod.py and arch.md.
         let refs = store
@@ -374,7 +401,6 @@ mod tests {
             imp.rows
         );
 
-        assert!(result.node_count >= 9);
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -420,9 +446,9 @@ mod tests {
     }
 
     #[test]
-    fn test_include_dependencies_flag() {
-        // Proves the include_dependencies flag toggles descent into
-        // build/dependency dirs while always excluding `.git`.
+    fn test_dependency_scope_walk() {
+        // Proves DependencyScope toggles descent into build/dependency dirs
+        // while always excluding `.git`.
         // Fixture: root/app.rs, root/node_modules/dep.rs, root/.git/hook.rs.
         let root = std::env::temp_dir().join(format!(
             "indexer_include_deps_test_{}",
@@ -445,13 +471,67 @@ mod tests {
             v
         };
 
-        // Default: node_modules and .git are both pruned.
+        // Default (DependencyScope::None): node_modules and .git are both pruned.
         assert_eq!(names(WalkOptions::default()), vec!["app.rs"]);
 
-        // include_dependencies=true: node_modules is descended, .git stays out.
-        let with_deps = WalkOptions { language_filter: None, include_dependencies: true };
-        assert_eq!(names(with_deps), vec!["app.rs", "dep.rs"]);
+        // Full: node_modules is descended, .git stays out.
+        let full = WalkOptions { language_filter: None, dependency_scope: DependencyScope::Full };
+        assert_eq!(names(full), vec!["app.rs", "dep.rs"]);
+
+        // PublicApi also descends at the walk level — the visibility filter
+        // is applied at persistence time (see persist::tests), not here.
+        let public_api =
+            WalkOptions { language_filter: None, dependency_scope: DependencyScope::PublicApi };
+        assert_eq!(names(public_api), vec!["app.rs", "dep.rs"]);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_public_api_scope_filters_dependency_symbols_only() {
+        // Fixture: a project file (app.rs, one pub + one private fn) and a
+        // dependency file under node_modules (dep.rs, one pub + one private
+        // fn). PublicApi must drop the PRIVATE fn from dep.rs only — the
+        // project file's private fn stays, and dep.rs's pub fn stays too.
+        // source: ADR-4253701 §Decision 1.
+        let root = std::env::temp_dir().join(format!(
+            "indexer_public_api_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("node_modules")).unwrap();
+        std::fs::write(
+            root.join("app.rs"),
+            "pub fn app_pub() {}\nfn app_private() {}\n",
+        ).unwrap();
+        std::fs::write(
+            root.join("node_modules/dep.rs"),
+            "pub fn dep_pub() {}\nfn dep_private() {}\n",
+        ).unwrap();
+
+        let graph_path = std::env::temp_dir().join(format!(
+            "indexer_public_api_graph_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&graph_path);
+
+        index_codebase_with_language(&root, &graph_path, None, DependencyScope::PublicApi)
+            .expect("index should succeed");
+
+        let store = GraphStore::open_or_create(&graph_path).unwrap();
+        let qr = store
+            .execute_query("MATCH (f:Function) RETURN f.name")
+            .unwrap();
+        let mut names: Vec<String> = qr.rows.into_iter().map(|r| r[0].clone()).collect();
+        names.sort();
+
+        assert_eq!(
+            names,
+            vec!["app_private".to_string(), "app_pub".to_string(), "dep_pub".to_string()],
+            "PublicApi must keep both project functions and only the pub dependency function"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&graph_path);
     }
 }

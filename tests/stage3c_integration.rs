@@ -295,3 +295,58 @@ fn test_cluster_graph_returns_mapping() {
 
     let _ = fs::remove_dir_all(&tmp_root);
 }
+
+#[test]
+fn test_cluster_graph_is_idempotent() {
+    // Regression for bench q12 = 0.000: re-running cluster_graph on an
+    // already-clustered graph aborted with a duplicate primary key on
+    // Community (`community::louvain::1::0`) because prior Community and
+    // Process nodes were never purged. The harness clusters once at setup
+    // and once per q12 label, so the label call always hit the error path
+    // and the ARI scorer compared against an empty mapping.
+    let tmp_root = std::env::temp_dir().join(format!(
+        "stage3c_idempotent_{}", std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp_root);
+
+    let fixture_dir = tmp_root.join("fixture/src");
+    fs::create_dir_all(&fixture_dir).expect("create fixture");
+    fs::write(fixture_dir.join("main.rs"), FIXTURE_MAIN).unwrap();
+    fs::write(fixture_dir.join("service.rs"), FIXTURE_SERVICE).unwrap();
+    fs::write(fixture_dir.join("helpers.rs"), FIXTURE_HELPERS).unwrap();
+
+    let graph_dir = tmp_root.join("graph");
+    indexer::index_codebase(&fixture_dir, &graph_dir).expect("index_codebase");
+    let store = GraphStore::open_or_create(&graph_dir).unwrap();
+    resolver::resolve_graph(&store).expect("resolve_graph");
+
+    let first = clustering::cluster_graph(&store, 1.0)
+        .expect("first cluster_graph");
+    let second = clustering::cluster_graph(&store, 1.0)
+        .expect("second cluster_graph must not hit duplicate primary keys");
+
+    // Same graph, same gamma → same partition size, and the membership
+    // mapping must be complete (one entry per symbol), not doubled or empty.
+    assert_eq!(first.communities, second.communities);
+    let memberships =
+        clustering::collect_cluster_memberships(&store).expect("collect");
+    let mut seen = std::collections::HashSet::new();
+    for m in &memberships.entries {
+        assert!(
+            seen.insert(m.qualified_name.clone()),
+            "symbol {} has more than one MemberOf edge after re-cluster",
+            m.qualified_name
+        );
+    }
+    assert!(!memberships.entries.is_empty());
+
+    // Community node count must equal the reported partition size — no
+    // stale communities from the first pass may survive the purge.
+    let qr = store
+        .execute_query("MATCH (c:Community) RETURN count(c)")
+        .expect("count communities");
+    let count: u64 = qr.rows[0][0].parse().unwrap_or(0);
+    assert_eq!(count, second.communities);
+
+    let _ = fs::remove_dir_all(&tmp_root);
+}
