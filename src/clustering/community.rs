@@ -392,6 +392,20 @@ fn connected_components_within(
 // Persist communities to graph — source: stages/stage-3c.md §4
 // ---------------------------------------------------------------------------
 
+/// Remove Community and Process nodes (and their edges) left by a prior
+/// clustering pass. Both node tables use `id` as primary key, so re-running
+/// `cluster_graph` on an already-clustered graph would otherwise abort with
+/// a duplicate-primary-key error instead of re-clustering (bench q12 scored
+/// 0.000 because the harness clusters once at setup and once per label).
+fn purge_prior_clustering(store: &GraphStore) -> Result<(), String> {
+    for label in ["Community", "Process"] {
+        store
+            .execute_query(&format!("MATCH (n:{label}) DETACH DELETE n"))
+            .map_err(|e| format!("purge {label}: {e}"))?;
+    }
+    Ok(())
+}
+
 fn persist_communities(
     store: &GraphStore,
     adj: &Adjacency,
@@ -451,6 +465,7 @@ pub fn cluster_graph(
     gamma: f64,
 ) -> Result<ClusteringResult, String> {
     let start = Instant::now();
+    purge_prior_clustering(store)?;
     let adj = extract_adjacency(store)?;
 
     let (mut comm, modularity) = louvain(&adj, gamma);
