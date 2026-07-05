@@ -100,6 +100,7 @@ pub(super) fn index_single_file(
     rel_path: &str,
     label_by_qn: &mut HashMap<String, String>,
     seen_node_ids: &mut std::collections::HashSet<String>,
+    restrict_to_public_api: bool,
 ) -> Result<(), String> {
     // Detect language FIRST (cheap, no I/O). Under all-file indexing the
     // walker yields every file, so most non-code files reach here: they are
@@ -132,7 +133,9 @@ pub(super) fn index_single_file(
     if parsed.parse_errors > 0 {
         set_file_parse_errors(store, rel_path, parsed.parse_errors)?;
     }
-    accumulate_parsed_nodes(batch, &parsed.nodes, label_by_qn, seen_node_ids, lang.as_str());
+    accumulate_parsed_nodes(
+        batch, &parsed.nodes, label_by_qn, seen_node_ids, lang.as_str(), restrict_to_public_api,
+    );
     accumulate_parsed_edges(batch, &parsed.refs, label_by_qn);
     Ok(())
 }
@@ -159,6 +162,7 @@ fn accumulate_parsed_nodes(
     label_by_qn: &mut HashMap<String, String>,
     seen_node_ids: &mut std::collections::HashSet<String>,
     language: &str,
+    restrict_to_public_api: bool,
 ) {
     // Accumulate into the cross-file batch (flushed in large bulk calls).
     // source: Fermi audit — per-row CREATE was ~100x slower than batched;
@@ -169,7 +173,19 @@ fn accumulate_parsed_nodes(
     // there would abort the whole bulk flush (LadybugDB rejects duplicate
     // primary keys atomically), taking down every file in the batch, not one.
     // The id set is global to the run, so cross-file collisions are caught too.
+    //
+    // Enum qualified-names dropped by the PublicApi filter within THIS file's
+    // node list. A Variant's own `visibility` is always "" — parsers never
+    // declare it independently (source: src/parser/rust/extract/g2.rs:30) —
+    // so a Variant is kept iff its parent Enum was kept. Scoped per-file
+    // because `nodes` is one file's ExtractedNode list and parsers always
+    // emit an Enum before its Variants within it.
+    let mut dropped_enums: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
     for node in nodes {
+        if restrict_to_public_api && !keep_under_public_api(node, language, &mut dropped_enums) {
+            continue;
+        }
         if !seen_node_ids.insert(node.qualified_name.clone()) {
             eprintln!(
                 "indexer: dropped duplicate-id {} node '{}'",
@@ -180,6 +196,74 @@ fn accumulate_parsed_nodes(
         label_by_qn.insert(node.qualified_name.clone(), node.label.clone());
         let props = build_node_properties(node, language);
         batch.push_node(&node.label, props);
+    }
+}
+
+/// PublicApi-tier gate: true iff `node` belongs on the dependency's public
+/// API surface. Only applied to files under dependency directories — see
+/// `restrict_to_public_api` at the call site.
+/// source: ADR-4253701 §Decision 1 ("public_api": only visibility==public
+/// symbols persisted from dependency files).
+fn keep_under_public_api<'a>(
+    node: &'a parser::ExtractedNode,
+    language: &str,
+    dropped_enums: &mut std::collections::HashSet<&'a str>,
+) -> bool {
+    if node.label == "Variant" {
+        let Some((enum_qn, _)) = node.qualified_name.rsplit_once("::") else {
+            return true;
+        };
+        return !dropped_enums.contains(enum_qn);
+    }
+    if !is_visibility_declaring_label(&node.label) {
+        // Import, CallSite, Module, File, Directory: no declared-visibility
+        // contract to filter on. Kept as-is — they are structural/navigation
+        // nodes, not part of the "public API surface" the tier scopes.
+        return true;
+    }
+    if is_public_symbol(language, &node.visibility) {
+        true
+    } else {
+        if node.label == "Enum" {
+            dropped_enums.insert(node.qualified_name.as_str());
+        }
+        false
+    }
+}
+
+/// True for node labels whose `visibility` field is genuinely populated by
+/// every parser via an explicit visibility/export check. `Variant` is
+/// excluded — see `keep_under_public_api`.
+/// source: src/parser/rust/extract/g2.rs,g3.rs (Function/Method/Struct/Enum/
+/// Trait/Field/Constant/TypeAlias all call extract_visibility()) and
+/// src/parser/typescript/extract/g1.rs:47,79 (export-keyword check).
+fn is_visibility_declaring_label(label: &str) -> bool {
+    matches!(
+        label,
+        "Function" | "Method" | "Struct" | "Enum" | "Trait" | "Field" | "Constant" | "TypeAlias"
+    )
+}
+
+/// True when `visibility` denotes a publicly visible symbol for `language`.
+///
+/// Python's parser convention has the OPPOSITE polarity of every other
+/// supported language: `python_visibility` (src/parser/python/mod.rs:105-116,
+/// tested at lines 205-211) emits "" for a PUBLIC name and "private" for an
+/// underscore-prefixed one. Rust/TypeScript/JVM/Go/Swift emit "" when no
+/// visibility keyword is present (module-private by default) and a keyword
+/// token ("pub"/"export"/"public"/"open") when the symbol is public.
+/// Deliberately NOT reusing clustering::process::PUBLIC_VISIBILITY_VALUES:
+/// that list's "public" entry for Python never matches python_visibility's
+/// actual output ("" or "private"), which would silently exclude every
+/// Python symbol from this filter — a Bug-5-class inconsistency this
+/// function avoids rather than propagates.
+/// source: src/parser/{rust,typescript}/mod.rs visibility tests
+/// (rust/mod.rs:190 "pub", typescript/mod.rs:217 "pub"); python/mod.rs:205-211.
+fn is_public_symbol(language: &str, visibility: &str) -> bool {
+    if language == "python" {
+        visibility != "private"
+    } else {
+        matches!(visibility, "pub" | "export" | "public" | "open")
     }
 }
 

@@ -165,7 +165,9 @@ fn fetch_counts(store: &GraphStore) -> HashMap<String, ActualCounts> {
 fn index_target(target_root: &Path, graph_path: &Path) -> Result<(), String> {
     // Mirror the target directory tree into a tempdir before indexing so
     // the file_id (relative_path-from-root) matches the JSON's rel_path.
-    indexer::index_codebase_with_language(target_root, graph_path, Some(Language::Python), false)?;
+    indexer::index_codebase_with_language(
+        target_root, graph_path, Some(Language::Python), indexer::DependencyScope::None,
+    )?;
     let store = GraphStore::open_or_create(graph_path)?;
     let _ = resolver::resolve_graph(&store);
     Ok(())

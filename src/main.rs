@@ -460,6 +460,29 @@ fn parse_language_filter(args: &Map<String, Value>) -> Result<Option<parser::Lan
     }
 }
 
+/// Resolves the tri-tier `dependency_scope` contract, honoring the deprecated
+/// `include_dependencies: bool` alias (`true` -> Full, `false` -> None). If
+/// both fields are present, `dependency_scope` wins. Emits a deprecation
+/// warning to stderr whenever the alias is present at all.
+/// source: ADR-4253701 §Decision 1.
+fn parse_dependency_scope(args: &Map<String, Value>) -> Result<indexer::DependencyScope, String> {
+    let legacy_include_deps = args.get("include_dependencies").and_then(|v| v.as_bool());
+    if legacy_include_deps.is_some() {
+        eprintln!(
+            "deprecation warning: 'include_dependencies' is deprecated, use 'dependency_scope' \
+             (\"none\" | \"public_api\" | \"full\") instead"
+        );
+    }
+    match args.get("dependency_scope").and_then(|v| v.as_str()) {
+        Some(s) => indexer::DependencyScope::from_str_opt(s)
+            .ok_or_else(|| format!("unsupported dependency_scope: {s}")),
+        None => Ok(match legacy_include_deps {
+            Some(true) => indexer::DependencyScope::Full,
+            Some(false) | None => indexer::DependencyScope::None,
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Stage 1 — atomic file writes (spec §5.2.3, POSIX rename(2))
 // ---------------------------------------------------------------------------
@@ -1814,8 +1837,7 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     let output_str = args.get("output_dir").and_then(|v| v.as_str())
         .ok_or("missing required field 'output_dir'")?;
     let lang_filter = parse_language_filter(args)?;
-    let include_dependencies = args.get("include_dependencies")
-        .and_then(|v| v.as_bool()).unwrap_or(false);
+    let dependency_scope = parse_dependency_scope(args)?;
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -1836,7 +1858,7 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     }
 
     let result = indexer::index_codebase_with_language(
-        &codebase, &graph_dir, lang_filter, include_dependencies)?;
+        &codebase, &graph_dir, lang_filter, dependency_scope)?;
     Ok(json!({
         "stage": 3,
         "status": "ok",
@@ -3087,8 +3109,7 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
     let gamma = args.get("resolution_param").and_then(|v| v.as_f64()).unwrap_or(1.0);
     let enable_lsp = args.get("lsp").and_then(|v| v.as_bool()).unwrap_or(false);
     let lang_filter = parse_language_filter(args)?;
-    let include_dependencies = args.get("include_dependencies")
-        .and_then(|v| v.as_bool()).unwrap_or(false);
+    let dependency_scope = parse_dependency_scope(args)?;
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -3109,7 +3130,7 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
 
     // Phase 1: index
     let index_result = indexer::index_codebase_with_language(
-        &codebase, &graph_dir, lang_filter, include_dependencies)?;
+        &codebase, &graph_dir, lang_filter, dependency_scope)?;
 
     // Phase 2: resolve
     let store = graph_store::GraphStore::open_or_create(&index_result.graph_path)?;

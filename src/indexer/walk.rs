@@ -2,6 +2,50 @@ use crate::parser::Language;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
+// DependencyScope — tri-tier dependency-ingestion contract
+// ---------------------------------------------------------------------------
+
+/// Tri-tier control over dependency-directory ingestion for
+/// `index_codebase` / `analyze_codebase`. Replaces the old binary
+/// `include_dependencies: bool` flag, which could not express the
+/// "public API surface only" tier.
+/// source: ADR-4253701 (analyze_codebase — contrat tri-tier DependencyScope).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DependencyScope {
+    /// Prune build/dependency directories entirely — the pre-existing
+    /// `include_dependencies=false` behavior.
+    #[default]
+    None,
+    /// Descend into dependency directories, but persist only publicly
+    /// visible symbols (`visibility == public`, per-language convention)
+    /// from files under them. Project files are unaffected: they are always
+    /// indexed in full regardless of this tier.
+    PublicApi,
+    /// Descend into dependency directories and persist everything — the
+    /// pre-existing `include_dependencies=true` behavior.
+    Full,
+}
+
+impl DependencyScope {
+    /// Parses the tri-tier string values accepted by the MCP contract.
+    /// Returns `None` (the `Option`, not the variant) on an unrecognized value.
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s {
+            "none" => Some(Self::None),
+            "public_api" => Some(Self::PublicApi),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+
+    /// True for every tier that descends into dependency directories at all
+    /// (`PublicApi` and `Full`); only `None` prunes them at the walk level.
+    pub fn descends_into_dependencies(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Directory walking
 // ---------------------------------------------------------------------------
 
@@ -13,18 +57,19 @@ use std::path::{Path, PathBuf};
 pub(super) struct WalkOptions {
     /// When `Some(L)`, only collect files of language `L`; `None` collects all.
     pub language_filter: Option<Language>,
-    /// When true, descend into build/dependency directories (node_modules,
-    /// .venv, vendor, target, …) that are pruned by default. Only `.git` is
-    /// still skipped. source: checkpoint 2026-07-04 — full-dependency indexing
-    /// for the Cortex brain; every vendored file becomes a navigable node.
-    pub include_dependencies: bool,
+    /// Tri-tier dependency-ingestion scope. `None` prunes build/dependency
+    /// directories (node_modules, .venv, vendor, target, …); `PublicApi` and
+    /// `Full` both descend into them (only `.git` is still skipped) — they
+    /// differ at the persistence filter (`indexer::persist`), not the walk.
+    pub dependency_scope: DependencyScope,
 }
 
 /// Recursively collects source files, skipping hidden dirs, target/, node_modules/.
 /// When `opts.language_filter` is Some, only collects files for that language.
 /// When None, collects all files with recognized extensions.
-/// When `opts.include_dependencies` is true, build/dependency dirs are also
-/// descended into (only `.git` is skipped).
+/// When `opts.dependency_scope` descends into dependencies (`PublicApi` or
+/// `Full`), build/dependency dirs are also descended into (only `.git` is
+/// skipped).
 ///
 /// Symlinks are intentionally NOT followed — source: security hardening (C4).
 /// This prevents a symlink inside the codebase from causing `read_dir` to
@@ -65,7 +110,7 @@ fn walk_dir_recursive(
         let path = entry.path();
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if should_skip(&name_str, opts.include_dependencies) {
+        if should_skip(&name_str, opts.dependency_scope) {
             continue;
         }
         // Use symlink_metadata (lstat) instead of metadata (stat) so symlinks
@@ -130,15 +175,16 @@ fn walk_dir_recursive(
 /// MB of *.dex / *.aar / *.jar files that the indexer rejects per-file
 /// after walking into them. Filtering at the directory level avoids
 /// the descent entirely.
-fn should_skip(name: &str, include_dependencies: bool) -> bool {
+fn should_skip(name: &str, dependency_scope: DependencyScope) -> bool {
     // `.git` is never source — its object store is large and binary — so it is
     // skipped even in full-dependency mode. source: checkpoint 2026-07-04.
     if name == ".git" {
         return true;
     }
-    // Full-dependency mode: descend into vendored/build/cache dirs so the
-    // graph covers node_modules, .venv, vendor, target, etc.
-    if include_dependencies {
+    // PublicApi/Full both descend into vendored/build/cache dirs so the graph
+    // covers node_modules, .venv, vendor, target, etc. They differ at the
+    // persistence filter (indexer::persist), not here.
+    if dependency_scope.descends_into_dependencies() {
         return false;
     }
     name.starts_with('.')
@@ -176,4 +222,21 @@ fn should_skip(name: &str, include_dependencies: bool) -> bool {
         || name == ".nyc_output"
     // Other VCS dirs are filtered by ``starts_with('.')``; ``.git`` itself is
     // handled explicitly above so it is excluded in full-dependency mode too.
+}
+
+/// True when `file_path` lives under a directory that `should_skip` would
+/// prune in `DependencyScope::None` mode — i.e. it is a vendored/build
+/// dependency file, not a project file. Pure function of the path; reuses
+/// `should_skip` as the single source of truth for the dependency-directory
+/// name list instead of duplicating it.
+///
+/// Used by the indexer to scope the `PublicApi` visibility filter to
+/// dependency-tree symbols only: project files stay fully indexed regardless
+/// of `dependency_scope`.
+pub(super) fn is_dependency_path(root: &Path, file_path: &Path) -> bool {
+    let rel = file_path.strip_prefix(root).unwrap_or(file_path);
+    rel.parent()
+        .into_iter()
+        .flat_map(|p| p.components())
+        .any(|c| should_skip(&c.as_os_str().to_string_lossy(), DependencyScope::None))
 }

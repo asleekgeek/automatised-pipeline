@@ -14,7 +14,8 @@ mod walk;
 mod persist;
 mod light_link;
 
-use walk::{collect_source_files, WalkOptions};
+use walk::{collect_source_files, is_dependency_path, WalkOptions};
+pub use walk::DependencyScope;
 use persist::{insert_ancestor_dirs, insert_dir_file_edge, insert_file_node, index_single_file};
 
 // ---------------------------------------------------------------------------
@@ -127,25 +128,26 @@ impl SymbolBatch {
 /// Convenience wrapper that auto-detects language by file extension.
 #[allow(dead_code)]
 pub fn index_codebase(codebase_path: &Path, graph_path: &Path) -> Result<IndexResult, String> {
-    index_codebase_with_language(codebase_path, graph_path, None, false)
+    index_codebase_with_language(codebase_path, graph_path, None, DependencyScope::None)
 }
 
 /// Indexes source files with an optional language filter.
 ///
-/// When `include_dependencies` is true, build/dependency directories
-/// (node_modules, .venv, vendor, target, …) are indexed as well; only `.git`
-/// is skipped. Default (false) prunes those dirs.
+/// `dependency_scope` controls dependency-directory ingestion (see
+/// `DependencyScope`): `None` prunes build/dependency dirs; `PublicApi`
+/// descends into them but persists only publicly visible symbols from files
+/// under them; `Full` descends and persists everything.
 pub fn index_codebase_with_language(
     codebase_path: &Path,
     graph_path: &Path,
     language_filter: Option<Language>,
-    include_dependencies: bool,
+    dependency_scope: DependencyScope,
 ) -> Result<IndexResult, String> {
     let start = Instant::now();
     let store = GraphStore::open_or_create(graph_path)?;
     store.create_schema()?;
 
-    let walk_opts = WalkOptions { language_filter, include_dependencies };
+    let walk_opts = WalkOptions { language_filter, dependency_scope };
     let source_files = collect_source_files(codebase_path, walk_opts)?;
     // label_by_qn: qualified_name/id -> label, populated as nodes are created.
     // Used to resolve edge tables without probing the database.
@@ -180,8 +182,14 @@ pub fn index_codebase_with_language(
         insert_file_node(&store, file_path, &rel_str)?;
         label_by_qn.insert(rel_str.to_string(), "File".into());
         insert_dir_file_edge(&store, &rel)?;
+        // PublicApi tier: filter to public-visibility symbols only for files
+        // under dependency directories. Project files are never restricted.
+        // source: ADR-4253701 §Decision 1.
+        let restrict_to_public_api = dependency_scope == DependencyScope::PublicApi
+            && is_dependency_path(codebase_path, file_path);
         match index_single_file(
             &store, &mut batch, file_path, &rel_str, &mut label_by_qn, &mut seen_node_ids,
+            restrict_to_public_api,
         ) {
             Ok(()) => files_indexed += 1,
             Err(e) => eprintln!("indexer: skipping {}: {e}", rel_str),
@@ -420,9 +428,9 @@ mod tests {
     }
 
     #[test]
-    fn test_include_dependencies_flag() {
-        // Proves the include_dependencies flag toggles descent into
-        // build/dependency dirs while always excluding `.git`.
+    fn test_dependency_scope_walk() {
+        // Proves DependencyScope toggles descent into build/dependency dirs
+        // while always excluding `.git`.
         // Fixture: root/app.rs, root/node_modules/dep.rs, root/.git/hook.rs.
         let root = std::env::temp_dir().join(format!(
             "indexer_include_deps_test_{}",
@@ -445,13 +453,67 @@ mod tests {
             v
         };
 
-        // Default: node_modules and .git are both pruned.
+        // Default (DependencyScope::None): node_modules and .git are both pruned.
         assert_eq!(names(WalkOptions::default()), vec!["app.rs"]);
 
-        // include_dependencies=true: node_modules is descended, .git stays out.
-        let with_deps = WalkOptions { language_filter: None, include_dependencies: true };
-        assert_eq!(names(with_deps), vec!["app.rs", "dep.rs"]);
+        // Full: node_modules is descended, .git stays out.
+        let full = WalkOptions { language_filter: None, dependency_scope: DependencyScope::Full };
+        assert_eq!(names(full), vec!["app.rs", "dep.rs"]);
+
+        // PublicApi also descends at the walk level — the visibility filter
+        // is applied at persistence time (see persist::tests), not here.
+        let public_api =
+            WalkOptions { language_filter: None, dependency_scope: DependencyScope::PublicApi };
+        assert_eq!(names(public_api), vec!["app.rs", "dep.rs"]);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_public_api_scope_filters_dependency_symbols_only() {
+        // Fixture: a project file (app.rs, one pub + one private fn) and a
+        // dependency file under node_modules (dep.rs, one pub + one private
+        // fn). PublicApi must drop the PRIVATE fn from dep.rs only — the
+        // project file's private fn stays, and dep.rs's pub fn stays too.
+        // source: ADR-4253701 §Decision 1.
+        let root = std::env::temp_dir().join(format!(
+            "indexer_public_api_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("node_modules")).unwrap();
+        std::fs::write(
+            root.join("app.rs"),
+            "pub fn app_pub() {}\nfn app_private() {}\n",
+        ).unwrap();
+        std::fs::write(
+            root.join("node_modules/dep.rs"),
+            "pub fn dep_pub() {}\nfn dep_private() {}\n",
+        ).unwrap();
+
+        let graph_path = std::env::temp_dir().join(format!(
+            "indexer_public_api_graph_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&graph_path);
+
+        index_codebase_with_language(&root, &graph_path, None, DependencyScope::PublicApi)
+            .expect("index should succeed");
+
+        let store = GraphStore::open_or_create(&graph_path).unwrap();
+        let qr = store
+            .execute_query("MATCH (f:Function) RETURN f.name")
+            .unwrap();
+        let mut names: Vec<String> = qr.rows.into_iter().map(|r| r[0].clone()).collect();
+        names.sort();
+
+        assert_eq!(
+            names,
+            vec!["app_private".to_string(), "app_pub".to_string(), "dep_pub".to_string()],
+            "PublicApi must keep both project functions and only the pub dependency function"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&graph_path);
     }
 }

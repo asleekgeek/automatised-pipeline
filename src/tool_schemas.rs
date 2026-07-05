@@ -239,10 +239,16 @@ fn index_codebase_schema() -> Value {
                     "type": "string",
                     "description": "Absolute directory where the graph will be stored (at <output_dir>/graph/)."
                 },
+                "dependency_scope": {
+                    "type": "string",
+                    "enum": ["none", "public_api", "full"],
+                    "default": "none",
+                    "description": "Tri-tier control over dependency-directory ingestion. 'none': prune build/dependency dirs (node_modules, .venv, vendor, target, dist, …); only .git is always skipped. 'public_api': descend into those dirs but persist only publicly-visible symbols from files under them — project files are still indexed in full. 'full': descend and persist everything (equivalent to the deprecated include_dependencies=true). Supersedes 'include_dependencies'; if both are given, dependency_scope wins."
+                },
                 "include_dependencies": {
                     "type": "boolean",
                     "default": false,
-                    "description": "When true, index build/dependency directories too (node_modules, .venv, vendor, target, dist, …); only .git is skipped. Default false prunes those dirs. Use for full-dependency graphs — expect a much larger node count."
+                    "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
                 }
             }
         }
@@ -547,10 +553,16 @@ fn analyze_codebase_schema() -> Value {
                     "default": false,
                     "description": "Enable LSP-enhanced resolution after the static resolve pass. Requires the language server to be installed. Default: false."
                 },
+                "dependency_scope": {
+                    "type": "string",
+                    "enum": ["none", "public_api", "full"],
+                    "default": "none",
+                    "description": "Tri-tier control over dependency-directory ingestion. 'none': prune build/dependency dirs (node_modules, .venv, vendor, target, dist, …); only .git is always skipped. 'public_api': descend into those dirs but persist only publicly-visible symbols from files under them — project files are still indexed in full. 'full': descend and persist everything (equivalent to the deprecated include_dependencies=true). Supersedes 'include_dependencies'; if both are given, dependency_scope wins."
+                },
                 "include_dependencies": {
                     "type": "boolean",
                     "default": false,
-                    "description": "When true, index build/dependency directories too (node_modules, .venv, vendor, target, dist, …); only .git is skipped. Default false prunes those dirs. Use for full-dependency graphs — expect a much larger node count."
+                    "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
                 }
             }
         }
