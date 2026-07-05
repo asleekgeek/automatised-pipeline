@@ -120,6 +120,8 @@ fn edge_weight(rel_name: &str) -> f64 {
     } else if rel_name.starts_with("HasMethod_")
         || rel_name.starts_with("HasField_")
         || rel_name.starts_with("HasVariant_")
+        || rel_name.starts_with("Defines_")
+        || rel_name.starts_with("Contains_")
     {
         5.0
     } else {
@@ -140,6 +142,20 @@ struct Adjacency {
     total_weight: f64,
 }
 
+/// Node labels fed to Louvain: the clusterable symbols plus File nodes.
+/// File nodes act as containment carriers — Defines_File_* edges bind
+/// same-file symbols, which is the dominant module-affinity signal (measured
+/// on the rust-self bench graph: ~1129 Defines_File_* edges vs ~1559 Calls;
+/// without them the adjacency has no file/module co-membership signal at all
+/// and the partition cannot recover the directory-based ground truth).
+/// Directory nodes stay excluded (stage-3c.md §2.4). File memberships are
+/// NOT persisted — see `persist_communities`.
+const CLUSTER_NODE_LABELS: &[&str] = &[
+    "File",
+    "Function", "Method", "Struct", "Enum", "Trait",
+    "Constant", "TypeAlias", "Module",
+];
+
 fn extract_adjacency(store: &GraphStore) -> Result<Adjacency, String> {
     let (node_ids, node_labels, id_to_idx) = collect_symbol_nodes(store)?;
     let n = node_ids.len();
@@ -153,7 +169,7 @@ fn collect_symbol_nodes(
     let mut ids = Vec::new();
     let mut labels = Vec::new();
     let mut map: HashMap<String, usize> = HashMap::new();
-    for label in super::SYMBOL_LABELS {
+    for label in CLUSTER_NODE_LABELS {
         let cypher = format!("MATCH (n:{label}) RETURN n.id");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
@@ -198,6 +214,21 @@ fn collect_weighted_edges(
 
 fn edge_rel_tables() -> &'static [(&'static str, &'static str, &'static str)] {
     &[
+        ("Defines_File_Function", "File", "Function"),
+        ("Defines_File_Struct", "File", "Struct"),
+        ("Defines_File_Enum", "File", "Enum"),
+        ("Defines_File_Trait", "File", "Trait"),
+        ("Defines_File_Constant", "File", "Constant"),
+        ("Defines_File_TypeAlias", "File", "TypeAlias"),
+        ("Defines_Module_Function", "Module", "Function"),
+        ("Defines_Module_Struct", "Module", "Struct"),
+        ("Defines_Module_Enum", "Module", "Enum"),
+        ("Defines_Module_Trait", "Module", "Trait"),
+        ("Defines_Module_Constant", "Module", "Constant"),
+        ("Defines_Module_TypeAlias", "Module", "TypeAlias"),
+        ("Contains_File_Module", "File", "Module"),
+        ("Imports_File_File", "File", "File"),
+        ("Imports_File_Module", "File", "Module"),
         ("Calls_Function_Function", "Function", "Function"),
         ("Calls_Function_Method", "Function", "Method"),
         ("Calls_Method_Function", "Method", "Function"),
@@ -229,6 +260,13 @@ fn edge_rel_tables() -> &'static [(&'static str, &'static str, &'static str)] {
 // source: "Fast unfolding of communities in large networks"
 // ---------------------------------------------------------------------------
 
+/// Blondel et al. 2008, section II: "the two phases are repeated
+/// iteratively". Phase 1 (`one_level`) moves individual nodes; phase 2
+/// (`aggregate_graph`) condenses each community into a super-node so whole
+/// communities can merge on the next pass. Iterating until a pass produces
+/// no merge is what lets the partition reach coarse module granularity —
+/// phase 1 alone leaves the graph over-fragmented (measured on the rust-self
+/// bench corpus: 1262 communities for 2567 symbols without phase 2).
 fn louvain(adj: &Adjacency, gamma: f64) -> (Vec<usize>, f64) {
     let n = adj.node_ids.len();
     if n == 0 {
@@ -238,10 +276,41 @@ fn louvain(adj: &Adjacency, gamma: f64) -> (Vec<usize>, f64) {
     if m == 0.0 {
         return ((0..n).collect(), 0.0);
     }
+
+    // node_to_comm[i] = community of ORIGINAL node i, refined level by level.
+    let mut node_to_comm: Vec<usize> = (0..n).collect();
+    let mut level_neighbors: Vec<Vec<(usize, f64)>> = adj.neighbors.clone();
+
+    loop {
+        let level_n = level_neighbors.len();
+        let comm = one_level(&level_neighbors, m, gamma);
+        let num_comms = comm.iter().copied().max().map_or(0, |c| c + 1);
+        for c in node_to_comm.iter_mut() {
+            *c = comm[*c];
+        }
+        if num_comms == level_n {
+            break; // no merge at this level — partition is stable
+        }
+        level_neighbors = aggregate_graph(&level_neighbors, &comm, num_comms);
+    }
+
+    let k: Vec<f64> = adj.neighbors.iter()
+        .map(|nbrs| nbrs.iter().map(|(_, w)| w).sum())
+        .collect();
+    let q = compute_modularity(&adj.neighbors, &node_to_comm, &k, m);
+    (node_to_comm, q)
+}
+
+/// Phase 1 of Blondel 2008: greedy local node moves until no move improves
+/// modularity. `m` is the total edge weight of the ORIGINAL graph — it is
+/// invariant under aggregation and must not be recomputed per level.
+fn one_level(neighbors: &[Vec<(usize, f64)>], m: f64, gamma: f64) -> Vec<usize> {
+    let n = neighbors.len();
     let two_m = 2.0 * m; // Newman's 2m: sum of degrees = 2 * sum of edge weights
 
-    // k[i] = sum of neighbor weights for node i (undirected degree)
-    let k: Vec<f64> = adj.neighbors.iter()
+    // k[i] = sum of incident weights (self-loops stored with their full
+    // degree contribution by aggregate_graph, so a plain sum is correct).
+    let k: Vec<f64> = neighbors.iter()
         .map(|nbrs| nbrs.iter().map(|(_, w)| w).sum())
         .collect();
 
@@ -256,9 +325,12 @@ fn louvain(adj: &Adjacency, gamma: f64) -> (Vec<usize>, f64) {
             let old_c = comm[i];
             let ki = k[i];
 
-            // Weights from i to each neighboring community
+            // Weights from i to each neighboring community. Self-loops are
+            // skipped: they stay internal wherever i moves, so counting them
+            // in ki_in[old_c] would bias every node toward never moving.
             let mut ki_in: HashMap<usize, f64> = HashMap::new();
-            for &(nbr, w) in &adj.neighbors[i] {
+            for &(nbr, w) in &neighbors[i] {
+                if nbr == i { continue; }
                 *ki_in.entry(comm[nbr]).or_insert(0.0) += w;
             }
 
@@ -271,7 +343,13 @@ fn louvain(adj: &Adjacency, gamma: f64) -> (Vec<usize>, f64) {
             let mut best_c = old_c;
             let mut best_gain = ki_in_old - gamma * sigma_tot[old_c] * ki / two_m;
 
-            for (&c, &ki_in_c) in &ki_in {
+            // Sorted candidate order: HashMap iteration is nondeterministic,
+            // and a tie on gain must resolve identically across runs (Q12 ARI
+            // reproducibility requirement, d-review.md §6).
+            let mut candidates: Vec<(usize, f64)> =
+                ki_in.iter().map(|(&c, &w)| (c, w)).collect();
+            candidates.sort_unstable_by_key(|&(c, _)| c);
+            for &(c, ki_in_c) in &candidates {
                 let gain = ki_in_c - gamma * sigma_tot[c] * ki / two_m;
                 if gain > best_gain {
                     best_gain = gain;
@@ -286,9 +364,35 @@ fn louvain(adj: &Adjacency, gamma: f64) -> (Vec<usize>, f64) {
         if !improved { break; }
     }
 
-    let comm = renumber_communities(&comm);
-    let q = compute_modularity(&adj.neighbors, &comm, &k, m);
-    (comm, q)
+    renumber_communities(&comm)
+}
+
+/// Phase 2 of Blondel 2008: build the condensed graph whose nodes are the
+/// communities of the previous level. Cross-community weights sum once per
+/// direction (the input stores each undirected edge twice), so the result
+/// keeps the same both-directions convention. Intra-community weight lands
+/// on a single self-loop entry carrying the full degree contribution
+/// (2 × internal weight), preserving node degrees and total weight m.
+fn aggregate_graph(
+    neighbors: &[Vec<(usize, f64)>],
+    comm: &[usize],
+    num_comms: usize,
+) -> Vec<Vec<(usize, f64)>> {
+    let mut weights: Vec<HashMap<usize, f64>> = vec![HashMap::new(); num_comms];
+    for (i, nbrs) in neighbors.iter().enumerate() {
+        let ci = comm[i];
+        for &(j, w) in nbrs {
+            *weights[ci].entry(comm[j]).or_insert(0.0) += w;
+        }
+    }
+    weights
+        .into_iter()
+        .map(|w| {
+            let mut entries: Vec<(usize, f64)> = w.into_iter().collect();
+            entries.sort_unstable_by_key(|&(c, _)| c); // determinism
+            entries
+        })
+        .collect()
 }
 
 fn renumber_communities(comm: &[usize]) -> Vec<usize> {
@@ -440,12 +544,18 @@ fn persist_communities(
         .collect();
     store.bulk_insert_nodes("Community", &community_rows)?;
 
-    // Create MemberOf edges grouped per rel table.
+    // Create MemberOf edges grouped per rel table. Only labels with a
+    // MemberOf_<Label>_Community table are persisted — File nodes take part
+    // in the Louvain adjacency as containment carriers but have no
+    // membership table (and q12 scoring keys on symbol qualified names).
     let mut by_rel: HashMap<String, Vec<(String, String, Vec<(String, String)>)>> =
         HashMap::new();
     for (idx, &c) in comm.iter().enumerate() {
         let node_id = &adj.node_ids[idx];
         let label = &adj.node_labels[idx];
+        if !MEMBEROF_LABELS.contains(&label.as_str()) {
+            continue;
+        }
         let cid = format!("community::louvain::{gamma}::{c}");
         let rel = format!("MemberOf_{label}_Community");
         by_rel.entry(rel).or_default().push((node_id.clone(), cid, Vec::new()));

@@ -11,9 +11,13 @@ use ai_architect_mcp::security_gates;
 use std::fs;
 use std::path::PathBuf;
 
-// Fixture: one auth-pattern fn (`verify_token`) and one bystander that calls
-// it. Louvain should put them in the same community because of the direct
-// Calls edge. Also includes a top-level pub fn for the S3 test.
+// Fixture: one auth-pattern fn (`verify_token`) and a caller — Louvain puts
+// them in the same community (direct Calls edge + same-file containment).
+// The S1 bystander (`untested_helper`) lives in a SEPARATE file with no edge
+// to main.rs: since stage-3c.md §2.4 includes File containment carriers,
+// same-file symbols share a community by design, so "not in the auth
+// community" requires a different file. Also includes a top-level pub fn
+// for the S3 test.
 const FIXTURE_MAIN: &str = r#"
 fn main() {
     api_v1();
@@ -27,7 +31,9 @@ pub fn api_v1() -> String {
 fn verify_token(token: &str) -> &str {
     token
 }
+"#;
 
+const FIXTURE_HELPER: &str = r#"
 pub fn untested_helper() -> u32 {
     42
 }
@@ -40,6 +46,7 @@ fn tmp(tag: &str) -> PathBuf {
 fn build_fixture_graph(fixture_dir: &std::path::Path, graph_dir: &std::path::Path) -> GraphStore {
     fs::create_dir_all(fixture_dir.join("src")).unwrap();
     fs::write(fixture_dir.join("src/main.rs"), FIXTURE_MAIN).unwrap();
+    fs::write(fixture_dir.join("src/helper.rs"), FIXTURE_HELPER).unwrap();
     let _ = indexer::index_codebase(&fixture_dir.join("src"), graph_dir).expect("index");
     let store = GraphStore::open_or_create(graph_dir).unwrap();
     let _ = resolver::resolve_graph(&store);
@@ -79,7 +86,7 @@ fn test_s2_info_skip_mode() {
     let graph_dir = root.join("graph");
     let store = build_fixture_graph(&fixture_dir, &graph_dir);
 
-    let changed = vec!["main.rs::untested_helper".to_string()];
+    let changed = vec!["helper.rs::untested_helper".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
     let s2: Vec<_> = report.flags.iter()
         .filter(|f| f.gate == "unsafe_symbol")
@@ -118,7 +125,7 @@ fn test_s5_test_coverage_gap() {
     let store = build_fixture_graph(&fixture_dir, &graph_dir);
 
     // No test entry points exist in the fixture — every symbol should trip S5.
-    let changed = vec!["main.rs::untested_helper".to_string()];
+    let changed = vec!["helper.rs::untested_helper".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
     let s5: Vec<_> = report.flags.iter()
         .filter(|f| f.gate == "test_coverage_gap")
@@ -138,7 +145,7 @@ fn test_gates_passed_reflects_severity() {
 
     // `untested_helper` is NOT in the verify_token community, so S1 should
     // not fire on it. Warnings-only must PASS the gate.
-    let changed = vec!["main.rs::untested_helper".to_string()];
+    let changed = vec!["helper.rs::untested_helper".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
     assert_eq!(report.summary.critical_count, 0,
         "expected no critical flags for bystander symbol; got {:?}",
