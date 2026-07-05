@@ -142,7 +142,7 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
         resolve_calls(store, &idx, &file_imports, &mut buf)?;
     let (impl_resolved, impl_total, impl_unresolved) =
         resolve_implements(store, &idx, &mut buf)?;
-    let (ext_resolved, ext_total, ext_unresolved) = resolve_extends(store, &idx)?;
+    let (ext_resolved, ext_total, ext_unresolved) = resolve_extends(store, &idx, &mut buf)?;
     let (uses_resolved, uses_total, uses_unresolved) =
         resolve_uses(store, &idx, &file_imports, &mut buf)?;
 
@@ -737,12 +737,12 @@ fn resolve_impl_trait_blocks(
 /// function does the deferred name→QN resolution that the indexer can't
 /// perform (the indexer routes by labels via label_by_qn, but base names
 /// aren't QNs yet at insert time).
-fn resolve_extends(store: &GraphStore, idx: &SymbolIndex) -> PhaseResult {
+fn resolve_extends(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) -> PhaseResult {
     let mut resolved = 0u64;
     let mut total = 0u64;
     let mut unresolved = Vec::new();
 
-    for (label, table_self) in &[
+    for &(label, table_self) in &[
         ("Struct", "Extends_Struct_Struct"),
         ("Enum", "Extends_Enum_Enum"),
         ("Trait", "Extends_Trait_Trait"),
@@ -767,56 +767,76 @@ fn resolve_extends(store: &GraphStore, idx: &SymbolIndex) -> PhaseResult {
                     continue;
                 }
                 total += 1;
-                // Look up by last `.`-separated segment so `typing.NamedTuple`
-                // resolves on `NamedTuple` if present. Cortex uses `::` in QNs
-                // but base names came from source so they may carry `.`.
-                let lookup = raw_base.rsplit('.').next().unwrap_or(raw_base);
-                let candidates = match idx.by_name.get(lookup) {
-                    Some(v) => v,
-                    None => {
-                        unresolved.push(UnresolvedRef {
-                            kind: "Extends".to_string(),
-                            from_id: child_qn.clone(),
-                            target_text: raw_base.to_string(),
-                            reason: "no_target_in_corpus".to_string(),
-                        });
-                        continue;
-                    }
-                };
-                // Prefer same-label matches (Struct→Struct, etc.) over
-                // cross-label (Struct→Trait) for symmetry with self_table.
-                let preferred = candidates.iter().find(|c| c.label == *label);
-                let target = match preferred {
-                    Some(t) => t,
-                    None => match candidates.first() {
-                        Some(t) => t,
-                        None => continue,
-                    },
-                };
-                let rel_table = if target.label == *label {
-                    table_self.to_string()
-                } else {
-                    format!("Extends_{label}_{}", target.label)
-                };
-                if !crate::graph_store::is_known_rel_table(&rel_table) {
-                    unresolved.push(UnresolvedRef {
-                        kind: "Extends".to_string(),
-                        from_id: child_qn.clone(),
-                        target_text: raw_base.to_string(),
-                        reason: format!("no_rel_table_for_{label}_to_{}", target.label),
-                    });
-                    continue;
+                if resolve_one_extends_base(
+                    idx, buf, label, table_self, child_qn, raw_base, &mut unresolved,
+                ) {
+                    resolved += 1;
                 }
-                // Direct insert — Extends doesn't go through EdgeBuffer because
-                // it's a single edge per resolved pair (no dedup beyond what
-                // the rel table provides).
-                let _ = store.insert_edge(&rel_table, child_qn, &target.id, &[]);
-                resolved += 1;
             }
         }
     }
 
     Ok((resolved, total, unresolved))
+}
+
+/// Resolves one base-class NAME from a Struct/Enum/Trait's `bases` CSV entry
+/// and stages the matching `Extends_<label>_<target-label>` edge via
+/// EdgeBuffer. Returns true iff an edge was staged.
+/// Extracted from `resolve_extends` to keep that function under the §4.2
+/// size limit; behavior is identical to the pre-extraction inline loop body.
+fn resolve_one_extends_base(
+    idx: &SymbolIndex,
+    buf: &mut EdgeBuffer,
+    label: &str,
+    table_self: &str,
+    child_qn: &str,
+    raw_base: &str,
+    unresolved: &mut Vec<UnresolvedRef>,
+) -> bool {
+    // Look up by last `.`-separated segment so `typing.NamedTuple` resolves
+    // on `NamedTuple` if present. Cortex uses `::` in QNs but base names came
+    // from source so they may carry `.`.
+    let lookup = raw_base.rsplit('.').next().unwrap_or(raw_base);
+    let candidates = match idx.by_name.get(lookup) {
+        Some(v) => v,
+        None => {
+            unresolved.push(UnresolvedRef {
+                kind: "Extends".to_string(),
+                from_id: child_qn.to_string(),
+                target_text: raw_base.to_string(),
+                reason: "no_target_in_corpus".to_string(),
+            });
+            return false;
+        }
+    };
+    // Prefer same-label matches (Struct→Struct, etc.) over cross-label
+    // (Struct→Trait) for symmetry with self_table.
+    let preferred = candidates.iter().find(|c| c.label == label);
+    let target = match preferred.or_else(|| candidates.first()) {
+        Some(t) => t,
+        None => return false,
+    };
+    let rel_table = if target.label == label {
+        table_self.to_string()
+    } else {
+        format!("Extends_{label}_{}", target.label)
+    };
+    if !crate::graph_store::is_known_rel_table(&rel_table) {
+        unresolved.push(UnresolvedRef {
+            kind: "Extends".to_string(),
+            from_id: child_qn.to_string(),
+            target_text: raw_base.to_string(),
+            reason: format!("no_rel_table_for_{label}_to_{}", target.label),
+        });
+        return false;
+    }
+    // Staged through EdgeBuffer like every other resolution phase
+    // (bulk_insert_edges at flush) instead of one insert_edge per base.
+    // 0.95/"declared-extends" mirrors resolve_one_implements's 0.95/
+    // "declared-implements" for the parallel `implements` CSV.
+    // source: ADR-4253701 §Decision 2 (levier 2, resolver.rs resolve_extends).
+    buf.add(&rel_table, child_qn, &target.id, 0.95, "declared-extends");
+    true
 }
 
 // ---------------------------------------------------------------------------

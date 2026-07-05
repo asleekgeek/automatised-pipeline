@@ -9,8 +9,13 @@ use std::path::Path;
 // ---------------------------------------------------------------------------
 
 /// Inserts Directory nodes for all ancestor dirs of a file (relative to root).
+/// `Contains_Dir_Dir` edges are staged into `batch` (flushed in large bulk
+/// calls alongside the symbol edges) rather than inserted one at a time.
+/// source: ADR-4253701 §Decision 2 (levier 2, persist.rs:89) — this was the
+/// last per-edge insert loop for directory-tree structural edges.
 pub(super) fn insert_ancestor_dirs(
     store: &GraphStore,
+    batch: &mut SymbolBatch,
     root: &Path,
     file_path: &Path,
     seen: &mut std::collections::HashSet<std::path::PathBuf>,
@@ -32,7 +37,12 @@ pub(super) fn insert_ancestor_dirs(
             insert_directory_node(store, &dir_id, &dir_name)?;
             label_by_qn.insert(dir_id.to_string(), "Directory".into());
             if !prev.as_os_str().is_empty() {
-                insert_dir_dir_edge(store, &prev.to_string_lossy(), &dir_id)?;
+                batch.push_edge(
+                    "Contains_Dir_Dir",
+                    prev.to_string_lossy().into_owned(),
+                    dir_id.into_owned(),
+                    Vec::new(),
+                );
             }
         }
     }
@@ -74,19 +84,17 @@ pub(super) fn insert_file_node(store: &GraphStore, abs_path: &Path, rel_path: &s
 // Structural edges: Contains
 // ---------------------------------------------------------------------------
 
-pub(super) fn insert_dir_file_edge(store: &GraphStore, rel_path: &Path) -> Result<(), String> {
-    let file_id = rel_path.to_string_lossy();
+/// Stages a `Contains_Dir_File` edge into `batch` instead of inserting it
+/// directly. source: ADR-4253701 §Decision 2 (levier 2, persist.rs:85).
+pub(super) fn insert_dir_file_edge(batch: &mut SymbolBatch, rel_path: &Path) {
+    let file_id = rel_path.to_string_lossy().into_owned();
     let parent_id = rel_path.parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     if parent_id.is_empty() {
-        return Ok(()); // file is at root level, no parent directory node
+        return; // file is at root level, no parent directory node
     }
-    store.insert_edge("Contains_Dir_File", &parent_id, &file_id, &[])
-}
-
-fn insert_dir_dir_edge(store: &GraphStore, parent_id: &str, child_id: &str) -> Result<(), String> {
-    store.insert_edge("Contains_Dir_Dir", parent_id, child_id, &[])
+    batch.push_edge("Contains_Dir_File", parent_id, file_id, Vec::new());
 }
 
 // ---------------------------------------------------------------------------

@@ -177,11 +177,11 @@ pub fn index_codebase_with_language(
             ));
         }
         insert_ancestor_dirs(
-            &store, codebase_path, file_path, &mut dir_nodes_inserted, &mut label_by_qn,
+            &store, &mut batch, codebase_path, file_path, &mut dir_nodes_inserted, &mut label_by_qn,
         )?;
         insert_file_node(&store, file_path, &rel_str)?;
         label_by_qn.insert(rel_str.to_string(), "File".into());
-        insert_dir_file_edge(&store, &rel)?;
+        insert_dir_file_edge(&mut batch, &rel);
         // PublicApi tier: filter to public-visibility symbols only for files
         // under dependency directories. Project files are never restricted.
         // source: ADR-4253701 §Decision 1.
@@ -289,20 +289,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    #[test]
-    fn test_all_file_indexing_documents_and_links() {
-        // All-file indexing: EVERY file becomes a File node — code, plain-text
-        // docs, structured data, AND binary documents (.pdf/.docx). Text docs
-        // additionally get light links: Markdown `[..](path)` → References,
-        // JS import/require → Imports.
+    /// Shared fixture for the all-file-indexing tests below: code (AST) + JS
+    /// (light-link) + plain docs + structured data + BINARY docs, indexed
+    /// into a fresh graph. `tag` keeps each test's temp dirs distinct.
+    /// Split out of a single 96-line test (coding-standards §4.2) into two
+    /// focused tests that share this setup — one concern each (file-type
+    /// coverage vs. light-link edges), not a behavior change.
+    fn build_all_file_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, IndexResult) {
         use std::io::Write;
         let root = std::env::temp_dir()
-            .join(format!("indexer_allfile_test_{}", std::process::id()));
+            .join(format!("indexer_allfile_test_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("js")).unwrap();
         std::fs::create_dir_all(root.join("docs")).unwrap();
 
-        // Code (AST) + JS (light-link) + plain docs + structured + BINARY docs.
         std::fs::write(root.join("mod.py"), "def f():\n    return 1\n").unwrap();
         std::fs::write(
             root.join("js/app.js"),
@@ -330,10 +330,17 @@ mod tests {
             .unwrap();
 
         let tmp = std::env::temp_dir()
-            .join(format!("indexer_allfile_graph_{}", std::process::id()));
+            .join(format!("indexer_allfile_graph_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-
         let result = index_codebase(&root, &tmp).unwrap();
+        (root, tmp, result)
+    }
+
+    #[test]
+    fn test_all_file_indexing_covers_every_file_type() {
+        // All-file indexing: EVERY file becomes a File node — code, plain-text
+        // docs, structured data, AND binary documents (.pdf/.docx).
+        let (root, tmp, result) = build_all_file_fixture("counts");
         let store = GraphStore::open_or_create(&tmp).unwrap();
 
         // 9 files total — including the two BINARY documents.
@@ -355,6 +362,18 @@ mod tests {
                 .unwrap();
             assert!(!q.rows.is_empty(), "missing File node for document: {id}");
         }
+
+        assert!(result.node_count >= 9);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_all_file_indexing_light_links_markdown_and_js() {
+        // Text docs get light links: Markdown `[..](path)` → References,
+        // JS import/require → Imports.
+        let (root, tmp, _result) = build_all_file_fixture("links");
+        let store = GraphStore::open_or_create(&tmp).unwrap();
 
         // Markdown light-linking: guide.md references mod.py and arch.md.
         let refs = store
@@ -382,7 +401,6 @@ mod tests {
             imp.rows
         );
 
-        assert!(result.node_count >= 9);
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&tmp);
     }
