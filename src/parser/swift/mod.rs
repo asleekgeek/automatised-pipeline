@@ -5,12 +5,10 @@
 //
 // Grammar reference: https://github.com/alex-pinkus/tree-sitter-swift
 
-use tree_sitter::{Node, Parser};
+use tree_sitter::Parser;
 
 use super::{
-    node_field_text, node_text, qual, ExtractedNode, ExtractedRef, ParseResult, LABEL_CALL_SITE,
-    LABEL_CONSTANT, LABEL_ENUM, LABEL_FUNCTION, LABEL_IMPORT, LABEL_METHOD, LABEL_STRUCT,
-    LABEL_TRAIT,
+    ExtractedNode, ExtractedRef, ParseResult,
 };
 
 mod extract;

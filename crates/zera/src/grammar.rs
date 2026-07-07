@@ -30,7 +30,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use crate::{EdgeRef, GraphState, NodeRef};
+use crate::{EdgeRef, GraphState};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Rule {
@@ -205,6 +205,7 @@ impl Grammar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NodeRef;
 
     fn graph_with_symmetric_pair() -> GraphState {
         let nodes = vec![

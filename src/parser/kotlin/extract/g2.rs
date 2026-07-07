@@ -3,7 +3,7 @@
 use tree_sitter::Node;
 use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
 use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
+              // sibling extract fns (glob re-export)
 
 
 pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {

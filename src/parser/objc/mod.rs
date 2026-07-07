@@ -16,9 +16,7 @@
 use tree_sitter::{Node, Parser};
 
 use super::{
-    node_field_text, node_text, qual, ExtractedNode, ExtractedRef, ParseResult, LABEL_CALL_SITE,
-    LABEL_CONSTANT, LABEL_ENUM, LABEL_FIELD, LABEL_FUNCTION, LABEL_IMPORT, LABEL_METHOD,
-    LABEL_STRUCT, LABEL_TRAIT,
+    node_text, ExtractedNode, ExtractedRef, ParseResult,
 };
 
 mod extract;

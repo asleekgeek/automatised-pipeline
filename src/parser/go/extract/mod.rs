@@ -7,4 +7,4 @@ mod g1;
 mod g2;
 
 pub(super) use g1::*;
-pub(super) use g2::*;
+use g2::*;

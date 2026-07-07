@@ -102,7 +102,7 @@ fn test_resolution_pipeline() {
 
     // -- Verify idempotency: resolve again --
     let edge_count_before = store.edge_count().expect("edge_count");
-    let res2 = resolver::resolve_graph(&store).expect("second resolve");
+    let _res2 = resolver::resolve_graph(&store).expect("second resolve");
     let edge_count_after = store.edge_count().expect("edge_count after");
     // Idempotent: same edge count after second run
     assert_eq!(

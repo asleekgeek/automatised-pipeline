@@ -6,11 +6,10 @@
 //
 // Grammar reference: https://github.com/tree-sitter/tree-sitter-c
 
-use tree_sitter::{Node, Parser};
+use tree_sitter::Parser;
 
 use super::{
-    node_field_text, node_text, qual, ExtractedNode, ExtractedRef, ParseResult, LABEL_CALL_SITE,
-    LABEL_CONSTANT, LABEL_ENUM, LABEL_FUNCTION, LABEL_IMPORT, LABEL_STRUCT,
+    ExtractedNode, ExtractedRef, ParseResult,
 };
 
 mod extract;
