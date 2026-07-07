@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Rust-1.94+-dea584.svg" alt="Rust 1.94+">
   <img src="https://img.shields.io/badge/Tools-24-orange" alt="24 MCP tools">
   <img src="https://img.shields.io/badge/Tests-434_passing-brightgreen" alt="434 tests">
-  <img src="https://img.shields.io/badge/Languages-Rust_·_Python_·_TypeScript-blueviolet" alt="Languages">
+  <img src="https://img.shields.io/badge/Languages-10-blueviolet" alt="10 languages">
   <img src="https://img.shields.io/badge/Stages-0_through_9-8A2BE2" alt="Stages">
 </p>
 
@@ -28,7 +28,7 @@
 
 Every AI coding assistant hits the same wall: you ask it to change `handle_tool_call`, and it either hallucinates a function that was renamed last week, edits something in the wrong community of the codebase, or silently breaks a call chain three modules away. Agents operate on strings; codebases have structure. The gap is where bugs live.
 
-**automatised-pipeline** is a Rust MCP server that indexes any Rust / Python / TypeScript codebase into a LadybugDB property graph, resolves imports and call chains across files, detects functional communities via Leiden-class community detection, traces execution flows from entry points, builds a hybrid BM25 + sparse TF-IDF + RRF search index, and exposes all of it to AI agents through 24 MCP tools.
+**automatised-pipeline** is a Rust MCP server that indexes any Rust, Python, TypeScript, Java, Kotlin, Swift, Objective-C, C, C++, or Go codebase into a LadybugDB property graph, resolves imports and call chains across files, detects functional communities via Leiden-class community detection, traces execution flows from entry points, builds a hybrid BM25 + sparse TF-IDF + RRF search index, and exposes all of it to AI agents through 24 MCP tools.
 
 It is the **codebase intelligence layer** that sits between a finding ("this bug exists") and a PRD ("here is the fix, here is what it affects, here is what it must never break"). It is **read-only intelligence** — it never writes code, opens PRs, or runs CI. It tells the system what is true about the code so the next stage can reason without guessing.
 
@@ -201,9 +201,9 @@ core modules:
     git_diff           — diff parser + symbol mapping
 ```
 
-### Crates
+### Dependencies
 
-Eight crates. Nothing speculative; everything justified.
+Sixteen crates. Nothing speculative; everything justified.
 
 | Crate | Purpose | License | Why |
 |---|---|---|---|
@@ -211,7 +211,7 @@ Eight crates. Nothing speculative; everything justified.
 | `sha2` | Stage-2 transcript digest | MIT | Tamper detection |
 | `lbug` (LadybugDB) | Embedded property graph + Cypher | MIT | Native Cypher, FTS-ready, the Kùzu successor |
 | `tree-sitter` | Incremental parser runtime | MIT | First-class Rust bindings |
-| `tree-sitter-rust` · `-python` · `-typescript` | Language grammars | MIT | Semantic structure without a compiler |
+| `tree-sitter-rust` · `-python` · `-typescript` · `-java` · `-kotlin-ng` · `-swift` · `-objc` · `-c` · `-cpp` · `-go` | Language grammars (10) | MIT / Apache-2.0 | Semantic structure without a compiler |
 | `tantivy` | Lucene-grade BM25 | MIT | Real ranked text search, <10ms startup |
 
 Deliberately **not** included: async runtime (we're stdio-blocking), HTTP client, LLM SDK, embedding model runtime (sparse TF-IDF replaces it at zero dep cost).
@@ -406,7 +406,7 @@ Agents are spawned via [zetetic-team-subagents](https://github.com/cdeust/zeteti
 
 Private repo by design. Not ready for public release until the full hardening pass is done — security audit fixes are in, correctness fixes are in, scale fixes are in, stages 4/6/8/9 are live, but every capability marked "live" above has been verified end-to-end on this machine, not yet in a production context.
 
-**What works today**: indexing Rust / Python / TypeScript codebases end-to-end, resolving cross-file relationships, clustering into communities, tracing processes from entry points, hybrid search, PRD input preparation, PRD claim validation, security gate checking, before/after regression detection.
+**What works today**: indexing Rust, Python, TypeScript, Java, Kotlin, Swift, Objective-C, C, C++, and Go codebases end-to-end, resolving cross-file relationships, clustering into communities, tracing processes from entry points, hybrid search, PRD input preparation, PRD claim validation, security gate checking, before/after regression detection.
 
 **What's deferred**:
 - Cross-file indexer batching to unlock the full 38× UNWIND win (currently 1.17× aggregate; per-edge rate is already 0.143 ms)

@@ -64,5 +64,5 @@
   <circle cx="464" cy="283" r="3.4" fill="#753e81"/>
 
   <!-- Measured ledger line (mono) : DS pfg-2 #61554e -->
-  <text class="mono" x="410" y="309" fill="#61554e" font-size="9.5" letter-spacing="0.8" text-anchor="middle">24 MCP TOOLS  ·  10 STAGES  ·  434 TESTS  ·  RUST · PYTHON · TYPESCRIPT</text>
+  <text class="mono" x="410" y="309" fill="#61554e" font-size="9.5" letter-spacing="0.8" text-anchor="middle">24 MCP TOOLS  ·  10 STAGES  ·  434 TESTS  ·  10 LANGUAGES</text>
 </svg>
