@@ -7,14 +7,14 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Rust-1.94+-dea584.svg" alt="Rust 1.94+">
-  <img src="https://img.shields.io/badge/Tools-23-orange" alt="23 MCP tools">
-  <img src="https://img.shields.io/badge/Tests-220_passing-brightgreen" alt="220 tests">
+  <img src="https://img.shields.io/badge/Tools-24-orange" alt="24 MCP tools">
+  <img src="https://img.shields.io/badge/Tests-434_passing-brightgreen" alt="434 tests">
   <img src="https://img.shields.io/badge/Languages-Rust_·_Python_·_TypeScript-blueviolet" alt="Languages">
   <img src="https://img.shields.io/badge/Stages-0_through_9-8A2BE2" alt="Stages">
 </p>
 
 <p align="center">
-  <a href="#what-an-agent-can-ask-it">What An Agent Can Ask</a> · <a href="#getting-started">Getting Started</a> · <a href="#the-pipeline">Pipeline</a> · <a href="#23-mcp-tools">Tools</a> · <a href="#architecture">Architecture</a> · <a href="#the-zetetic-standard">Zetetic Standard</a>
+  <a href="#what-an-agent-can-ask-it">What An Agent Can Ask</a> · <a href="#getting-started">Getting Started</a> · <a href="#the-pipeline">Pipeline</a> · <a href="#24-mcp-tools">Tools</a> · <a href="#architecture">Architecture</a> · <a href="#the-zetetic-standard">Zetetic Standard</a>
 </p>
 
 <p align="center">
@@ -28,11 +28,11 @@
 
 Every AI coding assistant hits the same wall: you ask it to change `handle_tool_call`, and it either hallucinates a function that was renamed last week, edits something in the wrong community of the codebase, or silently breaks a call chain three modules away. Agents operate on strings; codebases have structure. The gap is where bugs live.
 
-**automatised-pipeline** is a Rust MCP server that indexes any Rust / Python / TypeScript codebase into a LadybugDB property graph, resolves imports and call chains across files, detects functional communities via Leiden-class community detection, traces execution flows from entry points, builds a hybrid BM25 + sparse TF-IDF + RRF search index, and exposes all of it to AI agents through 23 MCP tools.
+**automatised-pipeline** is a Rust MCP server that indexes any Rust / Python / TypeScript codebase into a LadybugDB property graph, resolves imports and call chains across files, detects functional communities via Leiden-class community detection, traces execution flows from entry points, builds a hybrid BM25 + sparse TF-IDF + RRF search index, and exposes all of it to AI agents through 24 MCP tools.
 
 It is the **codebase intelligence layer** that sits between a finding ("this bug exists") and a PRD ("here is the fix, here is what it affects, here is what it must never break"). It is **read-only intelligence** — it never writes code, opens PRs, or runs CI. It tells the system what is true about the code so the next stage can reason without guessing.
 
-**One pipeline stage = one MCP tool. 10 stages. 23 tools. 12,000+ lines of Rust. 220 tests. Zero warnings. Every constant sourced.**
+**One pipeline stage = one MCP tool. 10 stages. 24 tools. 12,000+ lines of Rust. 434 tests. Zero warnings. Every constant sourced.**
 
 ---
 
@@ -152,7 +152,7 @@ Every stage is a tool. Stages build on each other but are independently callable
 
 ---
 
-## 23 MCP Tools
+## 24 MCP Tools
 
 Every tool takes structured JSON arguments via the MCP protocol and returns a structured JSON response. No LLM is called from inside any tool — intelligence is the agent's job; the tool's job is safe, fast data movement with invariants.
 
@@ -164,6 +164,7 @@ Stage 3a: index_codebase · query_graph · get_symbol
 Stage 3b: resolve_graph · lsp_resolve
 Stage 3c: cluster_graph · get_processes · get_impact
 Stage 3d: search_codebase · get_context · analyze_codebase · detect_changes
+Stage 3e: index_history
 Stage 4:  prepare_prd_input
 Stage 6:  validate_prd_against_graph
 Stage 8:  check_security_gates
@@ -257,7 +258,7 @@ Four CRITICAL, four HIGH, three MEDIUM findings were surfaced by a `security-aud
 - LSP `rootUri` → RFC 3986 percent-encoding
 - Diff line overflow → `DIFF_LINE_MAX = u64::MAX / 2` guard
 
-Each fix has a test that asserts the exploit is now rejected. Run `cargo test` to see 220 tests pass including the exploit-regression suite.
+Each fix has a test that asserts the exploit is now rejected. Run `cargo test` to see 434 tests pass including the exploit-regression suite.
 
 ---
 
@@ -288,7 +289,7 @@ The bulk-insert path uses UNWIND with a typed struct schema (the engineer who wr
                               ↓
       ┌──────────────────────────────────────────────────┐
       │             automatised-pipeline                 │  ← this repo
-      │  stage 0 · 1 · 2 · 3a-d · 4 · 6 · 8 · 9          │
+      │  stage 0 · 1 · 2 · 3a-e · 4 · 6 · 8 · 9          │
       │  Rust · LadybugDB · tree-sitter · Tantivy        │
       └──────┬──────────────────┬────────────────────────┘
              │                  │
@@ -321,7 +322,7 @@ The bulk-insert path uses UNWIND with a typed struct schema (the engineer who wr
 ## Testing
 
 ```bash
-cargo test                                          # 220 tests, full suite
+cargo test                                          # 434 tests, full suite
 cargo test --release --test scalability_bench       # 500-file synthetic fixture
 cargo test --release --test lbug_bulk_investigation # dba's 9 UNWIND probes
 cargo test --release --test stage3a_integration     # end-to-end per sub-stage
@@ -339,7 +340,7 @@ Every stage has an integration test with fixture data. The `lbug_bulk_investigat
 ```
 automatised-pipeline/
 ├── src/
-│   ├── main.rs                    ← MCP server, 23 tool handlers
+│   ├── main.rs                    ← MCP server, 24 tool handlers
 │   ├── tool_schemas.rs            ← JSON Schemas for every tool
 │   ├── lib.rs                     ← re-exports for integration tests
 │   ├── graph_store.rs             ← LadybugDB port (UNWIND + prepared + cached)
