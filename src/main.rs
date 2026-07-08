@@ -1859,6 +1859,9 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
 
     let result = indexer::index_codebase_with_language(
         &codebase, &graph_dir, lang_filter, dependency_scope)?;
+    // Record the absolute source root beside the graph (relative file paths
+    // stay in the graph; the root lets consumers reconstruct absolute paths).
+    write_graph_meta(&output_dir, &codebase);
     Ok(json!({
         "stage": 3,
         "status": "ok",
@@ -2015,6 +2018,33 @@ fn remove_stale_graph_artifact(path: &Path) -> Result<(), String> {
         fs::remove_file(path)
     };
     outcome.map_err(|e| format!("remove stale graph artifact: {e}"))
+}
+
+/// Write a ``meta.json`` sidecar in ``output_dir`` recording the ABSOLUTE
+/// source root this graph was indexed from.
+///
+/// AP stores file paths RELATIVE to the indexed root so the graph stays
+/// portable across machines. A downstream consumer that must reconstruct
+/// absolute paths — cortex-viz keys its FILE nodes by the absolute path (tool
+/// events + wiki-page -> source-file joins) — needs that root, which is
+/// otherwise consumed at index time and discarded. Persisting it in a sidecar
+/// (not inside the graph) keeps the graph file itself free of machine-specific
+/// paths: the structure stays portable, and the machine-specific root lives in
+/// a file that is naturally regenerated on the next re-index.
+///
+/// Best-effort: a failed write is logged and ignored. The graph is the
+/// product; the sidecar is a convenience for consumers, and its absence just
+/// degrades a consumer's path reconstruction, never the index.
+fn write_graph_meta(output_dir: &Path, root: &Path) {
+    let meta = json!({
+        "schema_version": 1,
+        "root": root.to_string_lossy(),
+        "tool": "automatised-pipeline",
+    });
+    let meta_path = output_dir.join("meta.json");
+    if let Err(e) = fs::write(&meta_path, meta.to_string()) {
+        eprintln!("[ap] write graph meta {}: {e}", meta_path.display());
+    }
 }
 
 fn do_query_graph(arguments: &Value) -> Result<Value, String> {
@@ -3131,6 +3161,8 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
     // Phase 1: index
     let index_result = indexer::index_codebase_with_language(
         &codebase, &graph_dir, lang_filter, dependency_scope)?;
+    // Record the absolute source root beside the graph (see write_graph_meta).
+    write_graph_meta(&output_dir, &codebase);
 
     // Phase 2: resolve
     let store = graph_store::GraphStore::open_or_create(&index_result.graph_path)?;
@@ -4176,6 +4208,35 @@ mod security_tests {
         // Missing path → surfaced as an error, never a panic.
         assert!(remove_stale_graph_artifact(&graph).is_err());
 
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_graph_meta_records_absolute_root() {
+        // The sidecar records the ABSOLUTE indexed root so a consumer can
+        // rebuild absolute paths from AP's relative ones (cortex-viz wiki->file
+        // join + tool-file keying). It is written NEXT TO the graph, never
+        // inside it — the graph itself stays portable.
+        let base = std::env::temp_dir().join(format!("ap-meta-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let root = base.join("some/repo/root");
+
+        write_graph_meta(&base, &root);
+
+        let meta_path = base.join("meta.json");
+        assert!(meta_path.is_file(), "meta.json must be written");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        assert_eq!(
+            parsed.get("root").and_then(|v| v.as_str()),
+            Some(root.to_string_lossy().as_ref()),
+            "sidecar must record the absolute root verbatim",
+        );
+        assert_eq!(
+            parsed.get("schema_version").and_then(|v| v.as_u64()),
+            Some(1),
+        );
         let _ = fs::remove_dir_all(&base);
     }
 }
