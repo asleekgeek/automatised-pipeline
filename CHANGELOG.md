@@ -6,6 +6,49 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`prepare_prd_input` (feature mode) no longer presents lexical substring
+  matches as verified grounding (issue #14).** The matcher ran every
+  natural-language word from the description through the graph search with
+  `min_score: 0.0` and folded every hit into `matched_symbols` next to a
+  bundle-level `verified: true`, so an accidental substring collision (e.g.
+  the word "anchor" hitting `_CONCRETE_ANCHOR`) was indistinguishable from a
+  real identifier reference. Measured proof: a genuine partial-word hit and
+  a false-positive substring hit score IDENTICALLY under the existing scoring
+  formula at equal substring-to-name ratio, so no score threshold can tell
+  them apart — the fix classifies every hit's `match_mode` (verbatim exact
+  citation / exact name match / lexical-only) instead.
+
+### Changed — `prepare_prd_input` tool schema, `preparer_version` 1.0.0 → 1.1.0
+
+**Consumed by `prd-spec-generator` — read this before bumping the pinned AP
+version.** All changes are additive to the JSON shape; the semantic change
+below is the one to check for in integrating code.
+
+- **`matched_symbols` semantics changed: it can now be empty where it
+  previously would not have been.** A description with only lexical
+  (non-exact) word overlap against the graph now yields `matched_symbols:
+  []` rather than a list of unverified guesses — an empty array is the
+  correct, expected output when nothing can be verified, not a bug or a
+  sign the pipeline failed. Any consumer that treated a non-empty
+  `matched_symbols` as a given must handle the empty case.
+- **New per-symbol fields** on every `matched_symbols` entry: `match_mode`
+  (`"verbatim"` — identifier cited in the description in backticks and
+  resolved exactly; `"exact_name"` — a description word equals the symbol's
+  name/qualified-name tail exactly) and `confidence` (the raw search score;
+  informational only — trust is carried by `match_mode`, not this score).
+- **New `candidate_symbols` array** (`prd_context.candidate_symbols`, same
+  shape as `matched_symbols` plus `match_mode: "lexical"`): substring/fuzzy
+  hits with no exact-identity evidence. Never folded into `matched_symbols`
+  or into `impacted_communities`/`impacted_processes`. Exposed for
+  visibility only — do not treat as verified.
+- **New `candidate_symbol_count`** field on the `prepare_prd_input` tool
+  response, alongside the existing `matched_symbol_count`.
+- Cite identifiers in backticks in finding/feature descriptions to get
+  verbatim-priority grounding — this is now the reliable way to guarantee a
+  specific symbol appears in `matched_symbols`.
+
 ## [0.5.0] — Cross-repo bridge: link per-repo graphs at query time
 
 First tagged release since v0.2.2; folds in the untagged 0.3.0 and 0.4.0 work

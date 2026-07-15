@@ -169,7 +169,9 @@ fn test_prepare_prd_input_end_to_end() {
     let v: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(v["run_id"], run_id);
     assert_eq!(v["finding_id"], finding_id);
-    assert_eq!(v["preparer_version"], "1.0.0");
+    // Bumped by issue #14: matched_symbols/candidate_symbols split + per-symbol
+    // match_mode/confidence (additive, see prd_input::PREPARER_VERSION doc).
+    assert_eq!(v["preparer_version"], "1.1.0");
     assert!(v["prd_context"]["finding_summary"]
         .as_str()
         .unwrap()
