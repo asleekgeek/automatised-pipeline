@@ -141,10 +141,54 @@ pub struct GraphStore {
     //   (c) struct fields drop in declaration order (conn drops before _db).
 }
 
+/// Environment variable that bounds lbug's `max_db_size` (bytes; must be a
+/// power of two — see `BufferManager::verifySizeParams` in the vendored
+/// `lbug-0.15.4/lbug-src/src/storage/buffer_manager/buffer_manager.cpp`).
+/// Unset in production; set once in `.cargo/config.toml`'s `[env]` table so
+/// every `cargo test` process (unit tests AND every integration-test binary
+/// under `tests/`) picks it up automatically without any test file needing
+/// to opt in.
+///
+/// Root cause this bounds: `SystemConfig::default()` leaves `max_db_size`
+/// at its sentinel value `u64::from(u32::MAX)` (lbug-0.15.4/src/database.rs:71).
+/// lbug's C++ core treats that exact sentinel as "unset" and substitutes
+/// `DEFAULT_VM_REGION_MAX_SIZE = 1 << 43` (8 TiB) — see
+/// `lbug-0.15.4/lbug-src/src/main/database.cpp:82-83` and the doc comment
+/// on `maxDBSize` in `lbug-0.15.4/lbug-src/src/include/main/database.h:50-54`.
+/// Each `Database::new`/`GraphStore::open_or_create` call therefore reserves
+/// 8 TiB of virtual address space; dozens of concurrent test binaries under
+/// `cargo test --workspace` exhaust the process's address space
+/// probabilistically (observed: `lbug database open failed: Mmap for size
+/// 8796093022208 failed` in `tests/stage6_integration.rs`, run 5 of a 10-run
+/// soak, 2026-07-15).
+pub const TEST_MAX_DB_SIZE_ENV: &str = "AP_LBUG_TEST_MAX_DB_SIZE";
+
+/// Builds the `SystemConfig` used by every lbug `Database` this crate opens.
+/// The single by-construction choke point for `max_db_size`: both
+/// `GraphStore::open_or_create` (used by all production code and by every
+/// integration test that goes through `GraphStore`) and the one test file
+/// that opens a raw `lbug::Database` directly
+/// (`tests/lbug_bulk_investigation.rs`) call this function, so no future
+/// call site can reintroduce the unbounded default.
+///
+/// In production (no `TEST_MAX_DB_SIZE_ENV` in the process environment) this
+/// is identical to `SystemConfig::default()` — production behavior and
+/// capacity are unchanged by this fix.
+pub fn system_config() -> SystemConfig {
+    let config = SystemConfig::default();
+    match std::env::var(TEST_MAX_DB_SIZE_ENV) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(bytes) => config.max_db_size(bytes),
+            Err(_) => config,
+        },
+        Err(_) => config,
+    }
+}
+
 impl GraphStore {
     /// Opens (or creates) a LadybugDB database at `path`.
     pub fn open_or_create(path: &Path) -> Result<Self, String> {
-        let db = Database::new(path, SystemConfig::default())
+        let db = Database::new(path, system_config())
             .map_err(|e| format!("lbug database open failed: {e}"))?;
         // Safety: see comment on the struct. The Database is heap-stable and
         // outlives the Connection because struct fields drop in declaration order.
@@ -1172,14 +1216,19 @@ fn value_to_u64(v: &Value) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_create_and_query() {
-        let dir = std::env::temp_dir().join("graph_store_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — a fixed `temp_dir().join("graph_store_test")`
+        // path collides under default parallel `cargo test` execution (the
+        // embedded DB's file lock races across test threads). tempfile::
+        // TempDir allocates a unique-per-call directory (mirrors the #13-fix
+        // pattern in tests/lbug_bulk_investigation.rs).
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
         let store =
             GraphStore::open_or_create(&db_path).expect("open_or_create");
@@ -1211,16 +1260,16 @@ mod tests {
 
         let count = store.node_count().expect("node_count");
         assert!(count >= 1, "expected node_count >= 1, got {count}");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_bulk_insert_nodes_and_edges() {
-        let dir = std::env::temp_dir().join("graph_store_bulk_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — unique-per-call TempDir; see test_create_and_query.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_bulk_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
         let store = GraphStore::open_or_create(&db_path).expect("open");
         store.create_schema().expect("schema");
@@ -1253,8 +1302,6 @@ mod tests {
             .expect("count");
         let c: u64 = qr.rows[0][0].parse().unwrap_or(0);
         assert_eq!(c, 7);
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1278,10 +1325,12 @@ mod tests {
         // to inject arbitrary Cypher (including DETACH DELETE). After the
         // C1 fix, the injection attempt becomes an ordinary string literal
         // that round-trips through the DB safely.
-        let dir = std::env::temp_dir().join("graph_store_inject_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — unique-per-call TempDir; see test_create_and_query.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_inject_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
         let store =
             GraphStore::open_or_create(&db_path).expect("open_or_create");
@@ -1328,7 +1377,5 @@ mod tests {
             .expect("count query");
         let count_val: u64 = cnt.rows[0][0].parse().unwrap_or(0);
         assert_eq!(count_val, 2, "injection attempt must not delete nodes");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }
