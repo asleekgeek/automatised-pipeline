@@ -573,10 +573,17 @@ diff --git a/src/b.rs b/src/b.rs
 
     #[test]
     fn test_analyze_diff_on_empty_graph() {
-        let dir = std::env::temp_dir().join("git_diff_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("testdb");
+        // source: issue #21 — a fixed `temp_dir().join("git_diff_test")` path
+        // collides under default parallel `cargo test` execution (two test
+        // threads racing the embedded DB's file lock on the same path).
+        // tempfile::TempDir allocates a process- and call-unique directory
+        // (mirrors the #13-fix pattern in tests/lbug_bulk_investigation.rs),
+        // so no two test invocations can ever share a path.
+        let dir = tempfile::Builder::new()
+            .prefix("git_diff_test")
+            .tempdir()
+            .unwrap();
+        let db_path = dir.path().join("testdb");
 
         let store = GraphStore::open_or_create(&db_path).unwrap();
         store.create_schema().unwrap();
@@ -595,8 +602,6 @@ diff --git a/src/main.rs b/src/main.rs
         // No symbols in an empty graph
         assert!(result.symbols_affected.is_empty());
         assert_eq!(result.risk_score, 0.0);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -604,26 +609,30 @@ diff --git a/src/main.rs b/src/main.rs
         // source: C2 fix — refs starting with `-` would be interpreted by git
         // as option flags (e.g. `--upload-pack=rm -rf ~`, `-c core.fsmonitor=...`).
         // Both base_ref and head_ref must be rejected before reaching Command::new.
-        let dir = std::env::temp_dir().join("git_ref_validate_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("testdb");
+        //
+        // source: issue #21 — a fixed `temp_dir().join("git_ref_validate_test")`
+        // path collides under default parallel `cargo test` execution; use a
+        // unique-per-call tempfile::TempDir (matches the #13-fix pattern in
+        // tests/lbug_bulk_investigation.rs).
+        let dir = tempfile::Builder::new()
+            .prefix("git_ref_validate_test")
+            .tempdir()
+            .unwrap();
+        let db_path = dir.path().join("testdb");
         let store = GraphStore::open_or_create(&db_path).unwrap();
         store.create_schema().unwrap();
 
-        let err = analyze_git_diff(&store, &dir, "--upload-pack=rm", "HEAD")
+        let err = analyze_git_diff(&store, dir.path(), "--upload-pack=rm", "HEAD")
             .expect_err("must reject dash-prefixed base_ref");
         assert!(err.contains("invalid_ref"), "got: {err}");
 
-        let err2 = analyze_git_diff(&store, &dir, "main", "-c")
+        let err2 = analyze_git_diff(&store, dir.path(), "main", "-c")
             .expect_err("must reject dash-prefixed head_ref");
         assert!(err2.contains("invalid_ref"), "got: {err2}");
 
-        let err3 = analyze_git_diff(&store, &dir, "", "HEAD")
+        let err3 = analyze_git_diff(&store, dir.path(), "", "HEAD")
             .expect_err("must reject empty ref");
         assert!(err3.contains("invalid_ref"), "got: {err3}");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

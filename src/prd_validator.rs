@@ -802,15 +802,19 @@ mod tests {
     fn test_file_has_graph_node_escapes_adversarial_path() {
         // GraphStore persists as a single-file embedded db, not a directory
         // (source: main.rs::remove_stale_graph_artifact / the ENOTDIR fix it
-        // documents). `remove_dir_all` on that file fails silently (ignored
-        // errors below would otherwise leak the db across test runs and
-        // cause spurious "duplicated primary key" failures on rerun) — so,
-        // matching graph_store::tests::test_cypher_injection_rejected, the
-        // db lives inside a wrapping directory that IS safe to remove_dir_all.
-        let dir = std::env::temp_dir().join("prd_validator_cypher_inject_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // documents), so the db lives inside a wrapping directory — matching
+        // graph_store::tests::test_cypher_injection_rejected.
+        //
+        // source: issue #21 — a fixed `temp_dir().join("prd_validator_cypher_
+        // inject_test")` path collides under default parallel `cargo test`
+        // execution. tempfile::TempDir allocates a unique-per-call directory
+        // and cleans itself up on drop (mirrors the #13-fix pattern in
+        // tests/lbug_bulk_investigation.rs).
+        let dir = tempfile::Builder::new()
+            .prefix("prd_validator_cypher_inject_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
         let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
         store.create_schema().expect("create_schema");
 
@@ -854,8 +858,6 @@ mod tests {
             file_has_graph_node(&store, "safe.rs"),
             "the benign node must survive — the adversarial path must not have executed DETACH DELETE"
         );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

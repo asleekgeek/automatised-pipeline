@@ -1172,14 +1172,19 @@ fn value_to_u64(v: &Value) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_create_and_query() {
-        let dir = std::env::temp_dir().join("graph_store_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — a fixed `temp_dir().join("graph_store_test")`
+        // path collides under default parallel `cargo test` execution (the
+        // embedded DB's file lock races across test threads). tempfile::
+        // TempDir allocates a unique-per-call directory (mirrors the #13-fix
+        // pattern in tests/lbug_bulk_investigation.rs).
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
         let store =
             GraphStore::open_or_create(&db_path).expect("open_or_create");
@@ -1211,16 +1216,16 @@ mod tests {
 
         let count = store.node_count().expect("node_count");
         assert!(count >= 1, "expected node_count >= 1, got {count}");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_bulk_insert_nodes_and_edges() {
-        let dir = std::env::temp_dir().join("graph_store_bulk_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — unique-per-call TempDir; see test_create_and_query.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_bulk_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
         let store = GraphStore::open_or_create(&db_path).expect("open");
         store.create_schema().expect("schema");
@@ -1253,8 +1258,6 @@ mod tests {
             .expect("count");
         let c: u64 = qr.rows[0][0].parse().unwrap_or(0);
         assert_eq!(c, 7);
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1278,10 +1281,12 @@ mod tests {
         // to inject arbitrary Cypher (including DETACH DELETE). After the
         // C1 fix, the injection attempt becomes an ordinary string literal
         // that round-trips through the DB safely.
-        let dir = std::env::temp_dir().join("graph_store_inject_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — unique-per-call TempDir; see test_create_and_query.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_inject_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
         let store =
             GraphStore::open_or_create(&db_path).expect("open_or_create");
@@ -1328,7 +1333,5 @@ mod tests {
             .expect("count query");
         let count_val: u64 = cnt.rows[0][0].parse().unwrap_or(0);
         assert_eq!(count_val, 2, "injection attempt must not delete nodes");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }
