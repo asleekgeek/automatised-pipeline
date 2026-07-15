@@ -122,12 +122,18 @@ fn build_prd_context(inputs: PrdContextInputs) -> Value {
         "candidate_symbols": candidate_symbols,
         "impacted_communities": impacted_communities,
         "impacted_processes": impacted_processes,
-        "graph_stats": {
-            "nodes": stats.nodes,
-            "edges": stats.edges,
-            "communities": stats.communities,
-            "processes": stats.processes,
-        }
+        "graph_stats": graph_stats_json(stats),
+    })
+}
+
+/// Builds the `graph_stats` sub-object. Split out of `build_prd_context` to
+/// keep that function under the coding-standards §4.2 50-line cap.
+fn graph_stats_json(stats: &GraphStats) -> Value {
+    json!({
+        "nodes": stats.nodes,
+        "edges": stats.edges,
+        "communities": stats.communities,
+        "processes": stats.processes,
     })
 }
 
