@@ -28,7 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   fallback (pre-fix behavior) surfaced 2 spurious `candidate_symbols` from
   unrelated filler words in the description; the hybrid index (post-fix)
   surfaced 1 on the identical graph and description — source: measured on
-  2026-07-15, that test's fixture.
+  2026-07-15, that test's fixture. The 2→1 count is specific to that small
+  fixture, not a guaranteed reduction ratio for arbitrary descriptions/graphs
+  — the regression test itself asserts `before >= after`, not a fixed delta.
 
 ### Changed — `prepare_prd_input` tool schema, `preparer_version` 1.1.0 → 1.2.0
 

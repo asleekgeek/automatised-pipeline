@@ -146,17 +146,13 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
     let verbatim_tokens = matching::extract_verbatim_identifiers(&combined_text);
     let natural_tokens = matching::tokenize_natural(&summary.title, &summary.description);
 
-    let (search_index_dir, search_backend) = resolve_search_backend(&args.graph_path);
-
-    let MatchOutcome {
-        matched,
-        candidates,
-    } = matching::search_and_classify(
-        &store,
-        &verbatim_tokens,
-        &natural_tokens,
-        search_index_dir.as_deref(),
-    );
+    let (
+        MatchOutcome {
+            matched,
+            candidates,
+        },
+        search_backend,
+    ) = resolve_and_match(&store, args, &verbatim_tokens, &natural_tokens);
     // Impacted communities/processes are derived ONLY from trustworthy
     // matches — folding in lexical-only candidates would leak the same
     // false-positive grounding into the impact-analysis fields (issue #14).
@@ -215,6 +211,27 @@ fn resolve_search_backend(graph_path: &Path) -> (Option<PathBuf>, &'static str) 
         );
         (None, "substring_fallback")
     }
+}
+
+/// Resolves the search backend for `args.graph_path` and runs
+/// `search_and_classify` against it, returning the match outcome alongside
+/// the backend label `build_artifact` reports. Bundled into one helper
+/// (review follow-up on issue #18) so `prepare` stays under
+/// coding-standards.md §4.2's 50-line function cap.
+fn resolve_and_match(
+    store: &GraphStore,
+    args: &PrdInputArgs,
+    verbatim_tokens: &[String],
+    natural_tokens: &[String],
+) -> (MatchOutcome, &'static str) {
+    let (search_index_dir, search_backend) = resolve_search_backend(&args.graph_path);
+    let outcome = matching::search_and_classify(
+        store,
+        verbatim_tokens,
+        natural_tokens,
+        search_index_dir.as_deref(),
+    );
+    (outcome, search_backend)
 }
 
 fn finding_dir_for(args: &PrdInputArgs) -> PathBuf {
