@@ -71,33 +71,155 @@ fn test_hallucinated_symbol_produces_critical_finding() {
     let store = build_fixture_graph(&fixture_dir, &graph_dir);
 
     let prd_dir = root.join("prd");
-    let prd_path = write_prd(&prd_dir, "modify `handle_tool_call` and `totally_fake_symbol`");
-    let affected = write_affected(&prd_dir, json!({
-        "affected_symbols": [
-            { "qualified_name": "main.rs::handle_tool_call", "change_kind": "modify", "rationale": "real" },
-            { "qualified_name": "main.rs::totally_fake_symbol", "change_kind": "modify", "rationale": "hallucinated" }
-        ],
-        "scope_claims": []
-    }));
+    let prd_path = write_prd(
+        &prd_dir,
+        "modify `handle_tool_call` and `totally_fake_symbol`",
+    );
+    let affected = write_affected(
+        &prd_dir,
+        json!({
+            "affected_symbols": [
+                { "qualified_name": "main.rs::handle_tool_call", "change_kind": "modify", "rationale": "real" },
+                { "qualified_name": "main.rs::totally_fake_symbol", "change_kind": "modify", "rationale": "hallucinated" }
+            ],
+            "scope_claims": []
+        }),
+    );
 
-    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected))
-        .expect("validate");
+    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected)).expect("validate");
 
-    let hallucination: Vec<_> = report.findings.iter()
+    let hallucination: Vec<_> = report
+        .findings
+        .iter()
         .filter(|f| f.axis == "symbol_hallucination" && f.severity == "critical")
         .collect();
     assert!(
         !hallucination.is_empty(),
         "expected at least one critical symbol_hallucination finding; got {:?}",
-        report.findings.iter().map(|f| (f.axis.clone(), f.severity.clone(), f.symbol.clone())).collect::<Vec<_>>()
+        report
+            .findings
+            .iter()
+            .map(|f| (f.axis.clone(), f.severity.clone(), f.symbol.clone()))
+            .collect::<Vec<_>>()
     );
     assert!(
-        hallucination.iter().any(|f| f.symbol.as_deref() == Some("main.rs::totally_fake_symbol")
-            && f.message.contains("not found")),
+        hallucination.iter().any(
+            |f| f.symbol.as_deref() == Some("main.rs::totally_fake_symbol")
+                && f.message.contains("not found")
+        ),
         "hallucinated symbol must be named in the finding"
     );
     assert_eq!(report.validation_status, "fail");
     assert_eq!(report.summary.hallucinated_symbols, 1);
+    let _ = fs::remove_dir_all(&root);
+}
+
+// source: issue #13 — automatised-pipeline does not index bash (.sh); a PRD
+// claiming to modify a real bash function must not be reported as a
+// `critical` hallucination (the file was never in the indexer's coverage,
+// so the graph cannot confirm or refute the claim).
+#[test]
+fn test_unindexed_language_symbol_is_unverifiable_not_hallucinated() {
+    let root = tmp("unindexed_lang");
+    let _ = fs::remove_dir_all(&root);
+    let fixture_dir = root.join("fixture");
+    let graph_dir = root.join("graph");
+    let store = build_fixture_graph(&fixture_dir, &graph_dir);
+
+    let prd_dir = root.join("prd");
+    let prd_path = write_prd(&prd_dir, "modify `grad_rgb` in `statusline-command.sh`");
+    let affected = write_affected(
+        &prd_dir,
+        json!({
+            "affected_symbols": [
+                { "qualified_name": "statusline-command.sh::grad_rgb", "change_kind": "modify", "rationale": "bash function, really exists on disk" }
+            ],
+            "scope_claims": []
+        }),
+    );
+
+    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected)).expect("validate");
+
+    let critical: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.axis == "symbol_hallucination" && f.severity == "critical")
+        .collect();
+    assert!(
+        critical.is_empty(),
+        "an unindexed-language symbol must never be reported critical; got {:?}",
+        critical
+            .iter()
+            .map(|f| f.message.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let info: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| {
+            f.axis == "symbol_hallucination"
+                && f.severity == "info"
+                && f.symbol.as_deref() == Some("statusline-command.sh::grad_rgb")
+        })
+        .collect();
+    assert_eq!(
+        info.len(),
+        1,
+        "expected exactly one unverifiable info finding"
+    );
+    assert!(
+        info[0].message.contains("could not be verified"),
+        "got {:?}",
+        info[0].message
+    );
+
+    assert_eq!(
+        report.summary.hallucinated_symbols, 0,
+        "unverifiable symbols must not inflate hallucinated_symbols"
+    );
+    assert_eq!(report.summary.unverifiable_symbols, 1);
+    assert_ne!(
+        report.validation_status, "fail",
+        "validation_status must not fail on an unverifiable symbol alone"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+// source: issue #13 — a supported-language file that simply was never part
+// of the indexed graph (outside scope, pruned, or excluded) is a distinct
+// unverifiable case from an unsupported language, but resolves to the same
+// info-severity outcome.
+#[test]
+fn test_supported_language_but_unindexed_file_is_unverifiable() {
+    let root = tmp("unindexed_file");
+    let _ = fs::remove_dir_all(&root);
+    let fixture_dir = root.join("fixture");
+    let graph_dir = root.join("graph");
+    let store = build_fixture_graph(&fixture_dir, &graph_dir);
+
+    let prd_dir = root.join("prd");
+    let prd_path = write_prd(&prd_dir, "modify `other_fn` in `other.rs`");
+    let affected = write_affected(
+        &prd_dir,
+        json!({
+            "affected_symbols": [
+                { "qualified_name": "other.rs::other_fn", "change_kind": "modify", "rationale": "file never indexed" }
+            ],
+            "scope_claims": []
+        }),
+    );
+
+    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected)).expect("validate");
+
+    let critical_count = report
+        .findings
+        .iter()
+        .filter(|f| f.axis == "symbol_hallucination" && f.severity == "critical")
+        .count();
+    assert_eq!(critical_count, 0);
+    assert_eq!(report.summary.unverifiable_symbols, 1);
+    assert_eq!(report.summary.hallucinated_symbols, 0);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -114,24 +236,32 @@ fn test_process_impact_contradiction_fires() {
 
     // Process IDs follow process::<qualified_name> (clustering.rs §489).
     // main() lives at `main.rs::main`, hence process `process::main.rs::main`.
-    let affected = write_affected(&prd_dir, json!({
-        "affected_symbols": [
-            { "qualified_name": "main.rs::handle_tool_call", "change_kind": "modify", "rationale": "modify body" }
-        ],
-        "scope_claims": [
-            { "kind": "process_exclusion", "processes": ["process::main.rs::main"] }
-        ]
-    }));
+    let affected = write_affected(
+        &prd_dir,
+        json!({
+            "affected_symbols": [
+                { "qualified_name": "main.rs::handle_tool_call", "change_kind": "modify", "rationale": "modify body" }
+            ],
+            "scope_claims": [
+                { "kind": "process_exclusion", "processes": ["process::main.rs::main"] }
+            ]
+        }),
+    );
 
-    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected))
-        .expect("validate");
-    let critical: Vec<_> = report.findings.iter()
+    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected)).expect("validate");
+    let critical: Vec<_> = report
+        .findings
+        .iter()
         .filter(|f| f.axis == "process_impact" && f.severity == "critical")
         .collect();
     assert!(
         !critical.is_empty(),
         "expected critical process_impact finding; got {:?}",
-        report.findings.iter().map(|f| (f.axis.clone(), f.severity.clone())).collect::<Vec<_>>()
+        report
+            .findings
+            .iter()
+            .map(|f| (f.axis.clone(), f.severity.clone()))
+            .collect::<Vec<_>>()
     );
     assert!(critical[0].message.contains("main"));
     assert_eq!(report.validation_status, "fail");
@@ -149,25 +279,36 @@ fn test_regex_fallback_when_structured_contract_missing() {
     let prd_dir = root.join("prd");
     let prd_path = write_prd(&prd_dir, "modify `handle_tool_call` in `src/main.rs`");
 
-    let report = prd_validator::validate_prd(&store, &prd_path, None)
-        .expect("validate");
+    let report = prd_validator::validate_prd(&store, &prd_path, None).expect("validate");
     assert!(report.contract_missing, "must flag contract_missing");
     assert_eq!(report.extraction_mode, "regex_fallback");
     // Regex fallback extracts at least handle_tool_call and src/main.rs.
     // `src/main.rs` must resolve via layer-2 strip-prefix (main.rs::...);
     // bare `handle_tool_call` only yields did-you-mean suggestions, so it
     // surfaces as an info-level unresolved token rather than a hit.
-    assert!(report.summary.claimed_symbols >= 2,
-        "expected >= 2 claims from regex fallback; got {}", report.summary.claimed_symbols);
-    let info_count = report.findings.iter()
+    assert!(
+        report.summary.claimed_symbols >= 2,
+        "expected >= 2 claims from regex fallback; got {}",
+        report.summary.claimed_symbols
+    );
+    let info_count = report
+        .findings
+        .iter()
         .filter(|f| f.axis == "symbol_hallucination" && f.severity == "info")
         .count();
-    assert!(info_count >= 1,
-        "regex fallback must surface unresolved tokens as info findings");
+    assert!(
+        info_count >= 1,
+        "regex fallback must surface unresolved tokens as info findings"
+    );
     // No critical findings expected — structured-modify gate doesn't fire.
-    let critical = report.findings.iter()
+    let critical = report
+        .findings
+        .iter()
         .filter(|f| f.severity == "critical")
         .count();
-    assert_eq!(critical, 0, "regex fallback unresolved tokens must not be critical");
+    assert_eq!(
+        critical, 0,
+        "regex fallback unresolved tokens must not be critical"
+    );
     let _ = fs::remove_dir_all(&root);
 }
