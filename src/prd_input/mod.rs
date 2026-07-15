@@ -26,11 +26,13 @@
 // docs/stage-4-spec when it lands). Match-mode classification: issue #14
 // root-cause discussion, see `matching` module doc comment.
 
+mod artifact;
 mod matching;
 
 use crate::graph_store::GraphStore;
-use matching::{MatchOutcome, MatchedSymbol};
-use serde_json::{json, Value};
+use artifact::{build_artifact, ArtifactInputs};
+use matching::MatchOutcome;
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -88,17 +90,21 @@ pub struct PrdInputArgs {
 // Orchestration
 // ---------------------------------------------------------------------------
 
-/// Runs stage 4 end to end (finding mode OR feature-description mode).
-pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutcome, String> {
-    // Resolve the working dir + summary + verified receipt per mode. Both modes
-    // converge on the SAME search/enrich/artifact path below.
-    let (out_dir, summary, verified) = match (&args.finding_id, &args.feature_description) {
+/// Resolves the working dir + summary + verified receipt for whichever mode
+/// `args` selects. Both modes converge on the SAME search/enrich/artifact
+/// path in `prepare` below — this function's only job is to produce the
+/// three pieces that path needs, however each mode obtains them.
+fn resolve_mode(
+    args: &PrdInputArgs,
+    prepared_at: &str,
+) -> Result<(PathBuf, FindingSummary, VerifiedReceipt), String> {
+    match (&args.finding_id, &args.feature_description) {
         (Some(_), _) => {
             // Finding mode — enforce the verified stage-2 gate.
             let finding_dir = finding_dir_for(args);
             let verified = load_verified(&finding_dir)?;
             let summary = load_finding_summary(&finding_dir)?;
-            (finding_dir, summary, verified)
+            Ok((finding_dir, summary, verified))
         }
         (None, Some(desc)) => {
             // Feature mode — synthesize a summary from intent, no stage-2 gate.
@@ -108,24 +114,27 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
             }
             let summary = synth_summary_from_description(desc);
             let verified = VerifiedReceipt {
-                finalized_at: prepared_at.clone(),
+                finalized_at: prepared_at.to_string(),
                 stage1_refined_path: String::new(),
                 verified: true,
             };
-            (
+            Ok((
                 feature_dir_for(args, &summary.finding_id),
                 summary,
                 verified,
-            )
+            ))
         }
-        (None, None) => {
-            return Err(
-                "prepare_prd_input: provide either finding_id (finding mode) \
-                 or feature_description (feature mode)"
-                    .into(),
-            );
-        }
-    };
+        (None, None) => Err(
+            "prepare_prd_input: provide either finding_id (finding mode) \
+             or feature_description (feature mode)"
+                .into(),
+        ),
+    }
+}
+
+/// Runs stage 4 end to end (finding mode OR feature-description mode).
+pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutcome, String> {
+    let (out_dir, summary, verified) = resolve_mode(args, &prepared_at)?;
 
     let store = GraphStore::open_or_create(&args.graph_path)?;
     let stats = collect_graph_stats(&store);
@@ -346,114 +355,6 @@ fn count_label(store: &GraphStore, label: &str) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Artifact builder — pure; no I/O
-// ---------------------------------------------------------------------------
-
-/// Parameter object for `build_artifact` — coding-standards §4.4 caps
-/// function parameters at 4; this pure builder needs every one of these
-/// pieces, so they're grouped into a single borrowed struct instead of nine
-/// positional arguments.
-#[derive(Clone, Copy)]
-struct ArtifactInputs<'a> {
-    args: &'a PrdInputArgs,
-    verified: &'a VerifiedReceipt,
-    summary: &'a FindingSummary,
-    prepared_at: &'a str,
-    /// Verbatim/exact-name evidence — verified grounding.
-    matched: &'a [MatchedSymbol],
-    /// Lexical-only hits, kept separate so a consumer can never mistake a
-    /// substring coincidence for confirmed relatedness (issue #14).
-    candidates: &'a [MatchedSymbol],
-    impacted_communities: &'a [String],
-    impacted_processes: &'a [String],
-    stats: &'a GraphStats,
-}
-
-/// Bundles matched/candidate symbols and impact fields into the stage-4
-/// artifact. Pure; no I/O.
-fn build_artifact(inputs: &ArtifactInputs) -> Value {
-    let ArtifactInputs {
-        args,
-        verified,
-        summary,
-        prepared_at,
-        matched,
-        candidates,
-        impacted_communities,
-        impacted_processes,
-        stats,
-    } = *inputs;
-    let matched_symbols: Vec<Value> = matched.iter().map(matching::matched_to_json).collect();
-    let candidate_symbols: Vec<Value> = candidates.iter().map(matching::matched_to_json).collect();
-
-    let summary_text = if summary.description.is_empty() {
-        summary.title.clone()
-    } else {
-        format!("{} — {}", summary.title, summary.description)
-    };
-
-    // Effective finding id: the real finding in finding mode, or the synthetic
-    // feature slug in feature mode. stage-2 path only exists in finding mode.
-    let effective_finding_id = args
-        .finding_id
-        .clone()
-        .unwrap_or_else(|| summary.finding_id.clone());
-    let stage2_rel = if args.finding_id.is_some() {
-        format!("findings/{}/stage-2.verified.json", effective_finding_id)
-    } else {
-        String::new()
-    };
-    let mode = if args.finding_id.is_some() {
-        "finding"
-    } else {
-        "feature"
-    };
-
-    json!({
-        "run_id": args.run_id,
-        "finding_id": effective_finding_id,
-        "mode": mode,
-        "stage2_verified_path": stage2_rel,
-        "graph_path": args.graph_path.to_string_lossy(),
-        "prepared_at": prepared_at,
-        "prd_context": {
-            "finding_summary": summary_text,
-            "finding_title": summary.title,
-            "relevance_category": summary.relevance_category,
-            "finalized_at": verified.finalized_at,
-            "stage1_refined_path": verified.stage1_refined_path,
-            // NOTE (issue #14): this flag reports whether the SOURCE FINDING
-            // passed the stage-2 verification gate (finding mode) or is a
-            // synthesized feature request (feature mode, always true here).
-            // It says nothing about the reliability of individual
-            // `matched_symbols` entries — that is now carried per-symbol by
-            // `match_mode`/`confidence`, and lexical-only hits are excluded
-            // from `matched_symbols` entirely (see `candidate_symbols`).
-            "verified": verified.verified,
-            "finding_id": summary.finding_id,
-            "matched_symbols": matched_symbols,
-            // Lexical-only hits (issue #14): substring/fuzzy matches with no
-            // exact-identity evidence. Exposed with `match_mode: "lexical"`
-            // and a raw `confidence` score for visibility, but deliberately
-            // NOT folded into `matched_symbols` or into the impact fields
-            // below — an empty array here (or an empty matched_symbols) is
-            // the correct output when nothing can be verified, per issue #14
-            // ("a misleading bundle is worse than an empty one").
-            "candidate_symbols": candidate_symbols,
-            "impacted_communities": impacted_communities,
-            "impacted_processes": impacted_processes,
-            "graph_stats": {
-                "nodes": stats.nodes,
-                "edges": stats.edges,
-                "communities": stats.communities,
-                "processes": stats.processes,
-            }
-        },
-        "preparer_version": PREPARER_VERSION,
-    })
-}
-
-// ---------------------------------------------------------------------------
 // Filesystem writes
 // ---------------------------------------------------------------------------
 
@@ -501,26 +402,5 @@ fn update_index(args: &PrdInputArgs, prepared_at: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_load_verified_rejects_false_flag() {
-        let tmp = std::env::temp_dir().join(format!("prd_input_false_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let body = json!({
-            "verified": false,
-            "finalized_at": "2026-04-11T00:00:00Z",
-            "stage1_refined_path": "findings/f/stage-1.refined.json",
-        });
-        fs::write(
-            tmp.join("stage-2.verified.json"),
-            serde_json::to_vec_pretty(&body).unwrap(),
-        )
-        .unwrap();
-        let err = load_verified(&tmp).err().unwrap();
-        assert!(err.contains("stage_2_not_verified"), "got: {err}");
-        let _ = fs::remove_dir_all(&tmp);
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;
