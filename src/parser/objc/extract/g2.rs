@@ -1,10 +1,9 @@
 // parser::objc::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing: Option<&str>) {
     let decl = node.child_by_field_name("declarator");
@@ -51,7 +50,6 @@ pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing
     }
 }
 
-
 pub(super) fn node_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     let mut cursor = node.walk();
     for c in node.children(&mut cursor) {
@@ -61,7 +59,6 @@ pub(super) fn node_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<
     }
     None
 }
-
 
 /// Emits a C `struct`/`union` declared in an ObjC file as a Struct plus its
 /// fields (mirrors the C parser). source: tree-sitter-grammars/tree-sitter-objc
@@ -95,7 +92,6 @@ pub(super) fn extract_c_struct(ctx: &mut Ctx, node: Node, scope: &str) {
         extract_c_struct_fields(ctx, body, &qn);
     }
 }
-
 
 /// Field nodes + HasField edges for a C struct body. `field_declaration`'s
 /// `declarator` field is `multiple` (`int a, b;`) — walk all declarator children
@@ -147,7 +143,6 @@ pub(super) fn extract_c_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str)
     }
 }
 
-
 /// First `field_identifier` under a (possibly pointer/array) declarator.
 pub(super) fn find_c_field_identifier(source: &str, node: Node) -> String {
     let mut stack = vec![node];
@@ -162,7 +157,6 @@ pub(super) fn find_c_field_identifier(source: &str, node: Node) -> String {
     }
     String::new()
 }
-
 
 /// Emits a C `enum` as an Enum plus its enumerators as Variant constants.
 pub(super) fn extract_c_enum(ctx: &mut Ctx, node: Node, scope: &str) {
@@ -223,7 +217,6 @@ pub(super) fn extract_c_enum(ctx: &mut Ctx, node: Node, scope: &str) {
         }
     }
 }
-
 
 /// Emits a C `typedef` as a Constant marked `typedef=true` (mirrors the C
 /// parser, which AP models typedefs the same way). The declared name is the

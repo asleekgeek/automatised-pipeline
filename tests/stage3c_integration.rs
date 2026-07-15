@@ -80,16 +80,14 @@ fn test_clustering_and_process_tracing() {
 
     // Index + resolve
     let graph_dir = tmp_root.join("graph");
-    let idx = indexer::index_codebase(&fixture_dir, &graph_dir)
-        .expect("index_codebase");
+    let idx = indexer::index_codebase(&fixture_dir, &graph_dir).expect("index_codebase");
     assert_eq!(idx.files_indexed, 3);
 
     let store = GraphStore::open_or_create(&graph_dir).unwrap();
     let _res = resolver::resolve_graph(&store).expect("resolve_graph");
 
     // Cluster
-    let result = clustering::cluster_graph(&store, 1.0)
-        .expect("cluster_graph");
+    let result = clustering::cluster_graph(&store, 1.0).expect("cluster_graph");
 
     assert!(
         result.communities > 0,
@@ -99,22 +97,28 @@ fn test_clustering_and_process_tracing() {
 
     // Verify I1: every symbol has exactly one MemberOf edge
     let symbol_labels = [
-        "Function", "Method", "Struct", "Enum", "Trait",
-        "Constant", "TypeAlias", "Module",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
     ];
     let mut total_symbols = 0u64;
     let mut total_memberof = 0u64;
     for label in &symbol_labels {
-        let qr = store.execute_query(
-            &format!("MATCH (n:{label}) RETURN count(n)")
-        ).unwrap();
+        let qr = store
+            .execute_query(&format!("MATCH (n:{label}) RETURN count(n)"))
+            .unwrap();
         let count: u64 = qr.rows[0][0].parse().unwrap_or(0);
         total_symbols += count;
 
         let rel = format!("MemberOf_{label}_Community");
-        let qr2 = store.execute_query(
-            &format!("MATCH ()-[r:{rel}]->() RETURN count(r)")
-        ).unwrap();
+        let qr2 = store
+            .execute_query(&format!("MATCH ()-[r:{rel}]->() RETURN count(r)"))
+            .unwrap();
         let edge_count: u64 = qr2.rows[0][0].parse().unwrap_or(0);
         total_memberof += edge_count;
     }
@@ -131,12 +135,10 @@ fn test_clustering_and_process_tracing() {
     );
 
     // Verify Process nodes exist
-    let qr = store.execute_query("MATCH (p:Process) RETURN p.name, p.entry_kind")
+    let qr = store
+        .execute_query("MATCH (p:Process) RETURN p.name, p.entry_kind")
         .unwrap();
-    assert!(
-        !qr.rows.is_empty(),
-        "should have Process nodes"
-    );
+    assert!(!qr.rows.is_empty(), "should have Process nodes");
 
     // Verify main entry point was detected
     let entry_kinds: Vec<&str> = qr.rows.iter().map(|r| r[1].as_str()).collect();
@@ -148,10 +150,12 @@ fn test_clustering_and_process_tracing() {
     // Verify I4: every Process has exactly one EntryPointOf edge
     for row in &qr.rows {
         let pname = row[0].replace('\'', "\\'");
-        let ep_count_qr = store.execute_query(&format!(
-            "MATCH (f)-[:EntryPointOf_Function_Process]->(p:Process) \
+        let ep_count_qr = store
+            .execute_query(&format!(
+                "MATCH (f)-[:EntryPointOf_Function_Process]->(p:Process) \
              WHERE p.name = '{pname}' RETURN count(f)"
-        )).unwrap();
+            ))
+            .unwrap();
         let ep_count: u64 = ep_count_qr.rows[0][0].parse().unwrap_or(0);
         assert!(
             ep_count >= 1,
@@ -164,9 +168,9 @@ fn test_clustering_and_process_tracing() {
     assert!(!processes.is_empty(), "get_processes should return data");
 
     // Verify get_impact for main function (use actual ID from graph)
-    let main_qr = store.execute_query(
-        "MATCH (f:Function) WHERE f.name = 'main' RETURN f.id"
-    ).unwrap();
+    let main_qr = store
+        .execute_query("MATCH (f:Function) WHERE f.name = 'main' RETURN f.id")
+        .unwrap();
     let main_id = &main_qr.rows[0][0];
     let impact = clustering::get_impact(&store, main_id).unwrap();
     assert!(
@@ -177,10 +181,12 @@ fn test_clustering_and_process_tracing() {
     // Ordering fix: ParticipatesIn edges must carry the real BFS depth, not a
     // flattened 0. The fixture chain is main(0) -> process_data(1) ->
     // {sanitize,transform}(2), so the max depth across participants is > 0.
-    let depth_qr = store.execute_query(
-        "MATCH ()-[r:ParticipatesIn_Function_Process]->() RETURN r.depth"
-    ).unwrap();
-    let max_part_depth: u64 = depth_qr.rows.iter()
+    let depth_qr = store
+        .execute_query("MATCH ()-[r:ParticipatesIn_Function_Process]->() RETURN r.depth")
+        .unwrap();
+    let max_part_depth: u64 = depth_qr
+        .rows
+        .iter()
         .filter_map(|r| r.first().and_then(|d| d.parse::<u64>().ok()))
         .max()
         .unwrap_or(0);
@@ -193,9 +199,9 @@ fn test_clustering_and_process_tracing() {
     // Reverse-traversal fix: get_impact must return the symbols that DEPEND ON
     // the target. process_data is called by both main and test_basic, so its
     // callers set is non-empty and contains main.
-    let pd_qr = store.execute_query(
-        "MATCH (f:Function) WHERE f.name = 'process_data' RETURN f.id"
-    ).unwrap();
+    let pd_qr = store
+        .execute_query("MATCH (f:Function) WHERE f.name = 'process_data' RETURN f.id")
+        .unwrap();
     let pd_id = &pd_qr.rows[0][0];
     let pd_impact = clustering::get_impact(&store, pd_id).unwrap();
     assert!(
@@ -203,7 +209,9 @@ fn test_clustering_and_process_tracing() {
         "get_impact(process_data) must return its callers (main, test_basic), \
          got none — reverse traversal flattened away"
     );
-    let caller_qns: Vec<&str> = pd_impact.callers.iter()
+    let caller_qns: Vec<&str> = pd_impact
+        .callers
+        .iter()
         .map(|c| c.qualified_name.as_str())
         .collect();
     assert!(
@@ -254,8 +262,7 @@ fn test_cluster_graph_returns_mapping() {
     resolver::resolve_graph(&store).expect("resolve_graph");
     clustering::cluster_graph(&store, 1.0).expect("cluster_graph");
 
-    let memberships =
-        clustering::collect_cluster_memberships(&store).expect("collect");
+    let memberships = clustering::collect_cluster_memberships(&store).expect("collect");
 
     assert!(
         !memberships.entries.is_empty(),
@@ -332,16 +339,14 @@ fn test_cluster_graph_is_idempotent() {
     let store = GraphStore::open_or_create(&graph_dir).unwrap();
     resolver::resolve_graph(&store).expect("resolve_graph");
 
-    let first = clustering::cluster_graph(&store, 1.0)
-        .expect("first cluster_graph");
+    let first = clustering::cluster_graph(&store, 1.0).expect("first cluster_graph");
     let second = clustering::cluster_graph(&store, 1.0)
         .expect("second cluster_graph must not hit duplicate primary keys");
 
     // Same graph, same gamma → same partition size, and the membership
     // mapping must be complete (one entry per symbol), not doubled or empty.
     assert_eq!(first.communities, second.communities);
-    let memberships =
-        clustering::collect_cluster_memberships(&store).expect("collect");
+    let memberships = clustering::collect_cluster_memberships(&store).expect("collect");
     let mut seen = std::collections::HashSet::new();
     for m in &memberships.entries {
         assert!(

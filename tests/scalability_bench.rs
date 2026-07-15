@@ -39,8 +39,8 @@ fn test_index_500_file_synthetic_fixture() {
 
     let graph_dir = tmp_root.join("graph");
     let start = Instant::now();
-    let result = indexer::index_codebase(&src_dir, &graph_dir)
-        .expect("index_codebase should succeed");
+    let result =
+        indexer::index_codebase(&src_dir, &graph_dir).expect("index_codebase should succeed");
     let elapsed = start.elapsed();
 
     assert_eq!(

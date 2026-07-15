@@ -7,12 +7,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 pub(crate) const TS_PACKAGE_CLAUSE: &str = "package_clause";
 pub(crate) const TS_IMPORT_DECL: &str = "import_declaration";
@@ -22,7 +19,6 @@ pub(crate) const TS_METHOD_DECL: &str = "method_declaration";
 pub(crate) const TS_CONST_DECL: &str = "const_declaration";
 pub(crate) const TS_VAR_DECL: &str = "var_declaration";
 pub(crate) const TS_CALL_EXPR: &str = "call_expression";
-
 
 pub fn parse_go_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
     let lang: tree_sitter::Language = tree_sitter_go::LANGUAGE.into();
@@ -47,7 +43,6 @@ pub fn parse_go_file(source: &str, file_path: &str) -> Result<ParseResult, Strin
     })
 }
 
-
 pub(crate) struct Ctx<'a> {
     pub(crate) source: &'a str,
     #[allow(dead_code)]
@@ -56,7 +51,6 @@ pub(crate) struct Ctx<'a> {
     pub(crate) refs: Vec<ExtractedRef>,
     pub(crate) next_seq: u64,
 }
-
 
 pub(crate) fn go_visibility(name: &str) -> String {
     // Exported iff first letter is uppercase; idiomatic Go convention.

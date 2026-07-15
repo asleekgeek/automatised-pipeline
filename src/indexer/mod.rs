@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-mod walk;
-mod persist;
 mod light_link;
+mod persist;
+mod walk;
 
-use walk::{collect_source_files, is_dependency_path, WalkOptions};
+use persist::{index_single_file, insert_ancestor_dirs, insert_dir_file_edge, insert_file_node};
 pub use walk::DependencyScope;
-use persist::{insert_ancestor_dirs, insert_dir_file_edge, insert_file_node, index_single_file};
+use walk::{collect_source_files, is_dependency_path, WalkOptions};
 
 // ---------------------------------------------------------------------------
 // Resource limits — source: security hardening (H1).
@@ -91,13 +91,7 @@ impl SymbolBatch {
         self.node_row_count += 1;
     }
 
-    fn push_edge(
-        &mut self,
-        table: &str,
-        from: String,
-        to: String,
-        props: Vec<(String, String)>,
-    ) {
+    fn push_edge(&mut self, table: &str, from: String, to: String, props: Vec<(String, String)>) {
         self.edges
             .entry(table.to_string())
             .or_default()
@@ -147,7 +141,10 @@ pub fn index_codebase_with_language(
     let store = GraphStore::open_or_create(graph_path)?;
     store.create_schema()?;
 
-    let walk_opts = WalkOptions { language_filter, dependency_scope };
+    let walk_opts = WalkOptions {
+        language_filter,
+        dependency_scope,
+    };
     let source_files = collect_source_files(codebase_path, walk_opts)?;
     // label_by_qn: qualified_name/id -> label, populated as nodes are created.
     // Used to resolve edge tables without probing the database.
@@ -177,7 +174,12 @@ pub fn index_codebase_with_language(
             ));
         }
         insert_ancestor_dirs(
-            &store, &mut batch, codebase_path, file_path, &mut dir_nodes_inserted, &mut label_by_qn,
+            &store,
+            &mut batch,
+            codebase_path,
+            file_path,
+            &mut dir_nodes_inserted,
+            &mut label_by_qn,
         )?;
         insert_file_node(&store, file_path, &rel_str)?;
         label_by_qn.insert(rel_str.to_string(), "File".into());
@@ -188,7 +190,12 @@ pub fn index_codebase_with_language(
         let restrict_to_public_api = dependency_scope == DependencyScope::PublicApi
             && is_dependency_path(codebase_path, file_path);
         match index_single_file(
-            &store, &mut batch, file_path, &rel_str, &mut label_by_qn, &mut seen_node_ids,
+            &store,
+            &mut batch,
+            file_path,
+            &rel_str,
+            &mut label_by_qn,
+            &mut seen_node_ids,
             restrict_to_public_api,
         ) {
             Ok(()) => files_indexed += 1,
@@ -250,10 +257,7 @@ mod tests {
         // Ensure the directory is fully gone before creating a fresh DB.
         assert!(!tmp.exists(), "failed to clean temp dir: {}", tmp.display());
 
-        let result = index_codebase(
-            Path::new("src"),
-            &tmp,
-        ).unwrap();
+        let result = index_codebase(Path::new("src"), &tmp).unwrap();
 
         assert!(
             result.files_indexed >= 3,
@@ -273,19 +277,16 @@ mod tests {
 
         // Verify a known function exists via Cypher
         let store = GraphStore::open_or_create(&tmp).unwrap();
-        let qr = store.execute_query(
-            "MATCH (f:Function) WHERE f.name = 'main' RETURN f.name"
-        ).unwrap();
-        assert!(
-            !qr.rows.is_empty(),
-            "should find main() in graph"
-        );
+        let qr = store
+            .execute_query("MATCH (f:Function) WHERE f.name = 'main' RETURN f.name")
+            .unwrap();
+        assert!(!qr.rows.is_empty(), "should find main() in graph");
         assert_eq!(qr.rows[0][0], "main");
 
         // Verify file nodes exist
-        let qr2 = store.execute_query(
-            "MATCH (f:File) RETURN count(f) AS cnt"
-        ).unwrap();
+        let qr2 = store
+            .execute_query("MATCH (f:File) RETURN count(f) AS cnt")
+            .unwrap();
         assert!(
             !qr2.rows.is_empty() && qr2.rows[0][0].parse::<u64>().unwrap_or(0) > 0,
             "should have File nodes"
@@ -370,7 +371,12 @@ mod tests {
 
         // Each document type is a navigable File node (binary included).
         for id in [
-            "docs/guide.md", "config.json", "notes.txt", "report.pdf", "spec.docx", "js/app.js",
+            "docs/guide.md",
+            "config.json",
+            "notes.txt",
+            "report.pdf",
+            "spec.docx",
+            "js/app.js",
         ] {
             let q = store
                 .execute_query(&format!("MATCH (f:File) WHERE f.id = '{id}' RETURN f.id"))
@@ -496,13 +502,18 @@ mod tests {
         assert_eq!(names(WalkOptions::default()), vec!["app.rs"]);
 
         // Full: node_modules is descended, .git stays out.
-        let full = WalkOptions { language_filter: None, dependency_scope: DependencyScope::Full };
+        let full = WalkOptions {
+            language_filter: None,
+            dependency_scope: DependencyScope::Full,
+        };
         assert_eq!(names(full), vec!["app.rs", "dep.rs"]);
 
         // PublicApi also descends at the walk level — the visibility filter
         // is applied at persistence time (see persist::tests), not here.
-        let public_api =
-            WalkOptions { language_filter: None, dependency_scope: DependencyScope::PublicApi };
+        let public_api = WalkOptions {
+            language_filter: None,
+            dependency_scope: DependencyScope::PublicApi,
+        };
         assert_eq!(names(public_api), vec!["app.rs", "dep.rs"]);
 
         let _ = std::fs::remove_dir_all(&root);
@@ -527,11 +538,13 @@ mod tests {
         std::fs::write(
             root.join("app.rs"),
             "pub fn app_pub() {}\nfn app_private() {}\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             root.join("node_modules/dep.rs"),
             "pub fn dep_pub() {}\nfn dep_private() {}\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         // issue #25 audit: process::id() collides across processes under PID
         // reuse; tempfile's random suffix does not.
@@ -554,7 +567,11 @@ mod tests {
 
         assert_eq!(
             names,
-            vec!["app_private".to_string(), "app_pub".to_string(), "dep_pub".to_string()],
+            vec![
+                "app_private".to_string(),
+                "app_pub".to_string(),
+                "dep_pub".to_string()
+            ],
             "PublicApi must keep both project functions and only the pub dependency function"
         );
 

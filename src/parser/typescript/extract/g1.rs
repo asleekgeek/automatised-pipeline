@@ -1,25 +1,27 @@
 // parser::typescript::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // ---------------------------------------------------------------------------
 // Top-level extraction
 // ---------------------------------------------------------------------------
 
-pub(crate) fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str, is_exported: bool) {
+pub(crate) fn extract_top_level(
+    ctx: &mut ExtractCtx,
+    parent: Node,
+    scope: &str,
+    is_exported: bool,
+) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
             TS_FUNC_DECL | TS_GENERATOR_FUNC_DECL => {
                 extract_function(ctx, child, scope, is_exported)
             }
-            TS_CLASS_DECL | TS_ABSTRACT_CLASS_DECL => {
-                extract_class(ctx, child, scope, is_exported)
-            }
+            TS_CLASS_DECL | TS_ABSTRACT_CLASS_DECL => extract_class(ctx, child, scope, is_exported),
             TS_INTERFACE_DECL => extract_interface(ctx, child, scope, is_exported),
             TS_ENUM_DECL => extract_enum(ctx, child, scope, is_exported),
             TS_TYPE_ALIAS_DECL => extract_type_alias(ctx, child, scope, is_exported),
@@ -33,7 +35,6 @@ pub(crate) fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str,
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Function extraction
 // ---------------------------------------------------------------------------
@@ -44,7 +45,11 @@ pub(super) fn extract_function(ctx: &mut ExtractCtx, node: Node, scope: &str, is
         return;
     }
     let qn = qual(scope, &name);
-    let vis = if is_exported || has_export_keyword(node) { "pub".to_string() } else { String::new() };
+    let vis = if is_exported || has_export_keyword(node) {
+        "pub".to_string()
+    } else {
+        String::new()
+    };
     let is_async = has_async_keyword(ctx.source, node);
     ctx.nodes.push(ExtractedNode {
         label: LABEL_FUNCTION.to_string(),
@@ -65,7 +70,6 @@ pub(super) fn extract_function(ctx: &mut ExtractCtx, node: Node, scope: &str, is
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Class extraction
 // ---------------------------------------------------------------------------
@@ -76,7 +80,11 @@ pub(super) fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str, is_ex
         return;
     }
     let qn = qual(scope, &name);
-    let vis = if is_exported || has_export_keyword(node) { "pub".to_string() } else { String::new() };
+    let vis = if is_exported || has_export_keyword(node) {
+        "pub".to_string()
+    } else {
+        String::new()
+    };
 
     ctx.nodes.push(ExtractedNode {
         label: LABEL_STRUCT.to_string(),
@@ -102,7 +110,6 @@ pub(super) fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str, is_ex
     }
 }
 
-
 pub(super) fn extract_class_heritage(ctx: &mut ExtractCtx, class_node: Node, class_qn: &str) {
     let mut cursor = class_node.walk();
     for child in class_node.children(&mut cursor) {
@@ -118,7 +125,6 @@ pub(super) fn extract_class_heritage(ctx: &mut ExtractCtx, class_node: Node, cla
         }
     }
 }
-
 
 pub(super) fn extract_heritage_clause(
     ctx: &mut ExtractCtx,
@@ -153,7 +159,6 @@ pub(super) fn extract_heritage_clause(
     }
 }
 
-
 pub(super) fn extract_class_body(ctx: &mut ExtractCtx, body: Node, class_qn: &str) {
     if body.kind() != TS_CLASS_BODY {
         return;
@@ -167,7 +172,6 @@ pub(super) fn extract_class_body(ctx: &mut ExtractCtx, body: Node, class_qn: &st
         }
     }
 }
-
 
 pub(super) fn extract_method(ctx: &mut ExtractCtx, node: Node, class_qn: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -200,13 +204,13 @@ pub(super) fn extract_method(ctx: &mut ExtractCtx, node: Node, class_qn: &str) {
     }
 }
 
-
 pub(super) fn extract_field(ctx: &mut ExtractCtx, node: Node, class_qn: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
         return;
     }
-    let type_ann = node.child_by_field_name("type")
+    let type_ann = node
+        .child_by_field_name("type")
         .map(|n| node_text(ctx.source, n))
         .unwrap_or_default();
     let vis = extract_ts_member_visibility(ctx.source, node);

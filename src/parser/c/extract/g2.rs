@@ -1,10 +1,9 @@
 // parser::c::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
     // ``declarator`` is a ``function_declarator``; its own ``declarator``
@@ -40,7 +39,6 @@ pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
-
 pub(super) fn extract_function_prototype(ctx: &mut Ctx, node: Node, scope: &str) {
     // Only emit a Function node for pure prototypes — skip forward
     // declarations of variables (``int x;``) which also land in ``declaration``.
@@ -68,7 +66,6 @@ pub(super) fn extract_function_prototype(ctx: &mut Ctx, node: Node, scope: &str)
         to_qualified_name: qn,
     });
 }
-
 
 pub(super) fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
@@ -102,7 +99,6 @@ pub(super) fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
 pub(crate) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
@@ -117,7 +113,10 @@ pub(crate) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
                 .trim()
                 .to_string();
             if !tail.is_empty()
-                && tail.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+                && tail
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_alphabetic() || c == '_')
             {
                 let seq = {
                     ctx.next_seq += 1;

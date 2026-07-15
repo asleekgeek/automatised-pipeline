@@ -1,10 +1,9 @@
 // parser::swift::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // ``class_declaration`` is the Swift grammar's umbrella for class, struct,
 // actor, extension, and enum. The grammar DOES expose the kind as the
@@ -24,7 +23,6 @@ pub(super) fn classify_class(source: &str, node: Node) -> (&'static str, bool) {
     }
 }
 
-
 pub(super) fn visibility_modifier(source: &str, node: Node) -> String {
     let text = node_text(source, node);
     let head = text.lines().next().unwrap_or("");
@@ -36,8 +34,12 @@ pub(super) fn visibility_modifier(source: &str, node: Node) -> String {
     "internal".to_string()
 }
 
-
-pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(
+    ctx: &mut Ctx,
+    parent: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -69,7 +71,6 @@ pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosi
     }
 }
 
-
 pub(super) fn find_name(source: &str, node: Node) -> String {
     // Try the canonical field first.
     let n = node_field_text(source, node, "name");
@@ -89,7 +90,6 @@ pub(super) fn find_name(source: &str, node: Node) -> String {
     }
     String::new()
 }
-
 
 pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
     let (label, is_extension) = classify_class(ctx.source, node);
@@ -127,7 +127,6 @@ pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
-
 pub(super) fn find_block_child(node: Node) -> Option<Node> {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -145,7 +144,6 @@ pub(super) fn find_block_child(node: Node) -> Option<Node> {
     }
     None
 }
-
 
 pub(super) fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
@@ -175,8 +173,12 @@ pub(super) fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
-
-pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(super) fn extract_function(
+    ctx: &mut Ctx,
+    node: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
         return;

@@ -1,10 +1,9 @@
 // parser::kotlin::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // Kotlin declaration kinds the grammar exposes as ``class_declaration``
 // are distinguished by a leading modifier: ``interface``, ``enum class``,
@@ -33,7 +32,6 @@ pub(super) fn classify_class(source: &str, node: Node) -> &'static str {
     LABEL_STRUCT
 }
 
-
 pub(super) fn visibility_modifier(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -50,8 +48,12 @@ pub(super) fn visibility_modifier(source: &str, node: Node) -> String {
     "public".to_string()
 }
 
-
-pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(
+    ctx: &mut Ctx,
+    parent: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
@@ -91,7 +93,6 @@ pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosi
     }
 }
 
-
 pub(super) fn first_identifier(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -101,7 +102,6 @@ pub(super) fn first_identifier(source: &str, node: Node) -> String {
     }
     String::new()
 }
-
 
 pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -149,15 +149,19 @@ pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str) {
     // Body — recurse with this type as the enclosing scope. The -ng grammar has
     // no `body` field; the body is a `class_body` child, or an `enum_class_body`
     // child for enums (which holds the enum_entry members).
-    let body = child_of_kind(node, TS_CLASS_BODY)
-        .or_else(|| child_of_kind(node, TS_ENUM_CLASS_BODY));
+    let body =
+        child_of_kind(node, TS_CLASS_BODY).or_else(|| child_of_kind(node, TS_ENUM_CLASS_BODY));
     if let Some(body) = body {
         extract_children(ctx, body, &qn, Some(&qn));
     }
 }
 
-
-pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(super) fn extract_function(
+    ctx: &mut Ctx,
+    node: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         first_identifier(ctx.source, node)
@@ -222,7 +226,6 @@ pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing
         extract_calls(ctx, node, &qn);
     }
 }
-
 
 pub(super) fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = first_identifier(ctx.source, node);

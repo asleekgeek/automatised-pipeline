@@ -317,11 +317,7 @@ impl GraphStore {
 
     /// Inserts a single node. `properties` are `(key, cypher_literal)` pairs.
     /// Values are interpolated as-is into Cypher — caller must quote strings.
-    pub fn insert_node(
-        &self,
-        label: &str,
-        properties: &[(&str, &str)],
-    ) -> Result<(), String> {
+    pub fn insert_node(&self, label: &str, properties: &[(&str, &str)]) -> Result<(), String> {
         let props = format_props(properties);
         let cypher = format!("CREATE (:{label} {{{props}}})");
         self.run(&cypher)?;
@@ -391,8 +387,7 @@ impl GraphStore {
         let (from_label, to_label) = parse_rel_endpoints(rel_table)?;
         let prop_schema = edge_column_types(rel_table);
         let prop_order = edge_prop_order(edges, prop_schema);
-        let (cypher, row_type) =
-            build_edge_unwind(rel_table, from_label, to_label, &prop_order);
+        let (cypher, row_type) = build_edge_unwind(rel_table, from_label, to_label, &prop_order);
         let mut inserted: u64 = 0;
         for chunk in edges.chunks(BULK_BATCH_SIZE) {
             let values = build_edge_struct_rows(chunk, &prop_order)?;
@@ -456,12 +451,13 @@ impl GraphStore {
         // source: Kuzu PK-index scan — inline `{id: rid}` seeks the index per
         // row; the `MATCH (n) WHERE n.id = rid` form scans all N nodes per row
         // (O(rows·N)) on large graphs. Same fix class as the edge queries.
-        let cypher = format!(
-            "UNWIND $rows AS rid MATCH (n:{label} {{id: rid}}) SET n.is_resolved = true"
-        );
+        let cypher =
+            format!("UNWIND $rows AS rid MATCH (n:{label} {{id: rid}}) SET n.is_resolved = true");
         for chunk in ids.chunks(BULK_BATCH_SIZE) {
-            let values: Vec<Value> =
-                chunk.iter().map(|id| Value::String((*id).to_string())).collect();
+            let values: Vec<Value> = chunk
+                .iter()
+                .map(|id| Value::String((*id).to_string()))
+                .collect();
             let list = Value::List(LogicalType::String, values);
             self.run_prepared(&cypher, list)?;
         }
@@ -556,11 +552,25 @@ impl GraphStore {
 // ---------------------------------------------------------------------------
 
 const NODE_LABELS: &[&str] = &[
-    NODE_DIRECTORY, NODE_FILE, NODE_MODULE, NODE_FUNCTION, NODE_METHOD,
-    NODE_STRUCT, NODE_ENUM, NODE_VARIANT, NODE_TRAIT, NODE_FIELD,
-    NODE_CONSTANT, NODE_TYPE_ALIAS, NODE_IMPORT, NODE_CALL_SITE,
-    NODE_COMMUNITY, NODE_PROCESS, NODE_STDLIB_SYMBOL,
-    NODE_COMMIT, NODE_VERSION,
+    NODE_DIRECTORY,
+    NODE_FILE,
+    NODE_MODULE,
+    NODE_FUNCTION,
+    NODE_METHOD,
+    NODE_STRUCT,
+    NODE_ENUM,
+    NODE_VARIANT,
+    NODE_TRAIT,
+    NODE_FIELD,
+    NODE_CONSTANT,
+    NODE_TYPE_ALIAS,
+    NODE_IMPORT,
+    NODE_CALL_SITE,
+    NODE_COMMUNITY,
+    NODE_PROCESS,
+    NODE_STDLIB_SYMBOL,
+    NODE_COMMIT,
+    NODE_VERSION,
 ];
 
 /// Single source of truth for all relationship tables: (name, from, to).
@@ -634,7 +644,11 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     // CallSite → callee — emitted by resolver when the callee resolves.
     ("Calls_CallSite_Function", NODE_CALL_SITE, NODE_FUNCTION),
     ("Calls_CallSite_Method", NODE_CALL_SITE, NODE_METHOD),
-    ("Calls_CallSite_StdlibSymbol", NODE_CALL_SITE, NODE_STDLIB_SYMBOL),
+    (
+        "Calls_CallSite_StdlibSymbol",
+        NODE_CALL_SITE,
+        NODE_STDLIB_SYMBOL,
+    ),
     // Implements — source: stages/stage-3b.md §2, §3
     ("Implements_Struct_Trait", NODE_STRUCT, NODE_TRAIT),
     ("Implements_Enum_Trait", NODE_ENUM, NODE_TRAIT),
@@ -663,10 +677,22 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     // 3b-v2 Layer 5 (stdlib index) + Layer 4 (macro expansion) — source:
     // stages/stage-3b-v2.md §5. Stdlib targets carry resolution_method
     // = "stdlib-index" (confidence 0.95) or "macro-expansion" (0.85).
-    ("Calls_Function_StdlibSymbol", NODE_FUNCTION, NODE_STDLIB_SYMBOL),
+    (
+        "Calls_Function_StdlibSymbol",
+        NODE_FUNCTION,
+        NODE_STDLIB_SYMBOL,
+    ),
     ("Calls_Method_StdlibSymbol", NODE_METHOD, NODE_STDLIB_SYMBOL),
-    ("Implements_Struct_StdlibSymbol", NODE_STRUCT, NODE_STDLIB_SYMBOL),
-    ("Implements_Enum_StdlibSymbol", NODE_ENUM, NODE_STDLIB_SYMBOL),
+    (
+        "Implements_Struct_StdlibSymbol",
+        NODE_STRUCT,
+        NODE_STDLIB_SYMBOL,
+    ),
+    (
+        "Implements_Enum_StdlibSymbol",
+        NODE_ENUM,
+        NODE_STDLIB_SYMBOL,
+    ),
     // 3c MemberOf — source: stages/stage-3c.md §4.2
     ("MemberOf_Function_Community", NODE_FUNCTION, NODE_COMMUNITY),
     ("MemberOf_Method_Community", NODE_METHOD, NODE_COMMUNITY),
@@ -674,13 +700,21 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     ("MemberOf_Enum_Community", NODE_ENUM, NODE_COMMUNITY),
     ("MemberOf_Trait_Community", NODE_TRAIT, NODE_COMMUNITY),
     ("MemberOf_Constant_Community", NODE_CONSTANT, NODE_COMMUNITY),
-    ("MemberOf_TypeAlias_Community", NODE_TYPE_ALIAS, NODE_COMMUNITY),
+    (
+        "MemberOf_TypeAlias_Community",
+        NODE_TYPE_ALIAS,
+        NODE_COMMUNITY,
+    ),
     ("MemberOf_Module_Community", NODE_MODULE, NODE_COMMUNITY),
     // 3c EntryPointOf — source: stages/stage-3c.md §4.2
     ("EntryPointOf_Function_Process", NODE_FUNCTION, NODE_PROCESS),
     ("EntryPointOf_Method_Process", NODE_METHOD, NODE_PROCESS),
     // 3c ParticipatesIn — source: stages/stage-3c.md §4.2
-    ("ParticipatesIn_Function_Process", NODE_FUNCTION, NODE_PROCESS),
+    (
+        "ParticipatesIn_Function_Process",
+        NODE_FUNCTION,
+        NODE_PROCESS,
+    ),
     ("ParticipatesIn_Method_Process", NODE_METHOD, NODE_PROCESS),
     // History layer — source: second-brain history requirement.
     // Commit lineage + per-entity version spine. Every edge is read in both
@@ -697,7 +731,11 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     ("VersionOf_Version_Enum", NODE_VERSION, NODE_ENUM),
     ("VersionOf_Version_Trait", NODE_VERSION, NODE_TRAIT),
     ("ChangedIn_Version_Commit", NODE_VERSION, NODE_COMMIT),
-    ("PreviousVersion_Version_Version", NODE_VERSION, NODE_VERSION),
+    (
+        "PreviousVersion_Version_Version",
+        NODE_VERSION,
+        NODE_VERSION,
+    ),
 ];
 
 fn node_table_ddl() -> Vec<String> {
@@ -924,12 +962,15 @@ type ColTypes = &'static [(&'static str, LogicalType)];
 
 // Schema tables, grouped by shape. Mirrors node_table_ddl() columns.
 const COLS_DIRECTORY: ColTypes = &[
-    ("id", LogicalType::String), ("path", LogicalType::String),
+    ("id", LogicalType::String),
+    ("path", LogicalType::String),
     ("name", LogicalType::String),
 ];
 const COLS_FILE: ColTypes = &[
-    ("id", LogicalType::String), ("path", LogicalType::String),
-    ("name", LogicalType::String), ("extension", LogicalType::String),
+    ("id", LogicalType::String),
+    ("path", LogicalType::String),
+    ("name", LogicalType::String),
+    ("extension", LogicalType::String),
     ("size_bytes", LogicalType::Int64),
     // source: stages/stage-3.md §10.5 — must mirror the NODE_FILE DDL.
     ("parse_errors", LogicalType::Int64),
@@ -939,36 +980,47 @@ const COLS_FILE: ColTypes = &[
 // Module intentionally has no language (it's a logical aggregation, not
 // source); it still uses COLS_MODULE which keeps the pre-Spike-B' shape.
 const COLS_MODULE: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
 ];
 const COLS_VARIANT: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     // source: stages/stage-3.md §10.1 — must mirror the NODE_VARIANT DDL.
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_FUNCTION: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
-    ("visibility", LogicalType::String), ("is_async", LogicalType::Bool),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
+    ("visibility", LogicalType::String),
+    ("is_async", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_METHOD: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
-    ("visibility", LogicalType::String), ("is_async", LogicalType::Bool),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
+    ("visibility", LogicalType::String),
+    ("is_async", LogicalType::Bool),
     ("receiver_type", LogicalType::String),
     ("trait_name", LogicalType::String),
     ("language", LogicalType::String),
 ];
 const COLS_TYPEDECL: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("visibility", LogicalType::String),
     ("language", LogicalType::String),
     ("bases", LogicalType::String),
@@ -978,48 +1030,61 @@ const COLS_TYPEDECL: ColTypes = &[
 // columns; §10.4 — Import/CallSite gain is_resolved. Each const MUST mirror the
 // corresponding node DDL exactly (column name + order feed the UNWIND type map).
 const COLS_FIELD: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("type_annotation", LogicalType::String),
     ("visibility", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_CONSTANT: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("type_annotation", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_TYPE_ALIAS: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("target_type", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_IMPORT: ColTypes = &[
-    ("id", LogicalType::String), ("path", LogicalType::String),
-    ("alias", LogicalType::String), ("is_glob", LogicalType::Bool),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("id", LogicalType::String),
+    ("path", LogicalType::String),
+    ("alias", LogicalType::String),
+    ("is_glob", LogicalType::Bool),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("is_resolved", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_CALL_SITE: ColTypes = &[
-    ("id", LogicalType::String), ("callee_name", LogicalType::String),
-    ("line", LogicalType::Int64), ("col", LogicalType::Int64),
+    ("id", LogicalType::String),
+    ("callee_name", LogicalType::String),
+    ("line", LogicalType::Int64),
+    ("col", LogicalType::Int64),
     ("is_resolved", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_COMMUNITY: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("algorithm", LogicalType::String),
     ("resolution_param", LogicalType::Double),
     ("member_count", LogicalType::Int64),
     ("modularity_contribution", LogicalType::Double),
 ];
 const COLS_PROCESS: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("entry_point_id", LogicalType::String),
     ("entry_kind", LogicalType::String),
     ("entry_confidence", LogicalType::Double),
@@ -1028,15 +1093,20 @@ const COLS_PROCESS: ColTypes = &[
 ];
 // History layer — mirrors the NODE_COMMIT / NODE_VERSION DDL exactly.
 const COLS_COMMIT: ColTypes = &[
-    ("id", LogicalType::String), ("sha", LogicalType::String),
-    ("author", LogicalType::String), ("author_email", LogicalType::String),
-    ("committed_at", LogicalType::Int64), ("message", LogicalType::String),
+    ("id", LogicalType::String),
+    ("sha", LogicalType::String),
+    ("author", LogicalType::String),
+    ("author_email", LogicalType::String),
+    ("committed_at", LogicalType::Int64),
+    ("message", LogicalType::String),
 ];
 const COLS_VERSION: ColTypes = &[
-    ("id", LogicalType::String), ("entity_id", LogicalType::String),
+    ("id", LogicalType::String),
+    ("entity_id", LogicalType::String),
     ("entity_kind", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("change_type", LogicalType::String), ("commit_sha", LogicalType::String),
+    ("change_type", LogicalType::String),
+    ("commit_sha", LogicalType::String),
     ("committed_at", LogicalType::Int64),
     ("lines_changed", LogicalType::Int64),
 ];
@@ -1087,8 +1157,7 @@ fn node_prop_order(
     rows: &[Vec<(String, String)>],
     schema: ColTypes,
 ) -> Vec<(&'static str, LogicalType)> {
-    let mut present: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
+    let mut present: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for row in rows {
         for (k, _) in row {
             present.insert(k.as_str());
@@ -1106,8 +1175,7 @@ fn edge_prop_order(
     edges: &[(String, String, Vec<(String, String)>)],
     schema: ColTypes,
 ) -> Vec<(&'static str, LogicalType)> {
-    let mut present: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
+    let mut present: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for e in edges {
         for (k, _) in &e.2 {
             present.insert(k.as_str());
@@ -1204,7 +1272,10 @@ fn build_edge_struct_rows(
             ("to".to_string(), Value::String(to.clone())),
         ];
         for (col, ty) in prop_order {
-            let lit = props.iter().find(|(k, _)| k == *col).map(|(_, v)| v.as_str());
+            let lit = props
+                .iter()
+                .find(|(k, _)| k == *col)
+                .map(|(_, v)| v.as_str());
             fields.push(((*col).to_string(), literal_to_value(lit, ty, col)?));
         }
         out.push(Value::Struct(fields));
@@ -1220,11 +1291,7 @@ fn build_edge_struct_rows(
 /// typed columns. Parsing preserves the security guarantees of cypher_str
 /// because the string payload is now passed as a typed parameter, not
 /// interpolated into Cypher text.
-fn literal_to_value(
-    lit: Option<&str>,
-    ty: &LogicalType,
-    col: &str,
-) -> Result<Value, String> {
+fn literal_to_value(lit: Option<&str>, ty: &LogicalType, col: &str) -> Result<Value, String> {
     let Some(raw) = lit else {
         return Ok(Value::Null(ty.clone()));
     };
@@ -1269,7 +1336,10 @@ fn unwrap_cypher_string(s: &str) -> String {
                 match chars.next() {
                     Some('\\') => out.push('\\'),
                     Some('\'') => out.push('\''),
-                    Some(other) => { out.push('\\'); out.push(other); }
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
                     None => out.push('\\'),
                 }
             } else {
@@ -1329,8 +1399,7 @@ mod tests {
             .expect("create temp dir");
         let db_path = dir.path().join("testdb");
 
-        let store =
-            GraphStore::open_or_create(&db_path).expect("open_or_create");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
         store.create_schema().expect("create_schema");
 
         store
@@ -1349,9 +1418,7 @@ mod tests {
             .expect("insert Function node");
 
         let qr = store
-            .execute_query(
-                "MATCH (f:Function) WHERE f.name = 'main' RETURN f.name",
-            )
+            .execute_query("MATCH (f:Function) WHERE f.name = 'main' RETURN f.name")
             .expect("query");
         assert_eq!(qr.columns, vec!["f.name"]);
         assert!(!qr.rows.is_empty(), "expected at least one row");
@@ -1431,8 +1498,7 @@ mod tests {
             .expect("create temp dir");
         let db_path = dir.path().join("testdb");
 
-        let store =
-            GraphStore::open_or_create(&db_path).expect("open_or_create");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
         store.create_schema().expect("create_schema");
 
         // Insert two File nodes so insert_edge has something to MATCH.

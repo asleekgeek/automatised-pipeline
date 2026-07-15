@@ -1,10 +1,9 @@
 // parser::java::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(crate) fn find_package(root: Node, source: &str) -> Option<String> {
     let mut cursor = root.walk();
@@ -20,7 +19,6 @@ pub(crate) fn find_package(root: Node, source: &str) -> Option<String> {
     }
     None
 }
-
 
 pub(super) fn visibility_from_modifiers(source: &str, node: Node) -> String {
     let mut cursor = node.walk();
@@ -42,19 +40,19 @@ pub(super) fn visibility_from_modifiers(source: &str, node: Node) -> String {
     "package".to_string()
 }
 
-
-pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(
+    ctx: &mut Ctx,
+    parent: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
             TS_CLASS | TS_RECORD => extract_class_like(ctx, child, scope, LABEL_STRUCT),
-            TS_INTERFACE | TS_ANNOTATION => {
-                extract_class_like(ctx, child, scope, LABEL_TRAIT)
-            }
+            TS_INTERFACE | TS_ANNOTATION => extract_class_like(ctx, child, scope, LABEL_TRAIT),
             TS_ENUM => extract_class_like(ctx, child, scope, LABEL_ENUM),
-            TS_METHOD | TS_CONSTRUCTOR => {
-                extract_method(ctx, child, scope, enclosing_type)
-            }
+            TS_METHOD | TS_CONSTRUCTOR => extract_method(ctx, child, scope, enclosing_type),
             TS_FIELD => extract_field(ctx, child, scope),
             TS_ENUM_CONSTANT => extract_enum_constant(ctx, child, scope),
             TS_IMPORT => extract_import(ctx, child, scope),
@@ -62,16 +60,13 @@ pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosi
             // ``enum_body_declarations`` (methods/fields after the enum
             // constants) does NOT end in ``_body`` — recurse it explicitly so
             // those members aren't dropped.
-            _ if child.kind().ends_with("_body")
-                || child.kind() == "enum_body_declarations" =>
-            {
+            _ if child.kind().ends_with("_body") || child.kind() == "enum_body_declarations" => {
                 extract_children(ctx, child, scope, enclosing_type);
             }
             _ => {}
         }
     }
 }
-
 
 /// Emits a Java enum constant as a Variant of the enclosing enum, with a
 /// HasVariant edge (mirrors the Rust parser's enum-variant handling). `scope` is
@@ -98,7 +93,6 @@ pub(super) fn extract_enum_constant(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: qn,
     });
 }
-
 
 pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -160,7 +154,6 @@ pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: 
     }
 }
 
-
 /// The `extends` superclass name for a class (single; empty if none).
 /// source: tree-sitter-java — the `superclass` field text is `extends Foo`.
 pub(super) fn extract_superclass(source: &str, node: Node) -> String {
@@ -172,7 +165,6 @@ pub(super) fn extract_superclass(source: &str, node: Node) -> String {
         None => String::new(),
     }
 }
-
 
 /// The implemented-interface names for a class (empty if none).
 /// source: tree-sitter-java — the `interfaces` field is a `super_interfaces`
@@ -187,7 +179,6 @@ pub(super) fn extract_interfaces(source: &str, node: Node) -> Vec<String> {
     collect_type_names(source, ifaces, &mut names);
     names
 }
-
 
 /// Collects type_identifier / scoped_type_identifier names directly under
 /// `node`, descending one level through a `type_list` wrapper (the shape
@@ -207,7 +198,6 @@ pub(super) fn collect_type_names(source: &str, node: Node, out: &mut Vec<String>
         }
     }
 }
-
 
 pub(super) fn extract_method(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
     let name = node_field_text(ctx.source, node, "name");

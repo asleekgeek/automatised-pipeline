@@ -1,10 +1,9 @@
 // parser::objc::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn find_name(source: &str, node: Node) -> String {
     // tree-sitter-objc uses ``name`` field or an inline ``identifier``.
@@ -21,7 +20,6 @@ pub(super) fn find_name(source: &str, node: Node) -> String {
     }
     String::new()
 }
-
 
 pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
@@ -49,7 +47,6 @@ pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
         }
     }
 }
-
 
 pub(super) fn extract_class(ctx: &mut Ctx, node: Node, scope: &str, is_category: bool) {
     let name = find_name(ctx.source, node);
@@ -113,7 +110,6 @@ pub(super) fn extract_class(ctx: &mut Ctx, node: Node, scope: &str, is_category:
     }
 }
 
-
 pub(super) fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
@@ -135,7 +131,6 @@ pub(super) fn extract_protocol(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: qn.clone(),
     });
 }
-
 
 pub(super) fn method_selector(source: &str, node: Node) -> String {
     // Reconstruct the ObjC selector from the grammar-3.0.2 shape:
@@ -167,7 +162,6 @@ pub(super) fn method_selector(source: &str, node: Node) -> String {
     }
     parts.join("")
 }
-
 
 /// Reconstructs a message-send selector from a `message_expression`.
 ///
@@ -214,7 +208,6 @@ pub(super) fn message_selector(source: &str, node: Node) -> String {
         keywords.join("")
     }
 }
-
 
 pub(super) fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
     let sel = method_selector(ctx.source, node);

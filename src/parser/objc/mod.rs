@@ -15,12 +15,9 @@
 
 use tree_sitter::{Node, Parser};
 
-use super::{
-    node_text, ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{node_text, ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 pub(crate) const TS_CLASS_INTERFACE: &str = "class_interface";
 pub(crate) const TS_CLASS_IMPL: &str = "class_implementation";
@@ -41,7 +38,6 @@ pub(crate) const TS_C_STRUCT: &str = "struct_specifier";
 pub(crate) const TS_C_UNION: &str = "union_specifier";
 pub(crate) const TS_C_ENUM: &str = "enum_specifier";
 pub(crate) const TS_C_TYPEDEF: &str = "type_definition";
-
 
 pub fn parse_objc_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
     let lang: tree_sitter::Language = tree_sitter_objc::LANGUAGE.into();
@@ -66,7 +62,6 @@ pub fn parse_objc_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     })
 }
 
-
 pub(crate) struct Ctx<'a> {
     pub(crate) source: &'a str,
     #[allow(dead_code)]
@@ -75,7 +70,6 @@ pub(crate) struct Ctx<'a> {
     pub(crate) refs: Vec<ExtractedRef>,
     pub(crate) next_seq: u64,
 }
-
 
 /// Returns the text of the first `identifier` child of `node`, or empty.
 pub(crate) fn first_identifier(source: &str, node: Node) -> String {

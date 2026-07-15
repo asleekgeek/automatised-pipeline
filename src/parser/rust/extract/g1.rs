@@ -1,10 +1,9 @@
 // parser::rust::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // ---------------------------------------------------------------------------
 // Top-level extraction
@@ -81,7 +80,6 @@ pub(crate) fn extract_top_level(ctx: &mut ExtractCtx, parent: Node, scope: &str)
     }
 }
 
-
 /// Parse an `#[derive(...)]` attribute_item and append the trait names to
 /// `out`. Non-derive attributes are ignored. source: Rust Reference §9
 /// https://doc.rust-lang.org/reference/attributes/derive.html.
@@ -89,10 +87,7 @@ pub(super) fn collect_derives_from_attribute(source: &str, node: Node, out: &mut
     let text = node_text(source, node);
     // Attribute form: `#[derive(A, B, C)]` — strip prefix/suffix and split.
     let trimmed = text.trim();
-    let inner = match trimmed
-        .strip_prefix("#[")
-        .and_then(|s| s.strip_suffix(']'))
-    {
+    let inner = match trimmed.strip_prefix("#[").and_then(|s| s.strip_suffix(']')) {
         Some(s) => s.trim(),
         None => return,
     };
@@ -111,7 +106,6 @@ pub(super) fn collect_derives_from_attribute(source: &str, node: Node, out: &mut
     }
 }
 
-
 /// Builds the node `implements` property (a CSV of derived trait names) so
 /// resolve_implements can resolve each to a local Trait or a stdlib trait and
 /// emit the Implements edge. Empty when nothing is derived.
@@ -123,7 +117,6 @@ pub(super) fn implements_props(derives: &[String]) -> Vec<(String, String)> {
         vec![("implements".to_string(), derives.join(","))]
     }
 }
-
 
 /// Emit synthetic `Implements` refs with kind `"DeriveImplements"` so the
 /// resolver's Layer 4 pass maps each derived trait through the macro table.
@@ -149,7 +142,6 @@ pub(super) fn emit_derive_implements(
         });
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Function extraction
@@ -182,7 +174,6 @@ pub(super) fn extract_function(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Struct extraction
 // ---------------------------------------------------------------------------
@@ -210,7 +201,6 @@ pub(super) fn extract_struct(ctx: &mut ExtractCtx, node: Node, scope: &str, deri
     });
     extract_fields(ctx, node, &qn, TS_FIELD_DECL_LIST);
 }
-
 
 // ---------------------------------------------------------------------------
 // Enum extraction

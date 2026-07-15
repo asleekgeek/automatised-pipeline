@@ -21,8 +21,7 @@ fn report_tfidf_index_size() {
     let graph_dir = tmp.join("graph");
     let index_dir = tmp.join("index");
 
-    indexer::index_codebase(std::path::Path::new("src"), &graph_dir)
-        .expect("index_codebase");
+    indexer::index_codebase(std::path::Path::new("src"), &graph_dir).expect("index_codebase");
     let store = GraphStore::open_or_create(&graph_dir).expect("open graph");
     let doc_count = vector::build_index(&store, &index_dir).expect("build index");
 

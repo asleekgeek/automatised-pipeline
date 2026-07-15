@@ -5,11 +5,14 @@ fn test_louvain_two_cliques() {
     // Two 3-node cliques connected by one bridge edge
     let node_ids: Vec<String> = (0..6).map(|i| format!("n{i}")).collect();
     let node_labels: Vec<String> = vec!["Function".into(); 6];
-    let id_to_idx: HashMap<String, usize> = node_ids.iter()
-        .enumerate().map(|(i, id)| (id.clone(), i)).collect();
+    let id_to_idx: HashMap<String, usize> = node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.clone(), i))
+        .collect();
 
     let mut neighbors: Vec<Vec<(usize, f64)>> = vec![Vec::new(); 6];
-    let edges = [(0,1), (1,2), (0,2), (3,4), (4,5), (3,5), (2,3)];
+    let edges = [(0, 1), (1, 2), (0, 2), (3, 4), (4, 5), (3, 5), (2, 3)];
     let mut total_weight = 0.0;
     for &(a, b) in &edges {
         neighbors[a].push((b, 3.0));
@@ -18,7 +21,11 @@ fn test_louvain_two_cliques() {
     }
 
     let adj = Adjacency {
-        node_ids, node_labels, id_to_idx, neighbors, total_weight,
+        node_ids,
+        node_labels,
+        id_to_idx,
+        neighbors,
+        total_weight,
     };
     let (mut comm, q) = louvain(&adj, 1.0);
     repair_c2(&adj, &mut comm);
@@ -28,7 +35,8 @@ fn test_louvain_two_cliques() {
     assert!(
         unique.len() == 2,
         "expected 2 communities, got {} (comm: {:?})",
-        unique.len(), comm
+        unique.len(),
+        comm
     );
     // Nodes 0,1,2 in same community
     assert_eq!(comm[0], comm[1]);
@@ -54,8 +62,11 @@ fn test_louvain_phase2_merges_ring_of_triangles() {
     let n = 3 * q;
     let node_ids: Vec<String> = (0..n).map(|i| format!("n{i}")).collect();
     let node_labels: Vec<String> = vec!["Function".into(); n];
-    let id_to_idx: HashMap<String, usize> = node_ids.iter()
-        .enumerate().map(|(i, id)| (id.clone(), i)).collect();
+    let id_to_idx: HashMap<String, usize> = node_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.clone(), i))
+        .collect();
 
     let mut neighbors: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     let mut total_weight = 0.0;
@@ -74,7 +85,11 @@ fn test_louvain_phase2_merges_ring_of_triangles() {
     }
 
     let adj = Adjacency {
-        node_ids, node_labels, id_to_idx, neighbors, total_weight,
+        node_ids,
+        node_labels,
+        id_to_idx,
+        neighbors,
+        total_weight,
     };
     let (comm, q_mod) = louvain(&adj, 1.0);
 

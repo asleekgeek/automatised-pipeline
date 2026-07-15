@@ -7,12 +7,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 pub(crate) const TS_CLASS_DECL: &str = "class_declaration";
 pub(crate) const TS_PROTOCOL_DECL: &str = "protocol_declaration";
@@ -27,7 +24,6 @@ pub(crate) const TS_DEINIT_DECL: &str = "deinit_declaration";
 pub(crate) const TS_SUBSCRIPT_DECL: &str = "subscript_declaration";
 pub(crate) const TS_ENUM_ENTRY: &str = "enum_entry";
 pub(crate) const TS_CALL_EXPR: &str = "call_expression";
-
 
 pub fn parse_swift_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
     let lang: tree_sitter::Language = tree_sitter_swift::LANGUAGE.into();
@@ -51,7 +47,6 @@ pub fn parse_swift_file(source: &str, file_path: &str) -> Result<ParseResult, St
         parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
-
 
 pub(crate) struct Ctx<'a> {
     pub(crate) source: &'a str,

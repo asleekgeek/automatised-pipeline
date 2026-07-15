@@ -7,12 +7,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 // ---------------------------------------------------------------------------
 // Tree-sitter node type constants
@@ -50,7 +47,6 @@ pub(crate) const TS_CALL_EXPR: &str = "call_expression";
 pub(crate) const TS_MACRO_INVOCATION: &str = "macro_invocation";
 pub(crate) const TS_ATTRIBUTE_ITEM: &str = "attribute_item";
 
-
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -78,7 +74,6 @@ pub fn parse_rust_file(source: &str, file_path: &str) -> Result<ParseResult, Str
     })
 }
 
-
 // ---------------------------------------------------------------------------
 // Extraction context
 // ---------------------------------------------------------------------------
@@ -90,7 +85,6 @@ pub(crate) struct ExtractCtx<'a> {
     pub(crate) refs: Vec<ExtractedRef>,
 }
 
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -101,10 +95,9 @@ mod tests {
 
     #[test]
     fn test_parse_own_source() {
-        let source = std::fs::read_to_string("src/main.rs")
-            .expect("should be able to read src/main.rs");
-        let result = parse_rust_file(&source, "src/main.rs")
-            .expect("parse should succeed");
+        let source =
+            std::fs::read_to_string("src/main.rs").expect("should be able to read src/main.rs");
+        let result = parse_rust_file(&source, "src/main.rs").expect("parse should succeed");
 
         let fn_names: Vec<&str> = result
             .nodes
@@ -114,19 +107,36 @@ mod tests {
             .collect();
 
         assert!(fn_names.contains(&"main"), "should find main()");
-        assert!(fn_names.contains(&"handle_tool_call"), "should find handle_tool_call()");
-        assert!(fn_names.contains(&"write_message"), "should find write_message()");
-        assert!(result.nodes.len() > 30, "main.rs has dozens of items, got {}", result.nodes.len());
+        assert!(
+            fn_names.contains(&"handle_tool_call"),
+            "should find handle_tool_call()"
+        );
+        assert!(
+            fn_names.contains(&"write_message"),
+            "should find write_message()"
+        );
+        assert!(
+            result.nodes.len() > 30,
+            "main.rs has dozens of items, got {}",
+            result.nodes.len()
+        );
 
         for node in &result.nodes {
-            assert!(!node.name.is_empty(), "node with label {} has empty name", node.label);
+            assert!(
+                !node.name.is_empty(),
+                "node with label {} has empty name",
+                node.label
+            );
         }
         for node in &result.nodes {
             if node.start_line > 0 {
                 assert!(node.end_line >= node.start_line);
             }
         }
-        assert!(!result.refs.is_empty(), "should have extracted some relationships");
+        assert!(
+            !result.refs.is_empty(),
+            "should have extracted some relationships"
+        );
     }
 
     #[test]
@@ -159,15 +169,29 @@ mod inner;
         assert!(labels.contains(&"Module"), "missing Module");
 
         let top_fn = result.nodes.iter().find(|n| n.name == "top_fn").unwrap();
-        let is_async_prop = top_fn.properties.iter().find(|(k, _)| k == "is_async").unwrap();
+        let is_async_prop = top_fn
+            .properties
+            .iter()
+            .find(|(k, _)| k == "is_async")
+            .unwrap();
         assert_eq!(is_async_prop.1, "true");
 
         let x_field = result.nodes.iter().find(|n| n.name == "x").unwrap();
-        let type_ann = x_field.properties.iter().find(|(k, _)| k == "type_annotation").unwrap();
+        let type_ann = x_field
+            .properties
+            .iter()
+            .find(|(k, _)| k == "type_annotation")
+            .unwrap();
         assert_eq!(type_ann.1, "i32");
 
-        assert!(result.refs.iter().any(|r| r.kind == "HasVariant" && r.from_qualified_name.contains("MyEnum")));
-        assert!(result.refs.iter().any(|r| r.kind == "HasField" && r.from_qualified_name.contains("MyStruct")));
+        assert!(result
+            .refs
+            .iter()
+            .any(|r| r.kind == "HasVariant" && r.from_qualified_name.contains("MyEnum")));
+        assert!(result
+            .refs
+            .iter()
+            .any(|r| r.kind == "HasField" && r.from_qualified_name.contains("MyStruct")));
         assert!(result.refs.iter().any(|r| r.kind == "HasMethod"));
     }
 
@@ -181,8 +205,12 @@ fn private_fn() {}
 "#;
         let result = parse_rust_file(src, "test.rs").expect("parse");
         let find = |name: &str| -> String {
-            result.nodes.iter().find(|n| n.name == name)
-                .map(|n| n.visibility.clone()).unwrap_or_default()
+            result
+                .nodes
+                .iter()
+                .find(|n| n.name == name)
+                .map(|n| n.visibility.clone())
+                .unwrap_or_default()
         };
         assert_eq!(find("public_fn"), "pub");
         assert_eq!(find("crate_fn"), "pub(crate)");
@@ -273,9 +301,16 @@ struct S;
 impl MyTrait for S { fn do_it(&self) {} }
 "#;
         let result = parse_rust_file(src, "test.rs").expect("parse");
-        let method = result.nodes.iter()
-            .find(|n| n.label == "Method" && n.name == "do_it"
-                && n.properties.iter().any(|(k, v)| k == "trait_name" && v == "MyTrait"))
+        let method = result
+            .nodes
+            .iter()
+            .find(|n| {
+                n.label == "Method"
+                    && n.name == "do_it"
+                    && n.properties
+                        .iter()
+                        .any(|(k, v)| k == "trait_name" && v == "MyTrait")
+            })
             .expect("should find impl method with trait_name property");
         assert!(method.qualified_name.contains("S"));
     }

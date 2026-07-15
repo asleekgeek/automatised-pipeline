@@ -8,12 +8,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 pub(crate) const TS_STRUCT: &str = "struct_specifier";
 pub(crate) const TS_UNION: &str = "union_specifier";
@@ -23,7 +20,6 @@ pub(crate) const TS_FUNCTION_DEF: &str = "function_definition";
 pub(crate) const TS_FUNCTION_DECL: &str = "declaration";
 pub(crate) const TS_INCLUDE: &str = "preproc_include";
 pub(crate) const TS_CALL: &str = "call_expression";
-
 
 pub fn parse_c_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
     let lang: tree_sitter::Language = tree_sitter_c::LANGUAGE.into();
@@ -47,7 +43,6 @@ pub fn parse_c_file(source: &str, file_path: &str) -> Result<ParseResult, String
         parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
-
 
 pub(crate) struct Ctx<'a> {
     pub source: &'a str,

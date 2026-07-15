@@ -147,8 +147,7 @@ pub struct Foo {
     pub x: i32,
 }
 "#;
-    let result = ai_architect_mcp::parser::rust::parse_rust_file(src, "test.rs")
-        .expect("parse");
+    let result = ai_architect_mcp::parser::rust::parse_rust_file(src, "test.rs").expect("parse");
     let debug_ref = result
         .refs
         .iter()
@@ -159,5 +158,8 @@ pub struct Foo {
         .refs
         .iter()
         .find(|r| r.kind == "DeriveImplements" && r.to_qualified_name == "Clone");
-    assert!(clone_ref.is_some(), "expected DeriveImplements ref for Clone");
+    assert!(
+        clone_ref.is_some(),
+        "expected DeriveImplements ref for Clone"
+    );
 }

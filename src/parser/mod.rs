@@ -198,7 +198,10 @@ mod tests {
     fn test_language_from_str() {
         assert_eq!(Language::from_str_opt("rust"), Some(Language::Rust));
         assert_eq!(Language::from_str_opt("python"), Some(Language::Python));
-        assert_eq!(Language::from_str_opt("typescript"), Some(Language::TypeScript));
+        assert_eq!(
+            Language::from_str_opt("typescript"),
+            Some(Language::TypeScript)
+        );
         assert_eq!(Language::from_str_opt("java"), Some(Language::Java));
         assert_eq!(Language::from_str_opt("go"), Some(Language::Go));
         // "auto" is not a concrete language — detection happens by extension.

@@ -1,10 +1,9 @@
 // parser::rust::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn extract_variants(ctx: &mut ExtractCtx, enum_node: Node, enum_qn: &str) {
     let body = match enum_node.child_by_field_name("body") {
@@ -37,7 +36,6 @@ pub(super) fn extract_variants(ctx: &mut ExtractCtx, enum_node: Node, enum_qn: &
         });
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Trait extraction
@@ -79,7 +77,6 @@ pub(super) fn extract_trait(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     extract_trait_methods(ctx, node, &qn);
 }
 
-
 pub(super) fn extract_trait_methods(ctx: &mut ExtractCtx, trait_node: Node, trait_qn: &str) {
     let body = match trait_node.child_by_field_name("body") {
         Some(b) if b.kind() == TS_DECL_LIST => b,
@@ -98,7 +95,11 @@ pub(super) fn extract_trait_methods(ctx: &mut ExtractCtx, trait_node: Node, trai
         }
         let mqn = qual(trait_qn, &name);
         let vis = extract_visibility(ctx.source, child);
-        let is_async = if is_fn { has_async_modifier(child) } else { false };
+        let is_async = if is_fn {
+            has_async_modifier(child)
+        } else {
+            false
+        };
         ctx.nodes.push(ExtractedNode {
             label: LABEL_METHOD.to_string(),
             name: name.clone(),
@@ -118,7 +119,6 @@ pub(super) fn extract_trait_methods(ctx: &mut ExtractCtx, trait_node: Node, trai
         });
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Impl extraction
@@ -144,7 +144,6 @@ pub(super) fn extract_impl(ctx: &mut ExtractCtx, node: Node) {
         extract_impl_method(ctx, child, &receiver_qn, &trait_name);
     }
 }
-
 
 pub(super) fn extract_impl_method(
     ctx: &mut ExtractCtx,
@@ -185,7 +184,6 @@ pub(super) fn extract_impl_method(
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Field extraction
 // ---------------------------------------------------------------------------
@@ -223,7 +221,6 @@ pub(super) fn extract_fields(ctx: &mut ExtractCtx, parent: Node, parent_qn: &str
         });
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Const extraction

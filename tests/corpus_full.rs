@@ -166,7 +166,10 @@ fn index_target(target_root: &Path, graph_path: &Path) -> Result<(), String> {
     // Mirror the target directory tree into a tempdir before indexing so
     // the file_id (relative_path-from-root) matches the JSON's rel_path.
     indexer::index_codebase_with_language(
-        target_root, graph_path, Some(Language::Python), indexer::DependencyScope::None,
+        target_root,
+        graph_path,
+        Some(Language::Python),
+        indexer::DependencyScope::None,
     )?;
     let store = GraphStore::open_or_create(graph_path)?;
     let _ = resolver::resolve_graph(&store);
@@ -175,9 +178,7 @@ fn index_target(target_root: &Path, graph_path: &Path) -> Result<(), String> {
 
 fn run_corpus(corpus_path: &str) {
     if !opt_in() {
-        eprintln!(
-            "[skipped] corpus_full {corpus_path} — set CORTEX_FULL_CORPUS=1 to run"
-        );
+        eprintln!("[skipped] corpus_full {corpus_path} — set CORTEX_FULL_CORPUS=1 to run");
         return;
     }
     let corpus_text = fs::read_to_string(corpus_path)
@@ -220,9 +221,7 @@ fn run_corpus(corpus_path: &str) {
     let mut checked = 0usize;
     for f in &corpus.files {
         let actual = actuals.get(&f.rel_path).cloned().unwrap_or_default();
-        let want = (
-            f.imports, f.constants, f.functions, f.classes, f.methods,
-        );
+        let want = (f.imports, f.constants, f.functions, f.classes, f.methods);
         let got = (
             actual.imports,
             actual.constants,
@@ -238,18 +237,21 @@ fn run_corpus(corpus_path: &str) {
                     "MISMATCH {}: \
                      imports={}/{} constants={}/{} functions={}/{} classes={}/{} methods={}/{}",
                     f.rel_path,
-                    actual.imports, f.imports,
-                    actual.constants, f.constants,
-                    actual.functions, f.functions,
-                    actual.classes, f.classes,
-                    actual.methods, f.methods,
+                    actual.imports,
+                    f.imports,
+                    actual.constants,
+                    f.constants,
+                    actual.functions,
+                    f.functions,
+                    actual.classes,
+                    f.classes,
+                    actual.methods,
+                    f.methods,
                 );
             }
         }
     }
-    println!(
-        "\nCorpus {corpus_path}: checked={checked} failures={failures}",
-    );
+    println!("\nCorpus {corpus_path}: checked={checked} failures={failures}",);
     assert_eq!(
         failures, 0,
         "{} of {} files in {} failed structural-count parity. \

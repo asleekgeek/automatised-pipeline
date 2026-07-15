@@ -27,8 +27,18 @@ use std::path::{Path, PathBuf};
 // source: stages/stage-8.md §4 S1 — auth-critical name patterns for
 // Leiden community proximity detection.
 const AUTH_CRITICAL_PATTERNS: &[&str] = &[
-    "auth", "password", "token", "permission", "role",
-    "crypto", "encrypt", "decrypt", "verify", "jwt", "oauth", "session",
+    "auth",
+    "password",
+    "token",
+    "permission",
+    "role",
+    "crypto",
+    "encrypt",
+    "decrypt",
+    "verify",
+    "jwt",
+    "oauth",
+    "session",
 ];
 
 // source: stages/stage-8.md §6 — security artifact filename.
@@ -130,12 +140,21 @@ struct Resolved {
 }
 
 fn resolve_all(store: &GraphStore, inputs: &[String]) -> Vec<Resolved> {
-    inputs.iter().map(|input| {
-        match search::resolve_qualified_name(store, input) {
-            Ok(qn) => Resolved { input: input.clone(), resolved_qn: Some(qn), did_you_mean: Vec::new() },
-            Err(nf) => Resolved { input: input.clone(), resolved_qn: None, did_you_mean: nf.did_you_mean },
-        }
-    }).collect()
+    inputs
+        .iter()
+        .map(|input| match search::resolve_qualified_name(store, input) {
+            Ok(qn) => Resolved {
+                input: input.clone(),
+                resolved_qn: Some(qn),
+                did_you_mean: Vec::new(),
+            },
+            Err(nf) => Resolved {
+                input: input.clone(),
+                resolved_qn: None,
+                did_you_mean: nf.did_you_mean,
+            },
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -159,16 +178,21 @@ fn find_auth_communities(store: &GraphStore) -> BTreeSet<String> {
     // source: stages/stage-8.md §4 S1 patterns are lowercase; we normalize
     // in-memory rather than rely on an engine-specific `toLower()` Cypher fn.
     for (label, rel) in labels {
-        let cypher = format!(
-            "MATCH (s:{label})-[:{rel}]->(c:Community) RETURN s.name, c.id"
-        );
+        let cypher = format!("MATCH (s:{label})-[:{rel}]->(c:Community) RETURN s.name, c.id");
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
-                if row.len() < 2 { continue; }
+                if row.len() < 2 {
+                    continue;
+                }
                 let name_lower = row[0].to_ascii_lowercase();
-                if AUTH_CRITICAL_PATTERNS.iter().any(|p| name_lower.contains(p)) {
+                if AUTH_CRITICAL_PATTERNS
+                    .iter()
+                    .any(|p| name_lower.contains(p))
+                {
                     let cid = &row[1];
-                    if !cid.is_empty() { out.insert(cid.clone()); }
+                    if !cid.is_empty() {
+                        out.insert(cid.clone());
+                    }
                 }
             }
         }
@@ -182,12 +206,16 @@ fn run_s1(
     auth_communities: &BTreeSet<String>,
     flags: &mut Vec<SecurityFlag>,
 ) {
-    if auth_communities.is_empty() { return; }
+    if auth_communities.is_empty() {
+        return;
+    }
     let cid = match community_of(store, qualified_name) {
         Some(c) => c,
         None => return,
     };
-    if !auth_communities.contains(&cid) { return; }
+    if !auth_communities.contains(&cid) {
+        return;
+    }
     flags.push(SecurityFlag {
         gate: "auth_critical_touch".into(),
         severity: "critical".into(),
@@ -204,8 +232,16 @@ fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
     // Mirrors search/mod.rs::lookup_community — per-label iteration for
     // lbug dialect compatibility (no rel-type alternation).
     let escaped = qualified_name.replace('\'', "\\'");
-    for label in ["Function", "Method", "Struct", "Enum", "Trait",
-                  "Constant", "TypeAlias", "Module"] {
+    for label in [
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
+    ] {
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
@@ -215,7 +251,9 @@ fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
                 if let Some(cid) = row.first() {
-                    if !cid.is_empty() { return Some(cid.clone()); }
+                    if !cid.is_empty() {
+                        return Some(cid.clone());
+                    }
                 }
             }
         }
@@ -240,7 +278,8 @@ fn run_s2(_store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFla
         severity: "info".into(),
         symbol: qualified_name.into(),
         message: "unsafe detection unavailable: rust_parser does not record is_unsafe \
-                  (see stages/stage-8.md §7 Q1; unblocks when stage 3a-v2 ships)".into(),
+                  (see stages/stage-8.md §7 Q1; unblocks when stage 3a-v2 ships)"
+            .into(),
         details: json!({ "skipped": true, "reason": "parser_missing_is_unsafe" }),
     });
 }
@@ -254,8 +293,12 @@ fn run_s3(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
         Some(m) => m,
         None => return,
     };
-    if meta.visibility.as_deref() != Some("pub") { return; }
-    if !meta.parent_is_file { return; }
+    if meta.visibility.as_deref() != Some("pub") {
+        return;
+    }
+    if !meta.parent_is_file {
+        return;
+    }
     // severity: warning on modify (default); caller supplies change_kind only
     // through the batch list. We can't distinguish remove/rename without it,
     // so this gate stays at "warning". Callers who want critical escalation
@@ -290,7 +333,11 @@ fn symbol_visibility_and_parent(store: &GraphStore, qualified_name: &str) -> Opt
     Some(SymbolMeta {
         visibility: vis,
         parent_is_file: file_defined,
-        parent_label: if file_defined { "File".into() } else { "Module".into() },
+        parent_label: if file_defined {
+            "File".into()
+        } else {
+            "Module".into()
+        },
         file_path,
     })
 }
@@ -307,7 +354,11 @@ fn fetch_visibility(store: &GraphStore, escaped_qn: &str) -> Option<Option<Strin
             if let Some(row) = qr.rows.first() {
                 if let Some(v) = row.first() {
                     let s = v.trim();
-                    return Some(if s.is_empty() { None } else { Some(s.to_string()) });
+                    return Some(if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.to_string())
+                    });
                 }
             }
         }
@@ -319,8 +370,12 @@ fn has_file_parent(store: &GraphStore, escaped_qn: &str) -> bool {
     // Defines_File_* edges go from File to the symbol; crate-root pubs live
     // directly under the File (no intermediate Module).
     for rel in [
-        "Defines_File_Function", "Defines_File_Struct", "Defines_File_Enum",
-        "Defines_File_Trait", "Defines_File_Constant", "Defines_File_TypeAlias",
+        "Defines_File_Function",
+        "Defines_File_Struct",
+        "Defines_File_Enum",
+        "Defines_File_Trait",
+        "Defines_File_Constant",
+        "Defines_File_TypeAlias",
     ] {
         let cypher = format!(
             "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = '{escaped_qn}' \
@@ -337,8 +392,12 @@ fn has_file_parent(store: &GraphStore, escaped_qn: &str) -> bool {
 
 fn lookup_file_path(store: &GraphStore, escaped_qn: &str) -> Option<String> {
     for rel in [
-        "Defines_File_Function", "Defines_File_Struct", "Defines_File_Enum",
-        "Defines_File_Trait", "Defines_File_Constant", "Defines_File_TypeAlias",
+        "Defines_File_Function",
+        "Defines_File_Struct",
+        "Defines_File_Enum",
+        "Defines_File_Trait",
+        "Defines_File_Constant",
+        "Defines_File_TypeAlias",
     ] {
         let cypher = format!(
             "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = '{escaped_qn}' \
@@ -347,7 +406,9 @@ fn lookup_file_path(store: &GraphStore, escaped_qn: &str) -> Option<String> {
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
                 if let Some(p) = row.first() {
-                    if !p.is_empty() { return Some(p.clone()); }
+                    if !p.is_empty() {
+                        return Some(p.clone());
+                    }
                 }
             }
         }
@@ -381,11 +442,17 @@ fn run_s4(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
          RETURN count(i)"
     );
     let count: u64 = match store.execute_query(&cypher) {
-        Ok(qr) => qr.rows.first().and_then(|r| r.first())
-            .and_then(|s| s.parse::<u64>().ok()).unwrap_or(0),
+        Ok(qr) => qr
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0),
         Err(_) => 0,
     };
-    if count == 0 { return; }
+    if count == 0 {
+        return;
+    }
     let severity = if count >= 2 { "critical" } else { "warning" };
     flags.push(SecurityFlag {
         gate: "unresolved_imports".into(),
@@ -430,12 +497,15 @@ fn run_s5(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
             }
         }
     }
-    if reached > 0 { return; }
+    if reached > 0 {
+        return;
+    }
     flags.push(SecurityFlag {
         gate: "test_coverage_gap".into(),
         severity: "warning".into(),
         symbol: qualified_name.into(),
-        message: "no ParticipatesIn path from any test-entry process — structural coverage gap".into(),
+        message: "no ParticipatesIn path from any test-entry process — structural coverage gap"
+            .into(),
         details: json!({ "test_processes_reaching_symbol": 0 }),
     });
 }
@@ -452,10 +522,16 @@ pub fn report_to_json(
     changed_symbols: &[String],
     checked_at: &str,
 ) -> Value {
-    let flags: Vec<Value> = report.flags.iter().map(|f| json!({
-        "gate": f.gate, "severity": f.severity, "symbol": f.symbol,
-        "message": f.message, "details": f.details,
-    })).collect();
+    let flags: Vec<Value> = report
+        .flags
+        .iter()
+        .map(|f| {
+            json!({
+                "gate": f.gate, "severity": f.severity, "symbol": f.symbol,
+                "message": f.message, "details": f.details,
+            })
+        })
+        .collect();
     json!({
         "run_id": run_id,
         "finding_id": finding_id,
@@ -500,14 +576,34 @@ mod tests {
     #[test]
     fn test_tally_counts() {
         let flags = vec![
-            SecurityFlag { gate: "g".into(), severity: "critical".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
-            SecurityFlag { gate: "g".into(), severity: "warning".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
-            SecurityFlag { gate: "g".into(), severity: "info".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
-            SecurityFlag { gate: "g".into(), severity: "info".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "critical".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "warning".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "info".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "info".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
         ];
         let s = tally(&flags, 5);
         assert_eq!(s.critical_count, 1);
@@ -522,8 +618,10 @@ mod tests {
             gates_passed: true,
             flags: Vec::new(),
             summary: SecuritySummary {
-                changed_symbols: 1, critical_count: 0,
-                warning_count: 5, info_count: 3,
+                changed_symbols: 1,
+                critical_count: 0,
+                warning_count: 5,
+                info_count: 3,
             },
         };
         // with only warnings, should pass

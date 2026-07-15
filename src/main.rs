@@ -25,9 +25,9 @@ mod graph_cache;
 mod graph_store;
 mod history;
 mod indexer;
+mod language_provider;
 mod lsp_client;
 mod lsp_resolver;
-mod language_provider;
 mod macro_expansion;
 mod parser;
 mod prd_input;
@@ -381,7 +381,11 @@ fn random_suffix(len: usize) -> String {
 
 fn generate_run_id() -> String {
     let (secs, _) = now_unix_seconds_nanos();
-    format!("{}-{}", format_compact_utc(secs), random_suffix(RUN_ID_RANDOM_LEN))
+    format!(
+        "{}-{}",
+        format_compact_utc(secs),
+        random_suffix(RUN_ID_RANDOM_LEN)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -491,11 +495,10 @@ fn parse_dependency_scope(args: &Map<String, Value>) -> Result<indexer::Dependen
 // renaming it over the target. POSIX rename(2) is atomic on the same
 // filesystem — reference: IEEE Std 1003.1-2017, rename(2).
 fn atomic_write(target: &Path, contents: &[u8]) -> Result<(), String> {
-    let parent = target.parent().ok_or_else(|| {
-        format!("atomic_write: target has no parent: {:?}", target)
-    })?;
-    fs::create_dir_all(parent)
-        .map_err(|e| format!("atomic_write: mkdir {:?}: {}", parent, e))?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("atomic_write: target has no parent: {:?}", target))?;
+    fs::create_dir_all(parent).map_err(|e| format!("atomic_write: mkdir {:?}: {}", parent, e))?;
 
     let file_name = target
         .file_name()
@@ -526,10 +529,7 @@ fn atomic_write(target: &Path, contents: &[u8]) -> Result<(), String> {
     fs::rename(&tmp_path, target).map_err(|e| {
         // Best-effort cleanup of the tempfile — it is not fatal if this fails.
         let _ = fs::remove_file(&tmp_path);
-        format!(
-            "atomic_write: rename {:?} -> {:?}: {}",
-            tmp_path, target, e
-        )
+        format!("atomic_write: rename {:?} -> {:?}: {}", tmp_path, target, e)
     })?;
     Ok(())
 }
@@ -645,10 +645,9 @@ fn read_index(path: &Path) -> Result<Option<Index>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("read index {:?}: {}", path, e))?;
-    let idx: Index = serde_json::from_str(&raw)
-        .map_err(|e| format!("parse index {:?}: {}", path, e))?;
+    let raw = fs::read_to_string(path).map_err(|e| format!("read index {:?}: {}", path, e))?;
+    let idx: Index =
+        serde_json::from_str(&raw).map_err(|e| format!("parse index {:?}: {}", path, e))?;
     Ok(Some(idx))
 }
 
@@ -828,7 +827,11 @@ fn parse_extract_args(arguments: &Value) -> Result<ExtractArgs<'_>, String> {
             ));
         }
     };
-    Ok(ExtractArgs { finding_arg, output_dir, run_id })
+    Ok(ExtractArgs {
+        finding_arg,
+        output_dir,
+        run_id,
+    })
 }
 
 // spec §4.1: pure construction of the canonical extracted artifact.
@@ -863,8 +866,7 @@ fn persist_extract(
     source_bytes: &[u8],
     extracted: &ExtractedFinding,
 ) -> Result<(PathBuf, usize), String> {
-    fs::create_dir_all(finding_dir)
-        .map_err(|e| format!("mkdir {:?}: {}", finding_dir, e))?;
+    fs::create_dir_all(finding_dir).map_err(|e| format!("mkdir {:?}: {}", finding_dir, e))?;
     atomic_write(&finding_dir.join(SOURCE_FILE_NAME), source_bytes)?;
     let extracted_path = finding_dir.join(EXTRACTED_FILE_NAME);
     let bytes_written = write_json_atomic(&extracted_path, extracted)?;
@@ -890,8 +892,7 @@ fn persist_extract(
 
 fn do_extract_finding(arguments: &Value) -> Result<Value, String> {
     let parsed = parse_extract_args(arguments)?;
-    let (finding, source_form, source_path, source_bytes) =
-        resolve_finding(parsed.finding_arg)?;
+    let (finding, source_form, source_path, source_bytes) = resolve_finding(parsed.finding_arg)?;
     // spec §5.1.4, §9.3 Q4 — hard-fail on unsafe finding_id BEFORE touching disk.
     validate_safe_id("finding_id", &finding.id)?;
 
@@ -984,9 +985,13 @@ fn parse_refine_args(arguments: &Value) -> Result<RefineArgs, StageErr> {
         .get("refined_prompt")
         .cloned()
         .ok_or_else(|| bad_request("missing required field 'refined_prompt' (spec §9.2)"))?;
-    let refined_prompt: RefinedPrompt = serde_json::from_value(refined_prompt_val).map_err(|e| {
-        bad_request(format!("refined_prompt does not match schema (spec §9.2): {}", e))
-    })?;
+    let refined_prompt: RefinedPrompt =
+        serde_json::from_value(refined_prompt_val).map_err(|e| {
+            bad_request(format!(
+                "refined_prompt does not match schema (spec §9.2): {}",
+                e
+            ))
+        })?;
     // spec §5.1.5 — non-empty refinement contract.
     if refined_prompt.text.is_empty() {
         return Err((
@@ -999,8 +1004,12 @@ fn parse_refine_args(arguments: &Value) -> Result<RefineArgs, StageErr> {
         .get("refinement")
         .cloned()
         .ok_or_else(|| bad_request("missing required field 'refinement' (spec §9.2)"))?;
-    let refinement_input: RefinementMeta = serde_json::from_value(refinement_val)
-        .map_err(|e| bad_request(format!("refinement does not match schema (spec §9.2): {}", e)))?;
+    let refinement_input: RefinementMeta = serde_json::from_value(refinement_val).map_err(|e| {
+        bad_request(format!(
+            "refinement does not match schema (spec §9.2): {}",
+            e
+        ))
+    })?;
 
     Ok(RefineArgs {
         run_id,
@@ -1073,8 +1082,14 @@ fn persist_refine(
     };
     // PreserveStage2: a re-refine must not clobber the stage-2 verified_*/
     // stage2_path fields an earlier finalize_verification wrote.
-    upsert_index_entry(output_dir, run_id, finding_id, entry, MergeMode::PreserveStage2)
-        .map_err(io_err)?;
+    upsert_index_entry(
+        output_dir,
+        run_id,
+        finding_id,
+        entry,
+        MergeMode::PreserveStage2,
+    )
+    .map_err(io_err)?;
     Ok((refined_path, bytes_written))
 }
 
@@ -1292,7 +1307,10 @@ fn transition_finalize(from: SessionState) -> Result<SessionState, StageErr> {
             "unanswered_question",
             "cannot finalize while an agent_question is awaiting a user_answer (spec §7.3, §12.2)",
         )),
-        _ => Err(stage2_err("illegal_transition", "finalize rejected (spec §12.2)")),
+        _ => Err(stage2_err(
+            "illegal_transition",
+            "finalize rejected (spec §12.2)",
+        )),
     }
 }
 
@@ -1333,8 +1351,8 @@ fn read_session(path: &Path) -> Result<Option<SessionFile>, StageErr> {
     if !path.exists() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(path)
-        .map_err(|e| io_err(format!("read session {:?}: {}", path, e)))?;
+    let raw =
+        fs::read_to_string(path).map_err(|e| io_err(format!("read session {:?}: {}", path, e)))?;
     let session: SessionFile = serde_json::from_str(&raw).map_err(|e| {
         stage2_err(
             "corrupt_session",
@@ -1402,7 +1420,11 @@ fn parse_start_args(arguments: &Value) -> Result<StartArgs, StageErr> {
     validate_safe_id("finding_id", &finding_id).map_err(unsafe_id_err)?;
     let output_dir_str = require_string_arg(args, "output_dir")?;
     let output_dir = require_absolute(&output_dir_str, "output_dir").map_err(bad_request)?;
-    Ok(StartArgs { run_id, finding_id, output_dir })
+    Ok(StartArgs {
+        run_id,
+        finding_id,
+        output_dir,
+    })
 }
 
 // Spec §7.1 precondition (i): stage-1.refined.json exists and parses. Also
@@ -1457,7 +1479,8 @@ fn do_start_verification(arguments: &Value) -> Result<Value, StageErr> {
     }
     let now = format_iso8601_utc(now_unix_seconds_nanos().0);
     let session = build_new_session(&args, schema_ok, now.clone());
-    fs::create_dir_all(&finding_dir).map_err(|e| io_err(format!("mkdir {:?}: {}", finding_dir, e)))?;
+    fs::create_dir_all(&finding_dir)
+        .map_err(|e| io_err(format!("mkdir {:?}: {}", finding_dir, e)))?;
     write_session_atomic(&session_path, &session)?;
     Ok(json!({
         "stage": 2,
@@ -1513,14 +1536,28 @@ fn parse_append_args(arguments: &Value) -> Result<AppendArgs, StageErr> {
     let kind = match kind_str.as_str() {
         "agent_question" => TurnKind::AgentQuestion,
         "user_answer" => TurnKind::UserAnswer,
-        other => return Err(bad_request(format!("kind must be 'agent_question' or 'user_answer' (spec §5.2, §7.2): got {:?}", other))),
+        other => {
+            return Err(bad_request(format!(
+                "kind must be 'agent_question' or 'user_answer' (spec §5.2, §7.2): got {:?}",
+                other
+            )))
+        }
     };
     let content = require_string_arg(args, "content")?;
     if content.is_empty() {
-        return Err(bad_request("content must be non-empty (spec §5.2 minLength:1)"));
+        return Err(bad_request(
+            "content must be non-empty (spec §5.2 minLength:1)",
+        ));
     }
     let meta = args.get("meta").cloned();
-    Ok(AppendArgs { run_id, finding_id, output_dir, kind, content, meta })
+    Ok(AppendArgs {
+        run_id,
+        finding_id,
+        output_dir,
+        kind,
+        content,
+        meta,
+    })
 }
 
 // Pure construction of the new session from the old one + the incoming turn.
@@ -1559,8 +1596,12 @@ fn build_appended_session(prev: &SessionFile, args: &AppendArgs) -> Result<Sessi
 fn do_append_clarification(arguments: &Value) -> Result<Value, StageErr> {
     let args = parse_append_args(arguments)?;
     let session_path = session_path_for(&args.output_dir, &args.run_id, &args.finding_id);
-    let prev = read_session(&session_path)?
-        .ok_or_else(|| stage2_err("no_session", "no stage-2.session.json — call start_verification first (spec §7.2)"))?;
+    let prev = read_session(&session_path)?.ok_or_else(|| {
+        stage2_err(
+            "no_session",
+            "no stage-2.session.json — call start_verification first (spec §7.2)",
+        )
+    })?;
     let next = build_appended_session(&prev, &args)?;
     write_session_atomic(&session_path, &next)?;
     let last_seq = next.transcript.len().saturating_sub(1);
@@ -1600,7 +1641,11 @@ fn parse_finalize_args(arguments: &Value) -> Result<FinalizeArgs, StageErr> {
     validate_safe_id("finding_id", &finding_id).map_err(unsafe_id_err)?;
     let output_dir_str = require_string_arg(args, "output_dir")?;
     let output_dir = require_absolute(&output_dir_str, "output_dir").map_err(bad_request)?;
-    Ok(FinalizeArgs { run_id, finding_id, output_dir })
+    Ok(FinalizeArgs {
+        run_id,
+        finding_id,
+        output_dir,
+    })
 }
 
 fn load_session_for_finalize(args: &FinalizeArgs) -> Result<(SessionFile, PathBuf), StageErr> {
@@ -1650,8 +1695,14 @@ fn build_verified_artifact(
             user_acknowledged,
         },
         finalized_at: now,
-        stage1_refined_path: format!("{}/{}/{}", FINDINGS_DIR_NAME, args.finding_id, REFINED_FILE_NAME),
-        session_path: format!("{}/{}/{}", FINDINGS_DIR_NAME, args.finding_id, SESSION_FILE_NAME),
+        stage1_refined_path: format!(
+            "{}/{}/{}",
+            FINDINGS_DIR_NAME, args.finding_id, REFINED_FILE_NAME
+        ),
+        session_path: format!(
+            "{}/{}/{}",
+            FINDINGS_DIR_NAME, args.finding_id, SESSION_FILE_NAME
+        ),
         transcript_digest: digest_hex,
         digest_algorithm: DIGEST_ALGORITHM.to_string(),
         transcript_bytes_at_finalize: digest_input_len,
@@ -1775,12 +1826,21 @@ fn parse_abort_args(arguments: &Value) -> Result<AbortArgs, StageErr> {
         .get("reason")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    Ok(AbortArgs { run_id, finding_id, output_dir, reason })
+    Ok(AbortArgs {
+        run_id,
+        finding_id,
+        output_dir,
+        reason,
+    })
 }
 
 // Pure construction. Transcript is preserved verbatim (spec §12.3 "abort
 // does not truncate the transcript; it only flips state and sets aborted_at").
-fn build_aborted_session(prev: &SessionFile, reason: Option<String>, now: String) -> Result<SessionFile, StageErr> {
+fn build_aborted_session(
+    prev: &SessionFile,
+    reason: Option<String>,
+    now: String,
+) -> Result<SessionFile, StageErr> {
     let _ = can_transition(prev.state, TransitionEvent::Abort)?;
     Ok(SessionFile {
         state: SessionState::Aborted,
@@ -1794,8 +1854,12 @@ fn build_aborted_session(prev: &SessionFile, reason: Option<String>, now: String
 fn do_abort_verification(arguments: &Value) -> Result<Value, StageErr> {
     let args = parse_abort_args(arguments)?;
     let session_path = session_path_for(&args.output_dir, &args.run_id, &args.finding_id);
-    let prev = read_session(&session_path)?
-        .ok_or_else(|| stage2_err("no_session", "no stage-2.session.json to abort (spec §12.1)"))?;
+    let prev = read_session(&session_path)?.ok_or_else(|| {
+        stage2_err(
+            "no_session",
+            "no stage-2.session.json to abort (spec §12.1)",
+        )
+    })?;
     let now = format_iso8601_utc(now_unix_seconds_nanos().0);
     let aborted = build_aborted_session(&prev, args.reason.clone(), now.clone())?;
     write_session_atomic(&session_path, &aborted)?;
@@ -1832,9 +1896,13 @@ fn run_index_codebase(arguments: &Value) -> Value {
 
 fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let path_str = args.get("path").and_then(|v| v.as_str())
+    let path_str = args
+        .get("path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'path'")?;
-    let output_str = args.get("output_dir").and_then(|v| v.as_str())
+    let output_str = args
+        .get("output_dir")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'output_dir'")?;
     let lang_filter = parse_language_filter(args)?;
     let dependency_scope = parse_dependency_scope(args)?;
@@ -1844,8 +1912,7 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         return Err(format!("path does not exist: {}", codebase.display()));
     }
     let output_dir = require_absolute(output_str, "output_dir")?;
-    fs::create_dir_all(&output_dir)
-        .map_err(|e| format!("create output dir: {e}"))?;
+    fs::create_dir_all(&output_dir).map_err(|e| format!("create output dir: {e}"))?;
     let graph_dir = output_dir.join("graph");
     // source: H4 fix — validate the derived path ends in `/graph` and is not
     // a forbidden system root before any destructive op.
@@ -1858,7 +1925,11 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     }
 
     let result = indexer::index_codebase_with_language(
-        &codebase, &graph_dir, lang_filter, dependency_scope)?;
+        &codebase,
+        &graph_dir,
+        lang_filter,
+        dependency_scope,
+    )?;
     // Record the absolute source root beside the graph (relative file paths
     // stay in the graph; the root lets consumers reconstruct absolute paths).
     write_graph_meta(&output_dir, &codebase);
@@ -1910,8 +1981,7 @@ fn run_query_graph(arguments: &Value) -> Value {
 // ---------------------------------------------------------------------------
 
 const FORBIDDEN_CYPHER_KEYWORDS: &[&str] = &[
-    "CREATE", "DELETE", "MERGE", "SET", "REMOVE",
-    "DROP", "ALTER", "CALL", "LOAD",
+    "CREATE", "DELETE", "MERGE", "SET", "REMOVE", "DROP", "ALTER", "CALL", "LOAD",
 ];
 
 /// Returns the first forbidden keyword found in `query`, or None if the query
@@ -1968,8 +2038,8 @@ fn contains_whole_word(haystack: &str, needle: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 const FORBIDDEN_GRAPH_PATH_PREFIXES: &[&str] = &[
-    "/", "/Users", "/home", "/root", "/tmp", "/var", "/etc",
-    "/usr", "/bin", "/sbin", "/dev", "/opt", "/System", "/Library",
+    "/", "/Users", "/home", "/root", "/tmp", "/var", "/etc", "/usr", "/bin", "/sbin", "/dev",
+    "/opt", "/System", "/Library",
 ];
 
 /// Returns Ok iff `path` is a safe target for destructive directory ops.
@@ -1981,9 +2051,7 @@ fn validate_graph_path_safe(path: &Path) -> Result<(), String> {
         ));
     }
     // Must end in `/graph` (the well-known suffix). Check the last component.
-    let last = path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let last = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if last != "graph" {
         return Err(format!(
             "unsafe_graph_path: must end in '/graph' (got {:?})",
@@ -2010,8 +2078,7 @@ fn validate_graph_path_safe(path: &Path) -> Result<(), String> {
 /// symlinked `graph` is unlinked, not followed.
 /// Caller MUST have run `validate_graph_path_safe` first.
 fn remove_stale_graph_artifact(path: &Path) -> Result<(), String> {
-    let meta = fs::symlink_metadata(path)
-        .map_err(|e| format!("stat stale graph path: {e}"))?;
+    let meta = fs::symlink_metadata(path).map_err(|e| format!("stat stale graph path: {e}"))?;
     let outcome = if meta.is_dir() {
         fs::remove_dir_all(path)
     } else {
@@ -2049,9 +2116,13 @@ fn write_graph_meta(output_dir: &Path, root: &Path) {
 
 fn do_query_graph(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let query = args.get("query").and_then(|v| v.as_str())
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'query'")?;
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
 
@@ -2100,21 +2171,21 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
     // serializing whole nodes) can exceed the byte budget. Page by serialized
     // size from `offset` so the caller can pace through a large result set; the
     // page is cursor-safe only when `order_stable` is true (see above).
-    let all_rows: Vec<Value> = qr.rows.iter()
+    let all_rows: Vec<Value> = qr
+        .rows
+        .iter()
         .map(|row| Value::Array(row.iter().map(|c| json!(c)).collect()))
         .collect();
-    let page = response_budget::bound_values_paged(
-        all_rows,
-        offset,
-        response_budget::MAX_RESPONSE_CHARS,
-    );
+    let page =
+        response_budget::bound_values_paged(all_rows, offset, response_budget::MAX_RESPONSE_CHARS);
     let returned_rows = &page.items;
 
     // Rebuild the human-readable string from only the rows on THIS page (the
     // window [offset, offset + returned_count)) so it stays within budget
     // alongside the structured `rows`.
     let start = (offset as usize).min(qr.rows.len());
-    let returned_string_rows: Vec<Vec<String>> = qr.rows
+    let returned_string_rows: Vec<Vec<String>> = qr
+        .rows
         .iter()
         .skip(start)
         .take(returned_rows.len())
@@ -2257,9 +2328,13 @@ fn run_get_symbol(arguments: &Value) -> Value {
 
 fn do_get_symbol(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let qn = args.get("qualified_name").and_then(|v| v.as_str())
+    let qn = args
+        .get("qualified_name")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'qualified_name'")?;
 
     let graph_path = Path::new(graph_str);
@@ -2338,14 +2413,22 @@ fn do_get_symbol(arguments: &Value) -> Result<Value, String> {
 
 /// Searches all node tables for a node matching by qualified_name or id.
 /// `lit` must be a Cypher-quoted literal produced by `graph_store::cypher_str`.
-fn find_symbol_node(
-    store: &graph_store::GraphStore,
-    lit: &str,
-) -> Result<Value, String> {
+fn find_symbol_node(store: &graph_store::GraphStore, lit: &str) -> Result<Value, String> {
     let labels = [
-        "Function", "Method", "Struct", "Enum", "Trait", "Variant",
-        "Module", "Constant", "TypeAlias", "Field", "Import",
-        "File", "Directory", "CallSite",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Variant",
+        "Module",
+        "Constant",
+        "TypeAlias",
+        "Field",
+        "Import",
+        "File",
+        "Directory",
+        "CallSite",
     ];
     for label in labels {
         let cypher = format!(
@@ -2365,10 +2448,7 @@ fn find_symbol_node(
 }
 
 /// Queries outgoing edges across all relationship tables.
-fn find_symbol_edges_out(
-    store: &graph_store::GraphStore,
-    lit: &str,
-) -> Result<Vec<Value>, String> {
+fn find_symbol_edges_out(store: &graph_store::GraphStore, lit: &str) -> Result<Vec<Value>, String> {
     let mut edges = Vec::new();
     for (rel, from_label, to_label) in rel_table_triples() {
         let cypher = format!(
@@ -2382,10 +2462,7 @@ fn find_symbol_edges_out(
 }
 
 /// Queries incoming edges across all relationship tables.
-fn find_symbol_edges_in(
-    store: &graph_store::GraphStore,
-    lit: &str,
-) -> Result<Vec<Value>, String> {
+fn find_symbol_edges_in(store: &graph_store::GraphStore, lit: &str) -> Result<Vec<Value>, String> {
     let mut edges = Vec::new();
     for (rel, from_label, to_label) in rel_table_triples() {
         let cypher = format!(
@@ -2398,11 +2475,7 @@ fn find_symbol_edges_in(
     Ok(edges)
 }
 
-fn collect_edge_rows(
-    store: &graph_store::GraphStore,
-    cypher: &str,
-    edges: &mut Vec<Value>,
-) {
+fn collect_edge_rows(store: &graph_store::GraphStore, cypher: &str, edges: &mut Vec<Value>) {
     if let Ok(qr) = store.execute_query(cypher) {
         for row in &qr.rows {
             if row.len() >= 2 {
@@ -2427,7 +2500,9 @@ fn run_resolve_graph(arguments: &Value) -> Value {
 
 fn do_resolve_graph(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
 
     let graph_path = Path::new(graph_str);
@@ -2465,8 +2540,11 @@ fn do_resolve_graph(arguments: &Value) -> Result<Value, String> {
     // Absent the arg this is a no-op. source: cross-repo bridge spec.
     let siblings = bridge::SiblingGraphs::from_arg(arguments, graph_path);
     if !siblings.is_empty() {
-        let targets: Vec<String> =
-            result.unresolved.iter().map(|u| u.target_text.clone()).collect();
+        let targets: Vec<String> = result
+            .unresolved
+            .iter()
+            .map(|u| u.target_text.clone())
+            .collect();
         let (resolvable, sample) = bridge::count_cross_repo_resolvable(&siblings, &targets);
         out["cross_repo_resolvable"] = json!(resolvable);
         out["cross_repo_sample"] = json!(sample);
@@ -2492,9 +2570,12 @@ fn run_cluster_graph(arguments: &Value) -> Value {
 
 fn do_cluster_graph(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let gamma = args.get("resolution_param")
+    let gamma = args
+        .get("resolution_param")
         .and_then(|v| v.as_f64())
         .unwrap_or(1.0);
 
@@ -2552,7 +2633,9 @@ fn run_get_processes(arguments: &Value) -> Value {
 
 fn do_get_processes(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
 
     let graph_path = Path::new(graph_str);
@@ -2575,25 +2658,29 @@ fn do_get_processes(arguments: &Value) -> Result<Value, String> {
     // unique, giving a total (tie-free) order. source: cursor-correctness
     // requirement (response_budget::BoundedPage docs).
     processes.sort_by(|a, b| {
-        a.name.cmp(&b.name).then_with(|| a.entry_point.cmp(&b.entry_point))
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.entry_point.cmp(&b.entry_point))
     });
 
-    let procs: Vec<Value> = processes.iter().map(|p| json!({
-        "name": p.name,
-        "entry_point": p.entry_point,
-        "entry_kind": p.entry_kind,
-        "depth": p.depth,
-        "node_count": p.node_count,
-    })).collect();
+    let procs: Vec<Value> = processes
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "entry_point": p.entry_point,
+                "entry_kind": p.entry_kind,
+                "depth": p.depth,
+                "node_count": p.node_count,
+            })
+        })
+        .collect();
 
     // Page the array by serialized size from `offset` so a graph with thousands
     // of entry points cannot blow the host's MCP tool-result cap, and a client
     // can retrieve the full list in budget-sized pages via `next_offset`.
-    let page = response_budget::bound_values_paged(
-        procs,
-        offset,
-        response_budget::per_section_chars(),
-    );
+    let page =
+        response_budget::bound_values_paged(procs, offset, response_budget::per_section_chars());
 
     let mut out = json!({
         "stage": 3,
@@ -2626,9 +2713,13 @@ fn run_get_impact(arguments: &Value) -> Value {
 
 fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let qn = args.get("qualified_name").and_then(|v| v.as_str())
+    let qn = args
+        .get("qualified_name")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'qualified_name'")?;
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
 
@@ -2650,7 +2741,9 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     // source: cursor-correctness requirement (response_budget::BoundedPage docs).
     let sort_nodes = |nodes: &mut Vec<clustering::ImpactNode>| {
         nodes.sort_by(|a, b| {
-            a.qualified_name.cmp(&b.qualified_name).then_with(|| a.id.cmp(&b.id))
+            a.qualified_name
+                .cmp(&b.qualified_name)
+                .then_with(|| a.id.cmp(&b.id))
         });
     };
     sort_nodes(&mut impact.callers);
@@ -2691,18 +2784,25 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     // multi-cursor scheme. To page a secondary blast-radius dimension at scale,
     // query it directly via query_graph (which carries its own ORDER BY + offset).
     let callers = response_budget::bound_values_paged(
-        to_handles(&impact.callers), offset, response_budget::per_section_chars());
+        to_handles(&impact.callers),
+        offset,
+        response_budget::per_section_chars(),
+    );
     let importers = response_budget::bound_values(
-        to_handles(&impact.importers), response_budget::per_section_chars());
+        to_handles(&impact.importers),
+        response_budget::per_section_chars(),
+    );
     let users = response_budget::bound_values(
-        to_handles(&impact.users), response_budget::per_section_chars());
+        to_handles(&impact.users),
+        response_budget::per_section_chars(),
+    );
     let implementors = response_budget::bound_values(
-        to_handles(&impact.implementors), response_budget::per_section_chars());
+        to_handles(&impact.implementors),
+        response_budget::per_section_chars(),
+    );
 
-    let any_truncated = callers.truncated
-        || importers.truncated
-        || users.truncated
-        || implementors.truncated;
+    let any_truncated =
+        callers.truncated || importers.truncated || users.truncated || implementors.truncated;
 
     let mut out = json!({
         "stage": 3,
@@ -2749,8 +2849,8 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     if !siblings.is_empty() {
         let foreign = bridge::foreign_callers(&siblings, bridge::last_segment(qn));
         let handles: Vec<Value> = foreign.iter().map(|f| f.to_json()).collect();
-        let foreign_page = response_budget::bound_values(
-            handles, response_budget::per_section_chars());
+        let foreign_page =
+            response_budget::bound_values(handles, response_budget::per_section_chars());
         out["foreign_callers"] = json!(foreign_page.items);
         out["foreign_callers_total"] = json!(foreign.len());
         out["foreign_callers_paged"] = json!(false);
@@ -2817,11 +2917,18 @@ fn run_index_history(arguments: &Value) -> Value {
 
 fn do_index_history(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let codebase_str = args.get("codebase_path").and_then(|v| v.as_str())
+    let codebase_str = args
+        .get("codebase_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'codebase_path'")?;
-    let max_commits = args.get("max_commits").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let max_commits = args
+        .get("max_commits")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
 
     let graph_path = Path::new(graph_str);
     if !graph_path.exists() {
@@ -2861,13 +2968,20 @@ fn run_search_codebase(arguments: &Value) -> Value {
 
 fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let query = args.get("query").and_then(|v| v.as_str())
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'query'")?;
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
-    let label_filter = args.get("label_filter").and_then(|v| v.as_str()).map(String::from);
+    let label_filter = args
+        .get("label_filter")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let graph_path = Path::new(graph_str);
     if !graph_path.exists() {
@@ -2889,8 +3003,7 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         label_filter,
         min_score: 0.01,
     };
-    let results =
-        search::search_graph(&store, query, &options, search_index_dir.as_deref())?;
+    let results = search::search_graph(&store, query, &options, search_index_dir.as_deref())?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
     // Cursor stability: search_graph returns results in a deterministic total
@@ -2900,47 +3013,64 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     // `offset` over it neither skips nor duplicates rows. `limit` bounds the
     // ranked candidate universe; `offset` + byte budget page within it.
     // source: cursor-correctness requirement (response_budget::BoundedPage docs).
-    let items: Vec<Value> = results.iter().map(|r| json!({
-        "qualified_name": r.qualified_name,
-        "name": r.name,
-        "kind": r.label,
-        "file_path": r.file_path,
-        "score": format!("{:.4}", r.score),
-        "community_id": r.community_id,
-        "processes": r.process_names,
-        "start_line": r.start_line,
-        "end_line": r.end_line,
-    })).collect();
+    let items: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            json!({
+                "qualified_name": r.qualified_name,
+                "name": r.name,
+                "kind": r.label,
+                "file_path": r.file_path,
+                "score": format!("{:.4}", r.score),
+                "community_id": r.community_id,
+                "processes": r.process_names,
+                "start_line": r.start_line,
+                "end_line": r.end_line,
+            })
+        })
+        .collect();
 
     // Page the ranked results by serialized size from `offset`. Previously this
     // tool relied solely on `limit`; a wide result set could still approach the
     // host cap and offered no way to retrieve rows beyond the cut. Byte-budget
     // paging makes the full ranked list retrievable in budget-sized pages.
-    let page = response_budget::bound_values_paged(
-        items,
-        offset,
-        response_budget::per_section_chars(),
-    );
+    let page =
+        response_budget::bound_values_paged(items, offset, response_budget::per_section_chars());
 
     // Process-grouped view: a lightweight secondary index over the returned
     // page. Built from `page.items` (not the full ranked set) so every
     // qualified_name it lists is present in `results` — the flat list stays the
     // single source of truth; `by_process` never duplicates row payload and
     // never references a row outside the page. source: search::group_hits_by_process.
-    let group_input: Vec<(String, Vec<String>)> = page.items.iter().map(|item| {
-        let qn = item.get("qualified_name").and_then(|v| v.as_str())
-            .unwrap_or_default().to_string();
-        let processes = item.get("processes").and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|p| p.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-        (qn, processes)
-    }).collect();
+    let group_input: Vec<(String, Vec<String>)> = page
+        .items
+        .iter()
+        .map(|item| {
+            let qn = item
+                .get("qualified_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let processes = item
+                .get("processes")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|p| p.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (qn, processes)
+        })
+        .collect();
     let by_process: Vec<Value> = search::group_hits_by_process(&group_input)
         .into_iter()
-        .map(|(process, qualified_names)| json!({
-            "process": process,
-            "qualified_names": qualified_names,
-        }))
+        .map(|(process, qualified_names)| {
+            json!({
+                "process": process,
+                "qualified_names": qualified_names,
+            })
+        })
         .collect();
 
     let mut out = json!({
@@ -2968,8 +3098,8 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     if !siblings.is_empty() {
         let hits = bridge::federated_search(&siblings, query, limit);
         let foreign_items: Vec<Value> = hits.iter().map(|h| h.to_json()).collect();
-        let foreign_page = response_budget::bound_values(
-            foreign_items, response_budget::per_section_chars());
+        let foreign_page =
+            response_budget::bound_values(foreign_items, response_budget::per_section_chars());
         out["foreign_results"] = json!(foreign_page.items);
         out["foreign_results_total"] = json!(hits.len());
         out["foreign_results_paged"] = json!(false);
@@ -2981,7 +3111,12 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     // Suggest how to act on a hit: top-ranked results are the natural next
     // traversal anchors. Gated on a non-empty page so we never suggest acting
     // on nothing.
-    if let Some(first) = page.items.first().and_then(|r| r.get("qualified_name")).and_then(|v| v.as_str()) {
+    if let Some(first) = page
+        .items
+        .first()
+        .and_then(|r| r.get("qualified_name"))
+        .and_then(|v| v.as_str())
+    {
         out["next_steps"] = json!([
             format!("inspect the top hit: get_context on '{first}'"),
             "narrow further with `label_filter` (e.g. Function, Struct, Trait)".to_string(),
@@ -3005,9 +3140,13 @@ fn run_get_context(arguments: &Value) -> Value {
 
 fn do_get_context(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let qn = args.get("qualified_name").and_then(|v| v.as_str())
+    let qn = args
+        .get("qualified_name")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'qualified_name'")?;
 
     let graph_path = Path::new(graph_str);
@@ -3036,23 +3175,36 @@ fn do_get_context(arguments: &Value) -> Result<Value, String> {
     };
 
     let related_to_json = |items: &[search::RelatedSymbol]| -> Vec<Value> {
-        items.iter().map(|s| json!({
-            "name": s.name,
-            "qualified_name": s.qualified_name,
-            "kind": s.label,
-        })).collect()
+        items
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "qualified_name": s.qualified_name,
+                    "kind": s.label,
+                })
+            })
+            .collect()
     };
 
-    let community_json = ctx.community.as_ref().map(|c| json!({
-        "id": c.id,
-        "name": c.name,
-        "member_count": c.member_count,
-    }));
+    let community_json = ctx.community.as_ref().map(|c| {
+        json!({
+            "id": c.id,
+            "name": c.name,
+            "member_count": c.member_count,
+        })
+    });
 
-    let processes_json: Vec<Value> = ctx.processes.iter().map(|p| json!({
-        "name": p.name,
-        "role": p.role,
-    })).collect();
+    let processes_json: Vec<Value> = ctx
+        .processes
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "role": p.role,
+            })
+        })
+        .collect();
 
     // Epistemic honesty: when the symbol is a dynamic-dispatch surface (a
     // trait/interface), its reverse relationships (`called_by`, `used_by`) are a
@@ -3131,11 +3283,18 @@ fn run_analyze_codebase(arguments: &Value) -> Value {
 
 fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let path_str = args.get("path").and_then(|v| v.as_str())
+    let path_str = args
+        .get("path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'path'")?;
-    let output_str = args.get("output_dir").and_then(|v| v.as_str())
+    let output_str = args
+        .get("output_dir")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'output_dir'")?;
-    let gamma = args.get("resolution_param").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let gamma = args
+        .get("resolution_param")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
     let enable_lsp = args.get("lsp").and_then(|v| v.as_bool()).unwrap_or(false);
     let lang_filter = parse_language_filter(args)?;
     let dependency_scope = parse_dependency_scope(args)?;
@@ -3145,8 +3304,7 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
         return Err(format!("path does not exist: {}", codebase.display()));
     }
     let output_dir = require_absolute(output_str, "output_dir")?;
-    fs::create_dir_all(&output_dir)
-        .map_err(|e| format!("create output dir: {e}"))?;
+    fs::create_dir_all(&output_dir).map_err(|e| format!("create output dir: {e}"))?;
     let graph_dir = output_dir.join("graph");
     // source: H4 fix — see do_index_codebase.
     validate_graph_path_safe(&graph_dir)?;
@@ -3159,7 +3317,11 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
 
     // Phase 1: index
     let index_result = indexer::index_codebase_with_language(
-        &codebase, &graph_dir, lang_filter, dependency_scope)?;
+        &codebase,
+        &graph_dir,
+        lang_filter,
+        dependency_scope,
+    )?;
     // Record the absolute source root beside the graph (see write_graph_meta).
     write_graph_meta(&output_dir, &codebase);
 
@@ -3289,13 +3451,23 @@ fn run_lsp_resolve(arguments: &Value) -> Value {
 
 fn do_lsp_resolve(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
-    let codebase_str = args.get("codebase_path").and_then(|v| v.as_str())
+    let codebase_str = args
+        .get("codebase_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'codebase_path'")?;
-    let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("auto");
+    let language = args
+        .get("language")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     let lsp_command = args.get("lsp_command").and_then(|v| v.as_str());
-    let timeout_ms = args.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30000);
+    let timeout_ms = args
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30000);
 
     let graph_path = Path::new(graph_str);
     if !graph_path.exists() {
@@ -3373,12 +3545,20 @@ fn run_detect_changes(arguments: &Value) -> Value {
 
 fn do_detect_changes(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
     let diff_text = args.get("diff_text").and_then(|v| v.as_str());
     let codebase_path = args.get("codebase_path").and_then(|v| v.as_str());
-    let base_ref = args.get("base_ref").and_then(|v| v.as_str()).unwrap_or("HEAD~1");
-    let head_ref = args.get("head_ref").and_then(|v| v.as_str()).unwrap_or("HEAD");
+    let base_ref = args
+        .get("base_ref")
+        .and_then(|v| v.as_str())
+        .unwrap_or("HEAD~1");
+    let head_ref = args
+        .get("head_ref")
+        .and_then(|v| v.as_str())
+        .unwrap_or("HEAD");
 
     let graph_path = Path::new(graph_str);
     if !graph_path.exists() {
@@ -3397,9 +3577,7 @@ fn do_detect_changes(arguments: &Value) -> Result<Value, String> {
         }
         git_diff::analyze_git_diff(&store, repo_path, base_ref, head_ref)?
     } else {
-        return Err(
-            "either 'diff_text' or 'codebase_path' must be provided".to_string()
-        );
+        return Err("either 'diff_text' or 'codebase_path' must be provided".to_string());
     };
 
     Ok(json!({
@@ -3500,11 +3678,9 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     if finding_id.is_none() && feature_description.is_none() {
-        return Err(
-            "missing input: provide 'finding_id' (finding mode) or \
+        return Err("missing input: provide 'finding_id' (finding mode) or \
              'feature_description' (feature mode)"
-                .to_string(),
-        );
+            .to_string());
     }
     let output_dir_str = args
         .get("output_dir")
@@ -3652,35 +3828,48 @@ fn run_validate_prd_against_graph(arguments: &Value) -> Value {
 
 fn do_validate_prd_against_graph(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let prd_path_str = args.get("prd_path").and_then(|v| v.as_str())
+    let prd_path_str = args
+        .get("prd_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'prd_path'")?;
     let prd_path = require_absolute(prd_path_str, "prd_path")?;
-    let graph_path_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_path_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
     let graph_path = require_absolute(graph_path_str, "graph_path")?;
     if !graph_path.exists() {
         return Err(format!("graph_path does not exist: {graph_path_str}"));
     }
-    let affected_opt = args.get("affected_symbols_path").and_then(|v| v.as_str())
-        .map(|s| require_absolute(s, "affected_symbols_path")).transpose()?;
+    let affected_opt = args
+        .get("affected_symbols_path")
+        .and_then(|v| v.as_str())
+        .map(|s| require_absolute(s, "affected_symbols_path"))
+        .transpose()?;
 
     // Read-only tool: reuse cached handle. source: graph_cache module docs.
     let store = graph_cache::open_cached(&graph_path)?;
-    let report = prd_validator::validate_prd(
-        &store, &prd_path, affected_opt.as_deref(),
-    )?;
+    let report = prd_validator::validate_prd(&store, &prd_path, affected_opt.as_deref())?;
     let validated_at = format_iso8601_utc(now_unix_seconds_nanos().0);
 
     let (run_id_opt, finding_id_opt, output_dir_opt) = extract_optional_ids(args)?;
     let artifact_path = maybe_write_validation(
-        &report, &prd_path, &graph_path, &validated_at,
-        &run_id_opt, &finding_id_opt, &output_dir_opt,
+        &report,
+        &prd_path,
+        &graph_path,
+        &validated_at,
+        &run_id_opt,
+        &finding_id_opt,
+        &output_dir_opt,
     )?;
 
     let json_report = prd_validator::report_to_json(
-        &report, run_id_opt.as_deref().unwrap_or(""),
+        &report,
+        run_id_opt.as_deref().unwrap_or(""),
         finding_id_opt.as_deref().unwrap_or(""),
-        &prd_path, &graph_path, &validated_at,
+        &prd_path,
+        &graph_path,
+        &validated_at,
     );
     Ok(json!({
         "stage": 6,
@@ -3706,12 +3895,25 @@ fn do_validate_prd_against_graph(arguments: &Value) -> Result<Value, String> {
 fn extract_optional_ids(
     args: &Map<String, Value>,
 ) -> Result<(Option<String>, Option<String>, Option<PathBuf>), String> {
-    let run_id = args.get("run_id").and_then(|v| v.as_str()).map(String::from);
-    if let Some(ref r) = run_id { validate_safe_id("run_id", r)?; }
-    let finding_id = args.get("finding_id").and_then(|v| v.as_str()).map(String::from);
-    if let Some(ref f) = finding_id { validate_safe_id("finding_id", f)?; }
-    let output_dir = args.get("output_dir").and_then(|v| v.as_str())
-        .map(|s| require_absolute(s, "output_dir")).transpose()?;
+    let run_id = args
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    if let Some(ref r) = run_id {
+        validate_safe_id("run_id", r)?;
+    }
+    let finding_id = args
+        .get("finding_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    if let Some(ref f) = finding_id {
+        validate_safe_id("finding_id", f)?;
+    }
+    let output_dir = args
+        .get("output_dir")
+        .and_then(|v| v.as_str())
+        .map(|s| require_absolute(s, "output_dir"))
+        .transpose()?;
     Ok((run_id, finding_id, output_dir))
 }
 
@@ -3729,7 +3931,11 @@ fn maybe_write_validation(
         _ => return Ok(None),
     };
     let value = prd_validator::report_to_json(report, r, f, prd_path, graph_path, validated_at);
-    let dest = o.join("runs").join(r).join("findings").join(f)
+    let dest = o
+        .join("runs")
+        .join(r)
+        .join("findings")
+        .join(f)
         .join(prd_validator::VALIDATION_FILE);
     let written = prd_validator::write_validation(&dest, &value)?;
     Ok(Some(written))
@@ -3753,13 +3959,16 @@ fn run_check_security_gates(arguments: &Value) -> Value {
 
 fn do_check_security_gates(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
-    let graph_path_str = args.get("graph_path").and_then(|v| v.as_str())
+    let graph_path_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
     let graph_path = require_absolute(graph_path_str, "graph_path")?;
     if !graph_path.exists() {
         return Err(format!("graph_path does not exist: {graph_path_str}"));
     }
-    let changed_symbols: Vec<String> = args.get("changed_symbols")
+    let changed_symbols: Vec<String> = args
+        .get("changed_symbols")
         .and_then(|v| v.as_array())
         .ok_or("missing required field 'changed_symbols' (array of strings)")?
         .iter()
@@ -3773,14 +3982,22 @@ fn do_check_security_gates(arguments: &Value) -> Result<Value, String> {
 
     let (run_id_opt, finding_id_opt, output_dir_opt) = extract_optional_ids(args)?;
     let artifact_path = maybe_write_security(
-        &report, &graph_path, &changed_symbols, &checked_at,
-        &run_id_opt, &finding_id_opt, &output_dir_opt,
+        &report,
+        &graph_path,
+        &changed_symbols,
+        &checked_at,
+        &run_id_opt,
+        &finding_id_opt,
+        &output_dir_opt,
     )?;
 
     let json_report = security_gates::report_to_json(
-        &report, run_id_opt.as_deref().unwrap_or(""),
+        &report,
+        run_id_opt.as_deref().unwrap_or(""),
         finding_id_opt.as_deref().unwrap_or(""),
-        &graph_path, &changed_symbols, &checked_at,
+        &graph_path,
+        &changed_symbols,
+        &checked_at,
     );
     Ok(json!({
         "stage": 8,
@@ -3812,8 +4029,13 @@ fn maybe_write_security(
         (Some(r), Some(f), Some(o)) => (r, f, o),
         _ => return Ok(None),
     };
-    let value = security_gates::report_to_json(report, r, f, graph_path, changed_symbols, checked_at);
-    let dest = o.join("runs").join(r).join("findings").join(f)
+    let value =
+        security_gates::report_to_json(report, r, f, graph_path, changed_symbols, checked_at);
+    let dest = o
+        .join("runs")
+        .join(r)
+        .join("findings")
+        .join(f)
         .join(security_gates::SECURITY_FILE);
     let written = security_gates::write_security(&dest, &value)?;
     Ok(Some(written))
@@ -3947,7 +4169,7 @@ fn handle_tool_call(params: &Value) -> Value {
                 "stages_registered": tools_count,
                 "tools_count": tools_count,
             })
-        },
+        }
         "extract_finding" => run_extract_finding(&arguments),
         "refine_finding" => run_refine_finding(&arguments),
         "start_verification" => run_start_verification(&arguments),
@@ -4031,14 +4253,20 @@ mod security_tests {
     fn limit_injection_appends_when_absent() {
         let (q, injected) = inject_limit_if_absent("MATCH (n) RETURN n");
         assert!(injected);
-        assert_eq!(q, format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}"));
+        assert_eq!(
+            q,
+            format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}")
+        );
     }
 
     #[test]
     fn limit_injection_strips_trailing_semicolon() {
         let (q, injected) = inject_limit_if_absent("MATCH (n) RETURN n;");
         assert!(injected);
-        assert_eq!(q, format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}"));
+        assert_eq!(
+            q,
+            format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}")
+        );
     }
 
     #[test]
@@ -4063,28 +4291,52 @@ mod security_tests {
 
     #[test]
     fn test_query_graph_rejects_delete() {
-        assert_eq!(forbidden_cypher_keyword("MATCH (n) DETACH DELETE n"), Some("DELETE"));
-        assert_eq!(forbidden_cypher_keyword("MATCH (n) DELETE n"), Some("DELETE"));
+        assert_eq!(
+            forbidden_cypher_keyword("MATCH (n) DETACH DELETE n"),
+            Some("DELETE")
+        );
+        assert_eq!(
+            forbidden_cypher_keyword("MATCH (n) DELETE n"),
+            Some("DELETE")
+        );
         assert_eq!(forbidden_cypher_keyword("CREATE (n:Foo)"), Some("CREATE"));
-        assert_eq!(forbidden_cypher_keyword("MERGE (n:Foo {id: 1})"), Some("MERGE"));
-        assert_eq!(forbidden_cypher_keyword("MATCH (n) SET n.x = 1"), Some("SET"));
-        assert_eq!(forbidden_cypher_keyword("MATCH (n) REMOVE n:Label"), Some("REMOVE"));
+        assert_eq!(
+            forbidden_cypher_keyword("MERGE (n:Foo {id: 1})"),
+            Some("MERGE")
+        );
+        assert_eq!(
+            forbidden_cypher_keyword("MATCH (n) SET n.x = 1"),
+            Some("SET")
+        );
+        assert_eq!(
+            forbidden_cypher_keyword("MATCH (n) REMOVE n:Label"),
+            Some("REMOVE")
+        );
         assert_eq!(forbidden_cypher_keyword("DROP TABLE Foo"), Some("DROP"));
         assert_eq!(forbidden_cypher_keyword("CALL db.labels()"), Some("CALL"));
         assert_eq!(forbidden_cypher_keyword("LOAD CSV FROM 'x'"), Some("LOAD"));
 
         // Clean read queries must pass.
         assert_eq!(forbidden_cypher_keyword("MATCH (n) RETURN n"), None);
-        assert_eq!(forbidden_cypher_keyword("OPTIONAL MATCH (n) RETURN n"), None);
+        assert_eq!(
+            forbidden_cypher_keyword("OPTIONAL MATCH (n) RETURN n"),
+            None
+        );
         assert_eq!(forbidden_cypher_keyword("WITH 1 AS x RETURN x"), None);
         assert_eq!(forbidden_cypher_keyword("UNWIND [1,2] AS i RETURN i"), None);
 
         // Whole-word matching — identifiers that embed a keyword must NOT trigger.
-        assert_eq!(forbidden_cypher_keyword("MATCH (n) RETURN n.created_at"), None);
+        assert_eq!(
+            forbidden_cypher_keyword("MATCH (n) RETURN n.created_at"),
+            None
+        );
         assert_eq!(forbidden_cypher_keyword("MATCH (n) RETURN n.setting"), None);
 
         // Case insensitivity.
-        assert_eq!(forbidden_cypher_keyword("match (n) detach delete n"), Some("DELETE"));
+        assert_eq!(
+            forbidden_cypher_keyword("match (n) detach delete n"),
+            Some("DELETE")
+        );
 
         // End-to-end via do_query_graph — no real DB needed because we should
         // fail before `GraphStore::open_or_create`.
@@ -4093,10 +4345,7 @@ mod security_tests {
             "query": "MATCH (n) DETACH DELETE n"
         });
         let err = do_query_graph(&args).expect_err("must reject mutation query");
-        assert!(
-            err.contains("read_only_query_required"),
-            "got: {err}"
-        );
+        assert!(err.contains("read_only_query_required"), "got: {err}");
     }
 
     #[test]
@@ -4104,7 +4353,7 @@ mod security_tests {
         assert!(has_order_by_clause("MATCH (n) RETURN n ORDER BY n.id"));
         assert!(has_order_by_clause("match (n) return n order by n.name"));
         assert!(has_order_by_clause("MATCH (n) RETURN n ORDER   BY n.id")); // extra ws
-        // No ORDER BY → unstable order.
+                                                                            // No ORDER BY → unstable order.
         assert!(!has_order_by_clause("MATCH (n) RETURN n"));
         assert!(!has_order_by_clause("MATCH (n) RETURN n LIMIT 5"));
         // "order" without "by" is not an ORDER BY clause.
@@ -4142,8 +4391,8 @@ mod security_tests {
             .and_then(|e| e.get("text"))
             .and_then(|v| v.as_str())
             .expect("health_check must return content[0].text");
-        let payload: serde_json::Value = serde_json::from_str(text)
-            .expect("content[0].text must be JSON");
+        let payload: serde_json::Value =
+            serde_json::from_str(text).expect("content[0].text must be JSON");
 
         let reported = payload
             .get("tools_count")
@@ -4178,8 +4427,10 @@ mod security_tests {
 
         // Ends in /graph but IS a forbidden system root (should still reject).
         assert!(validate_graph_path_safe(Path::new("/etc/graph")).is_err());
-        assert!(validate_graph_path_safe(Path::new("//graph")).is_err()
-            || validate_graph_path_safe(Path::new("//graph")).is_ok());
+        assert!(
+            validate_graph_path_safe(Path::new("//graph")).is_err()
+                || validate_graph_path_safe(Path::new("//graph")).is_ok()
+        );
     }
 
     #[test]
@@ -4366,8 +4617,8 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         assert_eq!(paged, full["processes"].as_array().cloned().unwrap());
 
         // Offset beyond end → empty, no cursor.
-        let beyond = do_get_processes(
-            &json!({"graph_path": gp, "offset": total as u64 + 100})).unwrap();
+        let beyond =
+            do_get_processes(&json!({"graph_path": gp, "offset": total as u64 + 100})).unwrap();
         assert_eq!(beyond["processes"].as_array().unwrap().len(), 0);
         assert!(beyond.get("next_offset").is_none());
         assert!(!beyond["truncated"].as_bool().unwrap());
@@ -4389,8 +4640,9 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         // resolver), exactly as stage3c_integration looks it up. `sanitize` is
         // called from run_a/run_b/run_c/run_d → >=3 resolved callers.
         let store = graph_store::GraphStore::open_or_create(&graph).unwrap();
-        let qr = store.execute_query(
-            "MATCH (f:Function) WHERE f.name = 'sanitize' RETURN f.id").unwrap();
+        let qr = store
+            .execute_query("MATCH (f:Function) WHERE f.name = 'sanitize' RETURN f.id")
+            .unwrap();
         assert!(!qr.rows.is_empty(), "sanitize node must exist");
         let target = qr.rows[0][0].clone();
         drop(store);
@@ -4398,7 +4650,8 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         let call = |offset: u64| -> Value {
             let mut r = do_get_impact(&json!({
                 "graph_path": gp, "qualified_name": target, "offset": offset
-            })).expect("get_impact");
+            }))
+            .expect("get_impact");
             r["__items"] = r["callers"].clone();
             r
         };
@@ -4416,7 +4669,8 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         // Offset beyond end → empty callers, no cursor.
         let beyond = do_get_impact(&json!({
             "graph_path": gp, "qualified_name": target, "offset": total as u64 + 50
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(beyond["callers"].as_array().unwrap().len(), 0);
         assert!(beyond.get("next_offset").is_none());
 
@@ -4436,7 +4690,8 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         let call = |offset: u64| -> Value {
             let mut r = do_search_codebase(&json!({
                 "graph_path": gp, "query": "run", "limit": 50, "offset": offset
-            })).expect("search");
+            }))
+            .expect("search");
             r["__items"] = r["results"].clone();
             r
         };
@@ -4452,13 +4707,16 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         // Offset beyond end → empty, no cursor.
         let beyond = do_search_codebase(&json!({
             "graph_path": gp, "query": "run", "limit": 50, "offset": total as u64 + 100
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(beyond["results"].as_array().unwrap().len(), 0);
         assert!(beyond.get("next_offset").is_none());
 
         // Stable order across identical calls (deterministic score+name sort).
-        let a = do_search_codebase(&json!({"graph_path": gp, "query": "run", "limit": 50})).unwrap();
-        let b = do_search_codebase(&json!({"graph_path": gp, "query": "run", "limit": 50})).unwrap();
+        let a =
+            do_search_codebase(&json!({"graph_path": gp, "query": "run", "limit": 50})).unwrap();
+        let b =
+            do_search_codebase(&json!({"graph_path": gp, "query": "run", "limit": 50})).unwrap();
         assert_eq!(a["results"], b["results"], "search order must be stable");
     }
 
@@ -4474,7 +4732,8 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         let call = |offset: u64| -> Value {
             let mut r = do_query_graph(&json!({
                 "graph_path": gp, "query": q, "offset": offset
-            })).expect("query_graph");
+            }))
+            .expect("query_graph");
             r["__items"] = r["rows"].clone();
             r
         };
@@ -4491,21 +4750,29 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
         // Offset beyond end → empty rows, no cursor.
         let beyond = do_query_graph(&json!({
             "graph_path": gp, "query": q, "offset": total as u64 + 100
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(beyond["rows"].as_array().unwrap().len(), 0);
         assert!(beyond.get("next_offset").is_none());
 
         // A query WITHOUT ORDER BY must report order_stable=false (honest flag).
         let unordered = do_query_graph(&json!({
             "graph_path": gp, "query": "MATCH (f:Function) RETURN f.qualified_name"
-        })).unwrap();
-        assert_eq!(unordered["order_stable"], json!(false),
-            "no ORDER BY → order_stable must be false");
+        }))
+        .unwrap();
+        assert_eq!(
+            unordered["order_stable"],
+            json!(false),
+            "no ORDER BY → order_stable must be false"
+        );
     }
 }
 
 fn main() {
-    eprintln!("[automatised-pipeline] stage 0-3d up (Rust {})", SERVER_VERSION);
+    eprintln!(
+        "[automatised-pipeline] stage 0-3d up (Rust {})",
+        SERVER_VERSION
+    );
 
     let stdin = io::stdin();
     let handle = stdin.lock();

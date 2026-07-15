@@ -72,13 +72,19 @@ fn test_s1_auth_critical_community_flag() {
     // Change `api_v1` — it calls verify_token so they should share a community.
     let changed = vec!["main.rs::api_v1".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
-    let s1: Vec<_> = report.flags.iter()
+    let s1: Vec<_> = report
+        .flags
+        .iter()
         .filter(|f| f.gate == "auth_critical_touch")
         .collect();
     assert!(
         !s1.is_empty(),
         "expected S1 flag; flags were: {:?}",
-        report.flags.iter().map(|f| (f.gate.clone(), f.severity.clone())).collect::<Vec<_>>()
+        report
+            .flags
+            .iter()
+            .map(|f| (f.gate.clone(), f.severity.clone()))
+            .collect::<Vec<_>>()
     );
     assert_eq!(s1[0].severity, "critical");
     assert!(!report.gates_passed, "critical flag must fail the gate");
@@ -95,10 +101,16 @@ fn test_s2_info_skip_mode() {
 
     let changed = vec!["helper.rs::untested_helper".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
-    let s2: Vec<_> = report.flags.iter()
+    let s2: Vec<_> = report
+        .flags
+        .iter()
         .filter(|f| f.gate == "unsafe_symbol")
         .collect();
-    assert_eq!(s2.len(), 1, "S2 must emit exactly one info flag per changed symbol");
+    assert_eq!(
+        s2.len(),
+        1,
+        "S2 must emit exactly one info flag per changed symbol"
+    );
     assert_eq!(s2[0].severity, "info");
     assert!(s2[0].message.contains("is_unsafe"));
     let _ = fs::remove_dir_all(&root);
@@ -115,7 +127,9 @@ fn test_s3_public_api_warning() {
     // api_v1 is a crate-root `pub fn`.
     let changed = vec!["main.rs::api_v1".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
-    let s3: Vec<_> = report.flags.iter()
+    let s3: Vec<_> = report
+        .flags
+        .iter()
         .filter(|f| f.gate == "public_api_change")
         .collect();
     assert!(!s3.is_empty(), "expected S3 warning on crate-root pub fn");
@@ -134,10 +148,15 @@ fn test_s5_test_coverage_gap() {
     // No test entry points exist in the fixture — every symbol should trip S5.
     let changed = vec!["helper.rs::untested_helper".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
-    let s5: Vec<_> = report.flags.iter()
+    let s5: Vec<_> = report
+        .flags
+        .iter()
         .filter(|f| f.gate == "test_coverage_gap")
         .collect();
-    assert!(!s5.is_empty(), "expected S5 warning when no test process reaches the symbol");
+    assert!(
+        !s5.is_empty(),
+        "expected S5 warning when no test process reaches the symbol"
+    );
     assert_eq!(s5[0].severity, "warning");
     let _ = fs::remove_dir_all(&root);
 }
@@ -154,9 +173,16 @@ fn test_gates_passed_reflects_severity() {
     // not fire on it. Warnings-only must PASS the gate.
     let changed = vec!["helper.rs::untested_helper".to_string()];
     let report = security_gates::check_gates(&store, &changed).expect("check");
-    assert_eq!(report.summary.critical_count, 0,
+    assert_eq!(
+        report.summary.critical_count,
+        0,
         "expected no critical flags for bystander symbol; got {:?}",
-        report.flags.iter().map(|f| (f.gate.clone(), f.severity.clone())).collect::<Vec<_>>());
+        report
+            .flags
+            .iter()
+            .map(|f| (f.gate.clone(), f.severity.clone()))
+            .collect::<Vec<_>>()
+    );
     assert!(report.gates_passed, "warnings-only must pass the gate");
 
     // api_v1 shares community with verify_token (S1 critical) => fails.

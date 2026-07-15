@@ -1,10 +1,9 @@
 // parser::typescript::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // ---------------------------------------------------------------------------
 // Interface extraction (maps to Trait label)
@@ -16,7 +15,11 @@ pub(super) fn extract_interface(ctx: &mut ExtractCtx, node: Node, scope: &str, i
         return;
     }
     let qn = qual(scope, &name);
-    let vis = if is_exported || has_export_keyword(node) { "pub".to_string() } else { String::new() };
+    let vis = if is_exported || has_export_keyword(node) {
+        "pub".to_string()
+    } else {
+        String::new()
+    };
 
     ctx.nodes.push(ExtractedNode {
         label: LABEL_TRAIT.to_string(),
@@ -42,7 +45,6 @@ pub(super) fn extract_interface(ctx: &mut ExtractCtx, node: Node, scope: &str, i
     }
 }
 
-
 pub(super) fn extract_interface_extends(ctx: &mut ExtractCtx, iface_node: Node, iface_qn: &str) {
     let mut cursor = iface_node.walk();
     for child in iface_node.children(&mut cursor) {
@@ -64,7 +66,6 @@ pub(super) fn extract_interface_extends(ctx: &mut ExtractCtx, iface_node: Node, 
     }
 }
 
-
 pub(super) fn extract_interface_body(ctx: &mut ExtractCtx, body: Node, iface_qn: &str) {
     if body.kind() != TS_INTERFACE_BODY && body.kind() != "object_type" {
         return;
@@ -74,7 +75,9 @@ pub(super) fn extract_interface_body(ctx: &mut ExtractCtx, body: Node, iface_qn:
         match child.kind() {
             TS_METHOD_SIGNATURE => {
                 let name = node_field_text(ctx.source, child, "name");
-                if name.is_empty() { continue; }
+                if name.is_empty() {
+                    continue;
+                }
                 let mqn = qual(iface_qn, &name);
                 ctx.nodes.push(ExtractedNode {
                     label: LABEL_METHOD.to_string(),
@@ -96,8 +99,11 @@ pub(super) fn extract_interface_body(ctx: &mut ExtractCtx, body: Node, iface_qn:
             }
             TS_PROPERTY_SIGNATURE => {
                 let name = node_field_text(ctx.source, child, "name");
-                if name.is_empty() { continue; }
-                let type_ann = child.child_by_field_name("type")
+                if name.is_empty() {
+                    continue;
+                }
+                let type_ann = child
+                    .child_by_field_name("type")
                     .map(|n| node_text(ctx.source, n))
                     .unwrap_or_default();
                 let fqn = qual(iface_qn, &name);
@@ -121,7 +127,6 @@ pub(super) fn extract_interface_body(ctx: &mut ExtractCtx, body: Node, iface_qn:
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Enum extraction
 // ---------------------------------------------------------------------------
@@ -132,7 +137,11 @@ pub(super) fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exp
         return;
     }
     let qn = qual(scope, &name);
-    let vis = if is_exported || has_export_keyword(node) { "pub".to_string() } else { String::new() };
+    let vis = if is_exported || has_export_keyword(node) {
+        "pub".to_string()
+    } else {
+        String::new()
+    };
 
     ctx.nodes.push(ExtractedNode {
         label: LABEL_ENUM.to_string(),
@@ -155,7 +164,6 @@ pub(super) fn extract_enum(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exp
     }
 }
 
-
 pub(super) fn extract_enum_members(ctx: &mut ExtractCtx, body: Node, enum_qn: &str) {
     if body.kind() != TS_ENUM_BODY {
         return;
@@ -168,7 +176,9 @@ pub(super) fn extract_enum_members(ctx: &mut ExtractCtx, body: Node, enum_qn: &s
             } else {
                 node_text(ctx.source, child)
             };
-            if name.is_empty() { continue; }
+            if name.is_empty() {
+                continue;
+            }
             let vqn = qual(enum_qn, &name);
             ctx.nodes.push(ExtractedNode {
                 label: LABEL_VARIANT.to_string(),
@@ -188,7 +198,6 @@ pub(super) fn extract_enum_members(ctx: &mut ExtractCtx, body: Node, enum_qn: &s
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Type alias extraction
 // ---------------------------------------------------------------------------
@@ -199,8 +208,13 @@ pub(super) fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str, 
         return;
     }
     let qn = qual(scope, &name);
-    let vis = if is_exported || has_export_keyword(node) { "pub".to_string() } else { String::new() };
-    let target = node.child_by_field_name("value")
+    let vis = if is_exported || has_export_keyword(node) {
+        "pub".to_string()
+    } else {
+        String::new()
+    };
+    let target = node
+        .child_by_field_name("value")
         .map(|n| node_text(ctx.source, n))
         .unwrap_or_default();
 
@@ -219,7 +233,6 @@ pub(super) fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str, 
         to_qualified_name: qn,
     });
 }
-
 
 // ---------------------------------------------------------------------------
 // Import extraction

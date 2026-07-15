@@ -1,10 +1,9 @@
 // parser::python::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // ---------------------------------------------------------------------------
 // Import extraction
@@ -20,13 +19,16 @@ pub(super) fn extract_import(ctx: &mut ExtractCtx, node: Node, scope: &str) {
         } else if child.kind() == "aliased_import" {
             let name_node = child.child_by_field_name("name");
             let alias_node = child.child_by_field_name("alias");
-            let path = name_node.map(|n| node_text(ctx.source, n).replace('.', "::")).unwrap_or_default();
-            let alias = alias_node.map(|n| node_text(ctx.source, n)).unwrap_or_default();
+            let path = name_node
+                .map(|n| node_text(ctx.source, n).replace('.', "::"))
+                .unwrap_or_default();
+            let alias = alias_node
+                .map(|n| node_text(ctx.source, n))
+                .unwrap_or_default();
             emit_import(ctx, scope, &path, &alias, false, node);
         }
     }
 }
-
 
 /// Handles `from __future__ import X [as Y][, Z ...]`. Tree-sitter-python
 /// gives this its own node kind (`future_import_statement`) distinct from
@@ -68,10 +70,10 @@ pub(super) fn extract_future_import(ctx: &mut ExtractCtx, node: Node, scope: &st
     }
 }
 
-
 pub(super) fn extract_import_from(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     // `from foo import bar` / `from foo import *` / `from foo import bar as b`
-    let module_name = node.child_by_field_name("module_name")
+    let module_name = node
+        .child_by_field_name("module_name")
         .map(|n| node_text(ctx.source, n).replace('.', "::"))
         .unwrap_or_default();
 
@@ -101,8 +103,12 @@ pub(super) fn extract_import_from(ctx: &mut ExtractCtx, node: Node, scope: &str)
         } else if child.kind() == "aliased_import" {
             let name_node = child.child_by_field_name("name");
             let alias_node = child.child_by_field_name("alias");
-            let name = name_node.map(|n| node_text(ctx.source, n)).unwrap_or_default();
-            let alias = alias_node.map(|n| node_text(ctx.source, n)).unwrap_or_default();
+            let name = name_node
+                .map(|n| node_text(ctx.source, n))
+                .unwrap_or_default();
+            let alias = alias_node
+                .map(|n| node_text(ctx.source, n))
+                .unwrap_or_default();
             let full_path = if module_name.is_empty() {
                 name
             } else {
@@ -112,7 +118,6 @@ pub(super) fn extract_import_from(ctx: &mut ExtractCtx, node: Node, scope: &str)
         }
     }
 }
-
 
 pub(super) fn emit_import(
     ctx: &mut ExtractCtx,
@@ -153,7 +158,6 @@ pub(super) fn emit_import(
     });
 }
 
-
 // ---------------------------------------------------------------------------
 // Module-level constant extraction (UPPER_SNAKE assignments)
 // ---------------------------------------------------------------------------
@@ -173,7 +177,8 @@ pub(super) fn extract_module_constant(ctx: &mut ExtractCtx, expr_stmt: Node, sco
             continue;
         }
         // Check for type annotation
-        let type_ann = child.child_by_field_name("type")
+        let type_ann = child
+            .child_by_field_name("type")
             .map(|n| node_text(ctx.source, n))
             .unwrap_or_default();
         let qn = qual(scope, &name);
@@ -193,7 +198,6 @@ pub(super) fn extract_module_constant(ctx: &mut ExtractCtx, expr_stmt: Node, sco
         });
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Call-site extraction

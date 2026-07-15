@@ -10,8 +10,8 @@
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Schema, STORED, TEXT, Field, Value as _};
-use tantivy::{Index, IndexWriter, TantivyDocument, doc};
+use tantivy::schema::{Field, Schema, Value as _, STORED, TEXT};
+use tantivy::{doc, Index, IndexWriter, TantivyDocument};
 
 use crate::graph_store::GraphStore;
 
@@ -33,7 +33,15 @@ pub fn build_schema() -> (Schema, Bm25Fields) {
     let label = builder.add_text_field("label", STORED);
     let file_path = builder.add_text_field("file_path", STORED);
     let schema = builder.build();
-    (schema, Bm25Fields { qualified_name, name, label, file_path })
+    (
+        schema,
+        Bm25Fields {
+            qualified_name,
+            name,
+            label,
+            file_path,
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -41,8 +49,14 @@ pub fn build_schema() -> (Schema, Bm25Fields) {
 // ---------------------------------------------------------------------------
 
 const SEARCHABLE_LABELS: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait",
-    "Module", "Constant", "TypeAlias",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Module",
+    "Constant",
+    "TypeAlias",
 ];
 
 /// Builds a Tantivy BM25 index from all symbol nodes in the graph.
@@ -56,29 +70,28 @@ const SEARCHABLE_LABELS: &[&str] = &[
 /// derived artifact rebuilt from the live graph, so wiping is safe.
 pub fn build_index(store: &GraphStore, index_dir: &Path) -> Result<usize, String> {
     if index_dir.exists() {
-        std::fs::remove_dir_all(index_dir)
-            .map_err(|e| format!("remove stale index dir: {e}"))?;
+        std::fs::remove_dir_all(index_dir).map_err(|e| format!("remove stale index dir: {e}"))?;
     }
-    std::fs::create_dir_all(index_dir)
-        .map_err(|e| format!("create index dir: {e}"))?;
+    std::fs::create_dir_all(index_dir).map_err(|e| format!("create index dir: {e}"))?;
 
     let (schema, fields) = build_schema();
     let index = Index::create_in_dir(index_dir, schema)
         .map_err(|e| format!("tantivy create index: {e}"))?;
-    let mut writer: IndexWriter = index.writer(50_000_000)
+    let mut writer: IndexWriter = index
+        .writer(50_000_000)
         .map_err(|e| format!("tantivy writer: {e}"))?;
 
     let mut doc_count = 0usize;
     for &label in SEARCHABLE_LABELS {
-        let cypher = format!(
-            "MATCH (n:{label}) RETURN n.qualified_name, n.name, n.id"
-        );
+        let cypher = format!("MATCH (n:{label}) RETURN n.qualified_name, n.name, n.id");
         let qr = match store.execute_query(&cypher) {
             Ok(qr) => qr,
             Err(_) => continue,
         };
         for row in &qr.rows {
-            if row.len() < 3 { continue; }
+            if row.len() < 3 {
+                continue;
+            }
             let qn = &row[0];
             let name_val = &row[1];
             let file_path = extract_file_path(qn);
@@ -88,17 +101,21 @@ pub fn build_index(store: &GraphStore, index_dir: &Path) -> Result<usize, String
             let name_tokenized = tokenize_symbol(name_val);
             let qn_tokenized = tokenize_symbol(qn);
 
-            writer.add_document(doc!(
-                fields.qualified_name => qn_tokenized,
-                fields.name => name_tokenized,
-                fields.label => label.to_string(),
-                fields.file_path => file_path,
-            )).map_err(|e| format!("tantivy add doc: {e}"))?;
+            writer
+                .add_document(doc!(
+                    fields.qualified_name => qn_tokenized,
+                    fields.name => name_tokenized,
+                    fields.label => label.to_string(),
+                    fields.file_path => file_path,
+                ))
+                .map_err(|e| format!("tantivy add doc: {e}"))?;
             doc_count += 1;
         }
     }
 
-    writer.commit().map_err(|e| format!("tantivy commit: {e}"))?;
+    writer
+        .commit()
+        .map_err(|e| format!("tantivy commit: {e}"))?;
     Ok(doc_count)
 }
 
@@ -127,10 +144,8 @@ pub fn query_index(
     }
 
     let (schema, fields) = build_schema();
-    let index = Index::open_in_dir(index_dir)
-        .map_err(|e| format!("tantivy open index: {e}"))?;
-    let reader = index.reader()
-        .map_err(|e| format!("tantivy reader: {e}"))?;
+    let index = Index::open_in_dir(index_dir).map_err(|e| format!("tantivy open index: {e}"))?;
+    let reader = index.reader().map_err(|e| format!("tantivy reader: {e}"))?;
     let searcher = reader.searcher();
 
     // Tokenize query the same way we tokenize symbol names
@@ -140,15 +155,18 @@ pub fn query_index(
     // Boost name field 2x over qualified_name
     parser.set_field_boost(fields.name, 2.0);
 
-    let query = parser.parse_query(&tokenized_query)
+    let query = parser
+        .parse_query(&tokenized_query)
         .map_err(|e| format!("tantivy parse query: {e}"))?;
 
-    let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))
+    let top_docs = searcher
+        .search(&query, &TopDocs::with_limit(limit))
         .map_err(|e| format!("tantivy search: {e}"))?;
 
     let mut results = Vec::with_capacity(top_docs.len());
     for (score, doc_addr) in top_docs {
-        let doc: TantivyDocument = searcher.doc(doc_addr)
+        let doc: TantivyDocument = searcher
+            .doc(doc_addr)
             .map_err(|e| format!("tantivy doc retrieve: {e}"))?;
         let qn = field_text(&doc, &schema, fields.qualified_name);
         let name = field_text(&doc, &schema, fields.name);
@@ -195,7 +213,9 @@ pub fn tokenize_symbol(s: &str) -> String {
     let mut tokens = Vec::new();
     // First split on :: / _ . /
     for part in s.split(|c: char| c == ':' || c == '_' || c == '/' || c == '.') {
-        if part.is_empty() { continue; }
+        if part.is_empty() {
+            continue;
+        }
         // Split camelCase
         let mut current = String::new();
         for ch in part.chars() {

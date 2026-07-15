@@ -1,10 +1,9 @@
 // parser::typescript::extract::g4 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-              // sibling extract fns (glob re-export)
-
+use super::super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // parent module: Ctx, TS_* consts, kept helpers
+                       // sibling extract fns (glob re-export)
 
 pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     let func_node = match node.child_by_field_name("function") {
@@ -56,7 +55,6 @@ pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_
     });
 }
 
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -70,18 +68,15 @@ pub(super) fn has_export_keyword(node: Node) -> bool {
     false
 }
 
-
 pub(super) fn has_async_keyword(source: &str, node: Node) -> bool {
     let text = &source[node.byte_range()];
     text.starts_with("async ")
 }
 
-
 pub(super) fn is_const_declaration(source: &str, node: Node) -> bool {
     let text = &source[node.byte_range()];
     text.starts_with("const ")
 }
-
 
 pub(super) fn extract_ts_member_visibility(source: &str, node: Node) -> String {
     let mut cursor = node.walk();

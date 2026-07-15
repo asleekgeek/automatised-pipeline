@@ -38,8 +38,18 @@ fn opt_in() -> bool {
 /// refactor). One source of truth, no parallel implementation.
 fn graph_state_from_store(store: &GraphStore) -> GraphState {
     let labels = &[
-        "File", "Directory", "Module", "Function", "Method", "Struct",
-        "Enum", "Variant", "Trait", "Constant", "TypeAlias", "Import",
+        "File",
+        "Directory",
+        "Module",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Variant",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Import",
         "CallSite",
     ];
     let nodes: Vec<NodeRef> = iter_nodes_by_labels(store, labels)
@@ -334,7 +344,10 @@ fn zera_hello_on_cortex_mcp_server() {
 
     let t0 = Instant::now();
     indexer::index_codebase_with_language(
-        &target, &graph_path, Some(Language::Python), indexer::DependencyScope::None,
+        &target,
+        &graph_path,
+        Some(Language::Python),
+        indexer::DependencyScope::None,
     )
     .expect("index");
     let store = GraphStore::open_or_create(&graph_path).expect("open");

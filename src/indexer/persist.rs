@@ -50,34 +50,44 @@ pub(super) fn insert_ancestor_dirs(
 }
 
 fn insert_directory_node(store: &GraphStore, id: &str, name: &str) -> Result<(), String> {
-    store.insert_node("Directory", &[
-        ("id", &cypher_str(id)),
-        ("path", &cypher_str(id)),
-        ("name", &cypher_str(name)),
-    ])
+    store.insert_node(
+        "Directory",
+        &[
+            ("id", &cypher_str(id)),
+            ("path", &cypher_str(id)),
+            ("name", &cypher_str(name)),
+        ],
+    )
 }
 
-pub(super) fn insert_file_node(store: &GraphStore, abs_path: &Path, rel_path: &str) -> Result<(), String> {
-    let name = abs_path.file_name()
+pub(super) fn insert_file_node(
+    store: &GraphStore,
+    abs_path: &Path,
+    rel_path: &str,
+) -> Result<(), String> {
+    let name = abs_path
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let ext = abs_path.extension()
+    let ext = abs_path
+        .extension()
         .map(|e| e.to_string_lossy().to_string())
         .unwrap_or_default();
-    let size = std::fs::metadata(abs_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    store.insert_node("File", &[
-        ("id", &cypher_str(rel_path)),
-        ("path", &cypher_str(rel_path)),
-        ("name", &cypher_str(&name)),
-        ("extension", &cypher_str(&ext)),
-        ("size_bytes", &size.to_string()),
-        // Inserted before the parse runs; index_single_file backfills the real
-        // count via set_file_parse_errors once the file is parsed. 0 = "no
-        // errors" and also the correct value for non-code files (never parsed).
-        ("parse_errors", "0"),
-    ])
+    let size = std::fs::metadata(abs_path).map(|m| m.len()).unwrap_or(0);
+    store.insert_node(
+        "File",
+        &[
+            ("id", &cypher_str(rel_path)),
+            ("path", &cypher_str(rel_path)),
+            ("name", &cypher_str(&name)),
+            ("extension", &cypher_str(&ext)),
+            ("size_bytes", &size.to_string()),
+            // Inserted before the parse runs; index_single_file backfills the real
+            // count via set_file_parse_errors once the file is parsed. 0 = "no
+            // errors" and also the correct value for non-code files (never parsed).
+            ("parse_errors", "0"),
+        ],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +98,8 @@ pub(super) fn insert_file_node(store: &GraphStore, abs_path: &Path, rel_path: &s
 /// directly. source: ADR-4253701 §Decision 2 (levier 2, persist.rs:85).
 pub(super) fn insert_dir_file_edge(batch: &mut SymbolBatch, rel_path: &Path) {
     let file_id = rel_path.to_string_lossy().into_owned();
-    let parent_id = rel_path.parent()
+    let parent_id = rel_path
+        .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     if parent_id.is_empty() {
@@ -131,7 +142,8 @@ pub(super) fn index_single_file(
     if (source.len() as u64) > super::MAX_PARSE_BYTES {
         return Err(format!(
             "file_too_large_for_parser: {} bytes > MAX_PARSE_BYTES {}",
-            source.len(), super::MAX_PARSE_BYTES
+            source.len(),
+            super::MAX_PARSE_BYTES
         ));
     }
     let parsed = parser::parse_file(&source, rel_path, lang)?;
@@ -142,7 +154,12 @@ pub(super) fn index_single_file(
         set_file_parse_errors(store, rel_path, parsed.parse_errors)?;
     }
     accumulate_parsed_nodes(
-        batch, &parsed.nodes, label_by_qn, seen_node_ids, lang.as_str(), restrict_to_public_api,
+        batch,
+        &parsed.nodes,
+        label_by_qn,
+        seen_node_ids,
+        lang.as_str(),
+        restrict_to_public_api,
     );
     accumulate_parsed_edges(batch, &parsed.refs, label_by_qn);
     Ok(())
@@ -287,7 +304,10 @@ fn build_node_properties(node: &parser::ExtractedNode, language: &str) -> Vec<(S
         props.push(("name".to_string(), cypher_str(&node.name)));
     }
     if has_qualified_name_col(&node.label) {
-        props.push(("qualified_name".to_string(), cypher_str(&node.qualified_name)));
+        props.push((
+            "qualified_name".to_string(),
+            cypher_str(&node.qualified_name),
+        ));
     }
     if has_line_cols(&node.label) {
         props.push(("start_line".to_string(), node.start_line.to_string()));
@@ -308,15 +328,25 @@ fn build_node_properties(node: &parser::ExtractedNode, language: &str) -> Vec<(S
 fn has_language_col(label: &str) -> bool {
     matches!(
         label,
-        "Function" | "Method" | "Struct" | "Enum" | "Variant" | "Trait"
-            | "Field" | "Constant" | "TypeAlias" | "Import" | "CallSite"
+        "Function"
+            | "Method"
+            | "Struct"
+            | "Enum"
+            | "Variant"
+            | "Trait"
+            | "Field"
+            | "Constant"
+            | "TypeAlias"
+            | "Import"
+            | "CallSite"
     )
 }
 
 /// Maps parser extra properties to schema columns by label.
 fn append_label_properties(props: &mut Vec<(String, String)>, node: &parser::ExtractedNode) {
     let find = |key: &str| -> String {
-        node.properties.iter()
+        node.properties
+            .iter()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.clone())
             .unwrap_or_default()
@@ -327,16 +357,25 @@ fn append_label_properties(props: &mut Vec<(String, String)>, node: &parser::Ext
         }
         "Method" => {
             props.push(("is_async".to_string(), find("is_async")));
-            props.push(("receiver_type".to_string(), cypher_str(&find("receiver_type"))));
+            props.push((
+                "receiver_type".to_string(),
+                cypher_str(&find("receiver_type")),
+            ));
             // source: implements fix — trait_name set by the parser on methods
             // inside `impl Trait for Type` blocks; resolve_implements reads it.
             props.push(("trait_name".to_string(), cypher_str(&find("trait_name"))));
         }
         "Field" => {
-            props.push(("type_annotation".to_string(), cypher_str(&find("type_annotation"))));
+            props.push((
+                "type_annotation".to_string(),
+                cypher_str(&find("type_annotation")),
+            ));
         }
         "Constant" => {
-            props.push(("type_annotation".to_string(), cypher_str(&find("type_annotation"))));
+            props.push((
+                "type_annotation".to_string(),
+                cypher_str(&find("type_annotation")),
+            ));
         }
         "TypeAlias" => {
             props.push(("target_type".to_string(), cypher_str(&find("target_type"))));
@@ -459,12 +498,23 @@ fn resolve_defines_table(
         &["File", "Module", "Function", "Method"],
     )?;
     let to_candidates = &[
-        "Function", "Struct", "Enum", "Trait", "Constant",
-        "TypeAlias", "Module", "Import", "CallSite",
+        "Function",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
+        "Import",
+        "CallSite",
     ];
     let to_label = lookup_label_among(to_qn, label_by_qn, to_candidates)?;
     let table = format!("Defines_{from_label}_{to_label}");
-    if is_valid_rel_table(&table) { Some(table) } else { None }
+    if is_valid_rel_table(&table) {
+        Some(table)
+    } else {
+        None
+    }
 }
 
 fn resolve_has_method_table(
@@ -473,16 +523,21 @@ fn resolve_has_method_table(
 ) -> Option<String> {
     let from_label = lookup_label_among(from_qn, label_by_qn, &["Struct", "Enum", "Trait"])?;
     let table = format!("HasMethod_{from_label}_Method");
-    if is_valid_rel_table(&table) { Some(table) } else { None }
+    if is_valid_rel_table(&table) {
+        Some(table)
+    } else {
+        None
+    }
 }
 
-fn resolve_has_field_table(
-    from_qn: &str,
-    label_by_qn: &HashMap<String, String>,
-) -> Option<String> {
+fn resolve_has_field_table(from_qn: &str, label_by_qn: &HashMap<String, String>) -> Option<String> {
     let from_label = lookup_label_among(from_qn, label_by_qn, &["Struct", "Enum"])?;
     let table = format!("HasField_{from_label}_Field");
-    if is_valid_rel_table(&table) { Some(table) } else { None }
+    if is_valid_rel_table(&table) {
+        Some(table)
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -520,9 +575,17 @@ fn has_name_col(label: &str) -> bool {
 }
 
 fn has_qualified_name_col(label: &str) -> bool {
-    matches!(label,
-        "Module" | "Function" | "Method" | "Struct" | "Enum" | "Variant" |
-        "Trait" | "Constant" | "TypeAlias"
+    matches!(
+        label,
+        "Module"
+            | "Function"
+            | "Method"
+            | "Struct"
+            | "Enum"
+            | "Variant"
+            | "Trait"
+            | "Constant"
+            | "TypeAlias"
     )
 }
 
@@ -533,13 +596,21 @@ fn has_line_cols(label: &str) -> bool {
     // position via its own line/col columns, not start_line/end_line.
     matches!(
         label,
-        "Function" | "Method" | "Struct" | "Enum" | "Trait"
-            | "Variant" | "Field" | "Constant" | "TypeAlias"
+        "Function"
+            | "Method"
+            | "Struct"
+            | "Enum"
+            | "Trait"
+            | "Variant"
+            | "Field"
+            | "Constant"
+            | "TypeAlias"
     )
 }
 
 fn has_visibility_col(label: &str) -> bool {
-    matches!(label,
+    matches!(
+        label,
         "Function" | "Method" | "Struct" | "Enum" | "Trait" | "Field"
     )
 }

@@ -29,7 +29,13 @@ use std::path::{Path, PathBuf};
 /// definition labels `resolver::build_symbol_index` indexes (minus Module/File,
 /// which are not call/use targets). source: resolver.rs build_symbol_index.
 const DEF_LABELS: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait", "Constant", "TypeAlias",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Constant",
+    "TypeAlias",
 ];
 
 // ---------------------------------------------------------------------------
@@ -177,7 +183,9 @@ pub fn resolve_definition(siblings: &SiblingGraphs, input: &str) -> Vec<ForeignS
     let mut out = Vec::new();
     let short = last_segment(input);
     for path in siblings.paths() {
-        let Ok(store) = GraphStore::open_or_create(path) else { continue };
+        let Ok(store) = GraphStore::open_or_create(path) else {
+            continue;
+        };
         let repo = path.display().to_string();
         match crate::search::resolve_qualified_name(&store, input) {
             Ok(qn) => push_defs(&store, &repo, "qualified_name", &qn, &mut out),
@@ -195,12 +203,17 @@ pub fn resolve_definition(siblings: &SiblingGraphs, input: &str) -> Vec<ForeignS
 }
 
 /// Pushes every `DEF_LABELS` node in `store` whose `field` equals `value`.
-fn push_defs(store: &GraphStore, repo: &str, field: &str, value: &str, out: &mut Vec<ForeignSymbol>) {
+fn push_defs(
+    store: &GraphStore,
+    repo: &str,
+    field: &str,
+    value: &str,
+    out: &mut Vec<ForeignSymbol>,
+) {
     let lit = graph_store::cypher_str(value);
     for label in DEF_LABELS {
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.{field} = {lit} RETURN n.id, n.qualified_name"
-        );
+        let cypher =
+            format!("MATCH (n:{label}) WHERE n.{field} = {lit} RETURN n.id, n.qualified_name");
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
                 if row.len() >= 2 {
@@ -237,7 +250,9 @@ pub fn foreign_callers(siblings: &SiblingGraphs, target_name: &str) -> Vec<Forei
         return out;
     }
     for path in siblings.paths() {
-        let Ok(store) = GraphStore::open_or_create(path) else { continue };
+        let Ok(store) = GraphStore::open_or_create(path) else {
+            continue;
+        };
         if defines_name(&store, short) {
             continue;
         }
@@ -271,7 +286,12 @@ fn defines_name(store: &GraphStore, short: &str) -> bool {
 /// Collects call sites in `store` whose callee short name equals `short`. The
 /// full CallSite scan mirrors `resolver::resolve_calls` (CallSite carries no
 /// name index); the set is bounded by the sibling's call-site count.
-fn collect_external_callsites(store: &GraphStore, repo: &str, short: &str, out: &mut Vec<ForeignCaller>) {
+fn collect_external_callsites(
+    store: &GraphStore,
+    repo: &str,
+    short: &str,
+    out: &mut Vec<ForeignCaller>,
+) {
     let qr = match store.execute_query("MATCH (cs:CallSite) RETURN cs.id, cs.callee_name") {
         Ok(q) => q,
         Err(_) => return,
@@ -301,7 +321,10 @@ fn collect_external_callsites(store: &GraphStore, repo: &str, short: &str, out: 
 /// `SAMPLE_CAP` concrete resolutions for the caller to spot-check. Targets are
 /// de-duplicated and visited in sorted order so the count and sample are
 /// deterministic.
-pub fn count_cross_repo_resolvable(siblings: &SiblingGraphs, targets: &[String]) -> (usize, Vec<Value>) {
+pub fn count_cross_repo_resolvable(
+    siblings: &SiblingGraphs,
+    targets: &[String],
+) -> (usize, Vec<Value>) {
     const SAMPLE_CAP: usize = 10;
     let mut unique: Vec<&String> = targets.iter().collect();
     unique.sort();
@@ -342,12 +365,15 @@ pub fn federated_search(siblings: &SiblingGraphs, query: &str, limit: usize) -> 
         min_score: 0.01,
     };
     for path in siblings.paths() {
-        let Ok(store) = GraphStore::open_or_create(path) else { continue };
+        let Ok(store) = GraphStore::open_or_create(path) else {
+            continue;
+        };
         let index_dir = path
             .parent()
             .map(|p| p.join("search_index"))
             .filter(|p| p.exists());
-        let Ok(results) = crate::search::search_graph(&store, query, &options, index_dir.as_deref())
+        let Ok(results) =
+            crate::search::search_graph(&store, query, &options, index_dir.as_deref())
         else {
             continue;
         };
@@ -366,7 +392,11 @@ pub fn federated_search(siblings: &SiblingGraphs, query: &str, limit: usize) -> 
     out.sort_by(|a, b| {
         a.repo
             .cmp(&b.repo)
-            .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.qualified_name.cmp(&b.qualified_name))
     });
     out
@@ -418,7 +448,8 @@ mod tests {
 
     #[test]
     fn missing_paths_are_skipped_not_fatal() {
-        let args = json!({ "sibling_graphs": ["/nonexistent/graph-aaa", "/nonexistent/graph-bbb"] });
+        let args =
+            json!({ "sibling_graphs": ["/nonexistent/graph-aaa", "/nonexistent/graph-bbb"] });
         let s = SiblingGraphs::from_arg(&args, Path::new("/tmp/self_graph"));
         assert!(s.is_empty());
         assert_eq!(s.skipped.len(), 2);

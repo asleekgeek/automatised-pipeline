@@ -41,8 +41,8 @@ use std::collections::HashMap;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
-use crate::graph_store::GraphStore;
 use super::bm25::tokenize_symbol;
+use crate::graph_store::GraphStore;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,8 +84,14 @@ pub struct VectorResult {
 // ---------------------------------------------------------------------------
 
 const SEARCHABLE_LABELS: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait",
-    "Module", "Constant", "TypeAlias",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Module",
+    "Constant",
+    "TypeAlias",
 ];
 
 /// Binary file magic and version for the sparse TF-IDF on-disk format.
@@ -96,8 +102,7 @@ const VECTOR_VERSION: u32 = 1;
 /// Builds a TF-IDF vector index from all symbol nodes in the graph.
 /// Persists to `index_dir/vector_index.bin` for later loading.
 pub fn build_index(store: &GraphStore, index_dir: &Path) -> Result<usize, String> {
-    std::fs::create_dir_all(index_dir)
-        .map_err(|e| format!("create vector index dir: {e}"))?;
+    std::fs::create_dir_all(index_dir).map_err(|e| format!("create vector index dir: {e}"))?;
 
     let raw_docs = collect_raw_docs(store);
     if raw_docs.is_empty() {
@@ -125,28 +130,29 @@ pub fn build_index(store: &GraphStore, index_dir: &Path) -> Result<usize, String
     Ok(doc_count)
 }
 
-fn collect_raw_docs(
-    store: &GraphStore,
-) -> Vec<(String, String, String, String, Vec<String>)> {
+fn collect_raw_docs(store: &GraphStore) -> Vec<(String, String, String, String, Vec<String>)> {
     let mut raw_docs = Vec::new();
     for &label in SEARCHABLE_LABELS {
-        let cypher = format!(
-            "MATCH (n:{label}) RETURN n.qualified_name, n.name, n.id"
-        );
+        let cypher = format!("MATCH (n:{label}) RETURN n.qualified_name, n.name, n.id");
         let qr = match store.execute_query(&cypher) {
             Ok(qr) => qr,
             Err(_) => continue,
         };
         for row in &qr.rows {
-            if row.len() < 3 { continue; }
+            if row.len() < 3 {
+                continue;
+            }
             let qn = &row[0];
             let name_val = &row[1];
             let file_path = extract_file_path(qn);
             let combined = format!("{} {} {}", name_val, label, qn);
             let tokens = tokenize_to_terms(&combined);
             raw_docs.push((
-                qn.clone(), name_val.clone(), label.to_string(),
-                file_path, tokens,
+                qn.clone(),
+                name_val.clone(),
+                label.to_string(),
+                file_path,
+                tokens,
             ));
         }
     }
@@ -187,16 +193,19 @@ pub fn query_index(
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(limit);
 
-    Ok(scored.into_iter().map(|(i, score)| {
-        let doc = &index.docs[i];
-        VectorResult {
-            qualified_name: doc.qualified_name.clone(),
-            name: doc.name.clone(),
-            label: doc.label.clone(),
-            file_path: doc.file_path.clone(),
-            score,
-        }
-    }).collect())
+    Ok(scored
+        .into_iter()
+        .map(|(i, score)| {
+            let doc = &index.docs[i];
+            VectorResult {
+                qualified_name: doc.qualified_name.clone(),
+                name: doc.name.clone(),
+                label: doc.label.clone(),
+                file_path: doc.file_path.clone(),
+                score,
+            }
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -279,11 +288,7 @@ fn sparse_norm(v: &[(u32, f32)]) -> f32 {
 
 /// Cosine similarity of a sparse query against a sparse doc. Merges the
 /// two sorted (term_id, weight) lists in a single linear pass.
-fn sparse_cosine(
-    query: &[(u32, f32)],
-    query_norm: f32,
-    doc: &[(u32, f32)],
-) -> f32 {
+fn sparse_cosine(query: &[(u32, f32)], query_norm: f32, doc: &[(u32, f32)]) -> f32 {
     if query.is_empty() || doc.is_empty() {
         return 0.0;
     }
@@ -332,8 +337,7 @@ fn reconstruct_idf(index: &VectorIndex) -> Vec<f32> {
 
 fn save_index(index: &VectorIndex, dir: &Path) -> Result<(), String> {
     let path = dir.join("vector_index.bin");
-    let file = std::fs::File::create(&path)
-        .map_err(|e| format!("create vector index: {e}"))?;
+    let file = std::fs::File::create(&path).map_err(|e| format!("create vector index: {e}"))?;
     let mut w = BufWriter::new(file);
 
     write_u32(&mut w, VECTOR_MAGIC)?;
@@ -366,8 +370,7 @@ fn write_doc<W: Write>(w: &mut W, doc: &VectorDoc) -> Result<(), String> {
 
 fn load_index(dir: &Path) -> Result<VectorIndex, String> {
     let path = dir.join("vector_index.bin");
-    let file = std::fs::File::open(&path)
-        .map_err(|e| format!("open vector index: {e}"))?;
+    let file = std::fs::File::open(&path).map_err(|e| format!("open vector index: {e}"))?;
     let mut r = BufReader::new(file);
 
     let magic = read_u32(&mut r)?;
@@ -405,7 +408,13 @@ fn read_doc<R: Read>(r: &mut R) -> Result<VectorDoc, String> {
         let w = read_f32(r)?;
         terms.push((id, w));
     }
-    Ok(VectorDoc { qualified_name, name, label, file_path, terms })
+    Ok(VectorDoc {
+        qualified_name,
+        name,
+        label,
+        file_path,
+        terms,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +452,8 @@ fn read_f32<R: Read>(r: &mut R) -> Result<f32, String> {
 fn read_string<R: Read>(r: &mut R) -> Result<String, String> {
     let len = read_u32(r)? as usize;
     let mut buf = vec![0u8; len];
-    r.read_exact(&mut buf).map_err(|e| format!("read string: {e}"))?;
+    r.read_exact(&mut buf)
+        .map_err(|e| format!("read string: {e}"))?;
     String::from_utf8(buf).map_err(|e| format!("utf8 string: {e}"))
 }
 

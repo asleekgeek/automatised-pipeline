@@ -1,10 +1,9 @@
 // parser::go::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
@@ -20,7 +19,6 @@ pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
         }
     }
 }
-
 
 pub(super) fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
     // Two shapes: single ``import "x"`` or ``import ( "a"; "b" )``.
@@ -56,7 +54,6 @@ pub(super) fn extract_imports(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
-
 pub(super) fn extract_types(ctx: &mut Ctx, node: Node, scope: &str) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -67,7 +64,6 @@ pub(super) fn extract_types(ctx: &mut Ctx, node: Node, scope: &str) {
         }
     }
 }
-
 
 pub(super) fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -106,7 +102,6 @@ pub(super) fn extract_type_spec(ctx: &mut Ctx, node: Node, scope: &str) {
         extract_struct_fields(ctx, st, &qn);
     }
 }
-
 
 /// Extracts struct fields: descend `struct_type -> field_declaration_list ->
 /// field_declaration`. A field_declaration's `name` is a `multiple` field
@@ -169,7 +164,6 @@ pub(super) fn extract_struct_fields(ctx: &mut Ctx, struct_type: Node, owner_qn: 
     }
 }
 
-
 pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     if name.is_empty() {
@@ -198,7 +192,6 @@ pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str) {
         extract_calls(ctx, body, &qn);
     }
 }
-
 
 pub(super) fn extract_method(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");

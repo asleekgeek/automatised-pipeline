@@ -88,11 +88,8 @@ fn test_full_pipeline_on_fixture() {
 
     // -- Index the fixture --
     let graph_dir = tmp_root.join("graph");
-    let result = indexer::index_codebase(
-        &fixture_dir.join("src"),
-        &graph_dir,
-    )
-    .expect("index_codebase should succeed");
+    let result = indexer::index_codebase(&fixture_dir.join("src"), &graph_dir)
+        .expect("index_codebase should succeed");
 
     // 3 fixture files
     assert_eq!(
