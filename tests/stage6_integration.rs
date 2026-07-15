@@ -114,6 +114,119 @@ fn test_hallucinated_symbol_produces_critical_finding() {
     let _ = fs::remove_dir_all(&root);
 }
 
+// source: review finding #1 on issue #13's fix — a multi-segment qualified
+// name (`file::Struct::method`) must have its file_path extracted from the
+// FIRST `::`, not the last. Splitting on the last `::` mis-derives the file
+// path (`main.rs::Tool` instead of `main.rs`), which then fails the
+// extension check and wrongly downgrades a real hallucination to
+// `Unverifiable`. `Tool` is a real struct in the fixture; the claimed method
+// on it does not exist, and the containing file (`main.rs`) IS indexed, so
+// this must stay a `critical` finding.
+#[test]
+fn test_multi_segment_qualified_name_extracts_correct_file_path() {
+    let root = tmp("multi_segment_qn");
+    let _ = fs::remove_dir_all(&root);
+    let fixture_dir = root.join("fixture");
+    let graph_dir = root.join("graph");
+    let store = build_fixture_graph(&fixture_dir, &graph_dir);
+
+    let prd_dir = root.join("prd");
+    let prd_path = write_prd(&prd_dir, "modify `Tool::nonexistent_method`");
+    let affected = write_affected(
+        &prd_dir,
+        json!({
+            "affected_symbols": [
+                { "qualified_name": "main.rs::Tool::nonexistent_method", "change_kind": "modify", "rationale": "hallucinated method on a real struct" }
+            ],
+            "scope_claims": []
+        }),
+    );
+
+    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected)).expect("validate");
+
+    let critical: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| {
+            f.axis == "symbol_hallucination"
+                && f.severity == "critical"
+                && f.symbol.as_deref() == Some("main.rs::Tool::nonexistent_method")
+        })
+        .collect();
+    assert_eq!(
+        critical.len(),
+        1,
+        "a multi-segment QN in an indexed file must still be a critical hallucination; got {:?}",
+        report
+            .findings
+            .iter()
+            .map(|f| (f.axis.clone(), f.severity.clone(), f.symbol.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(report.summary.hallucinated_symbols, 1);
+    assert_eq!(
+        report.summary.unverifiable_symbols, 0,
+        "the last-'::' split bug used to mis-route this into unverifiable"
+    );
+    assert_eq!(report.validation_status, "fail");
+    let _ = fs::remove_dir_all(&root);
+}
+
+// source: review finding #2 on issue #13's fix — the indexer strips a
+// leading path component (e.g. `src/`) when it builds qualified_names, so a
+// PRD claim spelled `src/main.rs::totally_fake_symbol` must be checked
+// against the graph's stripped form (`main.rs`) too, the same retry
+// search::resolve_qualified_name performs at its layer 2. Without that
+// retry, this real hallucination is wrongly downgraded to `Unverifiable`
+// ("file not present in the indexed graph") purely because of a leading
+// path segment, silently masking the claim.
+#[test]
+fn test_leading_path_component_is_stripped_before_unverifiable_verdict() {
+    let root = tmp("path_stripping");
+    let _ = fs::remove_dir_all(&root);
+    let fixture_dir = root.join("fixture");
+    let graph_dir = root.join("graph");
+    let store = build_fixture_graph(&fixture_dir, &graph_dir);
+
+    let prd_dir = root.join("prd");
+    let prd_path = write_prd(&prd_dir, "modify `totally_fake_symbol` in `src/main.rs`");
+    let affected = write_affected(
+        &prd_dir,
+        json!({
+            "affected_symbols": [
+                { "qualified_name": "src/main.rs::totally_fake_symbol", "change_kind": "modify", "rationale": "hallucinated, spelled with a leading src/ the graph doesn't store" }
+            ],
+            "scope_claims": []
+        }),
+    );
+
+    let report = prd_validator::validate_prd(&store, &prd_path, Some(&affected)).expect("validate");
+
+    let critical: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| {
+            f.axis == "symbol_hallucination"
+                && f.severity == "critical"
+                && f.symbol.as_deref() == Some("src/main.rs::totally_fake_symbol")
+        })
+        .collect();
+    assert_eq!(
+        critical.len(),
+        1,
+        "a leading src/ prefix must not mask a real hallucination as unverifiable; got {:?}",
+        report
+            .findings
+            .iter()
+            .map(|f| (f.axis.clone(), f.severity.clone(), f.symbol.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(report.summary.hallucinated_symbols, 1);
+    assert_eq!(report.summary.unverifiable_symbols, 0);
+    assert_eq!(report.validation_status, "fail");
+    let _ = fs::remove_dir_all(&root);
+}
+
 // source: issue #13 — automatised-pipeline does not index bash (.sh); a PRD
 // claiming to modify a real bash function must not be reported as a
 // `critical` hallucination (the file was never in the indexer's coverage,

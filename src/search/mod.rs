@@ -575,7 +575,10 @@ pub fn resolve_qualified_name(
     })
 }
 
-fn strip_leading_path_component(input: &str) -> Option<String> {
+// pub(crate): reused by prd_validator's unverifiable-file classification,
+// which must apply the same src/-stripping retry this layer-2 lookup does
+// before concluding a claimed file is outside the indexed graph.
+pub(crate) fn strip_leading_path_component(input: &str) -> Option<String> {
     // Only act if the path portion (before `::`) has a `/`.
     let (path_part, rest) = match input.find("::") {
         Some(i) => (&input[..i], &input[i..]),

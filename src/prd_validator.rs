@@ -12,9 +12,10 @@
 // source: stages/stage-6.md §4 (extraction contract + regex fallback),
 //         §5 (validation axes), §6 (output schema).
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use crate::language_provider::ALL_EXTENSIONS;
 use crate::search;
+use crate::search::strip_leading_path_component;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -407,15 +408,21 @@ fn classify_one(store: &GraphStore, r: &ResolvedClaim) -> ClaimVerdict {
     }
 }
 
-// A claimed qualified_name follows `<file_path>::<symbol_name>` (single
-// separator; source: language_provider::extract_file_prefix docs + the same
-// convention search::resolve_qualified_name relies on for its layer-2
-// strip-prefix retry). Returns None when the token carries no file prefix at
-// all (a bare identifier) — those cannot be checked against file coverage
-// and are conservatively treated as verifiable-and-absent (Hallucinated),
-// preserving pre-existing behavior for tokens without path context.
+// A claimed qualified_name follows `<file_path>::name[::name...]` — file_path
+// up to the FIRST `::`, with the rest naming a possibly-nested symbol
+// (method, nested module). source: tests/corpus_full.rs::file_id_of, whose
+// doc comment cites the authoritative convention from parser/mod.rs::qual;
+// the same first-`::` split search::resolve_qualified_name's layer-2
+// strip-prefix retry relies on. Splitting on the LAST `::` instead would
+// mis-extract the file_path of any multi-segment QN (e.g.
+// `src/foo.rs::MyStruct::new` -> wrongly "src/foo.rs::MyStruct"), routing
+// real hallucinations into Unverifiable. Returns None when the token
+// carries no file prefix at all (a bare identifier) — those cannot be
+// checked against file coverage and are conservatively treated as
+// verifiable-and-absent (Hallucinated), preserving pre-existing behavior
+// for tokens without path context.
 fn claim_file_path(token: &str) -> Option<&str> {
-    let idx = token.rfind("::")?;
+    let idx = token.find("::")?;
     let file_path = &token[..idx];
     if file_path.contains('.') {
         Some(file_path)
@@ -435,21 +442,42 @@ fn claim_file_path(token: &str) -> Option<&str> {
 fn unverifiable_reason(store: &GraphStore, token: &str) -> Option<String> {
     let file_path = claim_file_path(token)?;
     let ext = Path::new(file_path).extension().and_then(|e| e.to_str());
-    match ext {
-        Some(ext) if !ALL_EXTENSIONS.contains(&ext) => Some(format!(
-            "language not indexed: '.{ext}' has no parser (file '{file_path}')"
-        )),
-        _ if file_has_graph_node(store, file_path) => None,
-        _ => Some(format!(
-            "file not present in the indexed graph: '{file_path}' \
-             (outside indexed scope, or excluded by a language/dependency filter)"
-        )),
+    if let Some(ext) = ext {
+        if !ALL_EXTENSIONS.contains(&ext) {
+            return Some(format!(
+                "language not indexed: '.{ext}' has no parser (file '{file_path}')"
+            ));
+        }
     }
+    // Check graph coverage against both the raw claimed path and the
+    // parser's stripped-leading-path-component form (the same retry
+    // search::resolve_qualified_name performs at layer 2 — the indexer
+    // strips a leading `src/`-style component when building
+    // qualified_names, so a claim like `src/main.rs::foo` must be checked
+    // against `main.rs` too before concluding the file is unindexed).
+    if file_has_graph_node(store, file_path) {
+        return None;
+    }
+    if let Some(stripped_token) = strip_leading_path_component(token) {
+        if let Some(stripped_file_path) = claim_file_path(&stripped_token) {
+            if file_has_graph_node(store, stripped_file_path) {
+                return None;
+            }
+        }
+    }
+    Some(format!(
+        "file not present in the indexed graph: '{file_path}' \
+         (outside indexed scope, or excluded by a language/dependency filter)"
+    ))
 }
 
 fn file_has_graph_node(store: &GraphStore, file_path: &str) -> bool {
-    let escaped = file_path.replace('\'', "\\'");
-    let cypher = format!("MATCH (f:File) WHERE f.path = '{escaped}' RETURN f.id LIMIT 1");
+    // source: M1 fix precedent in git_diff.rs — manual `.replace('\'', ...)`
+    // escaping is vulnerable to a `\'` payload that closes the string early;
+    // claim.token originates from LLM-generated PRD content and must go
+    // through the tested cypher_str helper, not ad-hoc escaping.
+    let literal = cypher_str(file_path);
+    let cypher = format!("MATCH (f:File) WHERE f.path = {literal} RETURN f.id LIMIT 1");
     matches!(store.execute_query(&cypher), Ok(qr) if !qr.rows.is_empty())
 }
 
@@ -762,6 +790,73 @@ pub fn write_validation(path: &Path, value: &Value) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph_store::NODE_FILE;
+
+    // source: review finding #3 on issue #13's fix — file_has_graph_node used
+    // to build its Cypher literal via `.replace('\'', "\\'")`, which a
+    // `\'` payload in claim.token (LLM-generated PRD content, not trusted)
+    // can defeat: the escape turns `\'` into `\\'`, an escaped backslash
+    // followed by an UNescaped closing quote, breaking out of the string
+    // literal early. Mirrors graph_store::tests::test_cypher_injection_rejected.
+    #[test]
+    fn test_file_has_graph_node_escapes_adversarial_path() {
+        // GraphStore persists as a single-file embedded db, not a directory
+        // (source: main.rs::remove_stale_graph_artifact / the ENOTDIR fix it
+        // documents). `remove_dir_all` on that file fails silently (ignored
+        // errors below would otherwise leak the db across test runs and
+        // cause spurious "duplicated primary key" failures on rerun) — so,
+        // matching graph_store::tests::test_cypher_injection_rejected, the
+        // db lives inside a wrapping directory that IS safe to remove_dir_all.
+        let dir = std::env::temp_dir().join("prd_validator_cypher_inject_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let db_path = dir.join("testdb");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
+        store.create_schema().expect("create_schema");
+
+        // Adversarial path: a literal `\'` sequence followed by a Cypher
+        // payload. Under the old naive escape this closes the string early
+        // and lets `DETACH DELETE n` execute as live Cypher.
+        let evil_path = r"weird\'.rs' DETACH DELETE n //";
+        store
+            .insert_node(
+                NODE_FILE,
+                &[
+                    ("id", &cypher_str(evil_path)),
+                    ("path", &cypher_str(evil_path)),
+                    ("name", &cypher_str("evil.rs")),
+                    ("extension", &cypher_str("rs")),
+                    ("size_bytes", "0"),
+                ],
+            )
+            .expect("insert adversarial file node");
+
+        // A second, benign node — if the adversarial path's DETACH DELETE
+        // had executed, this node would vanish too.
+        store
+            .insert_node(
+                NODE_FILE,
+                &[
+                    ("id", &cypher_str("safe.rs")),
+                    ("path", &cypher_str("safe.rs")),
+                    ("name", &cypher_str("safe.rs")),
+                    ("extension", &cypher_str("rs")),
+                    ("size_bytes", "0"),
+                ],
+            )
+            .expect("insert safe file node");
+
+        assert!(
+            file_has_graph_node(&store, evil_path),
+            "the adversarial path must still round-trip as an ordinary string and match its own node"
+        );
+        assert!(
+            file_has_graph_node(&store, "safe.rs"),
+            "the benign node must survive — the adversarial path must not have executed DETACH DELETE"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_regex_extract_backticked() {
