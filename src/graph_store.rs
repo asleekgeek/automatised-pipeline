@@ -141,10 +141,54 @@ pub struct GraphStore {
     //   (c) struct fields drop in declaration order (conn drops before _db).
 }
 
+/// Environment variable that bounds lbug's `max_db_size` (bytes; must be a
+/// power of two — see `BufferManager::verifySizeParams` in the vendored
+/// `lbug-0.15.4/lbug-src/src/storage/buffer_manager/buffer_manager.cpp`).
+/// Unset in production; set once in `.cargo/config.toml`'s `[env]` table so
+/// every `cargo test` process (unit tests AND every integration-test binary
+/// under `tests/`) picks it up automatically without any test file needing
+/// to opt in.
+///
+/// Root cause this bounds: `SystemConfig::default()` leaves `max_db_size`
+/// at its sentinel value `u64::from(u32::MAX)` (lbug-0.15.4/src/database.rs:71).
+/// lbug's C++ core treats that exact sentinel as "unset" and substitutes
+/// `DEFAULT_VM_REGION_MAX_SIZE = 1 << 43` (8 TiB) — see
+/// `lbug-0.15.4/lbug-src/src/main/database.cpp:82-83` and the doc comment
+/// on `maxDBSize` in `lbug-0.15.4/lbug-src/src/include/main/database.h:50-54`.
+/// Each `Database::new`/`GraphStore::open_or_create` call therefore reserves
+/// 8 TiB of virtual address space; dozens of concurrent test binaries under
+/// `cargo test --workspace` exhaust the process's address space
+/// probabilistically (observed: `lbug database open failed: Mmap for size
+/// 8796093022208 failed` in `tests/stage6_integration.rs`, run 5 of a 10-run
+/// soak, 2026-07-15).
+pub const TEST_MAX_DB_SIZE_ENV: &str = "AP_LBUG_TEST_MAX_DB_SIZE";
+
+/// Builds the `SystemConfig` used by every lbug `Database` this crate opens.
+/// The single by-construction choke point for `max_db_size`: both
+/// `GraphStore::open_or_create` (used by all production code and by every
+/// integration test that goes through `GraphStore`) and the one test file
+/// that opens a raw `lbug::Database` directly
+/// (`tests/lbug_bulk_investigation.rs`) call this function, so no future
+/// call site can reintroduce the unbounded default.
+///
+/// In production (no `TEST_MAX_DB_SIZE_ENV` in the process environment) this
+/// is identical to `SystemConfig::default()` — production behavior and
+/// capacity are unchanged by this fix.
+pub fn system_config() -> SystemConfig {
+    let config = SystemConfig::default();
+    match std::env::var(TEST_MAX_DB_SIZE_ENV) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(bytes) => config.max_db_size(bytes),
+            Err(_) => config,
+        },
+        Err(_) => config,
+    }
+}
+
 impl GraphStore {
     /// Opens (or creates) a LadybugDB database at `path`.
     pub fn open_or_create(path: &Path) -> Result<Self, String> {
-        let db = Database::new(path, SystemConfig::default())
+        let db = Database::new(path, system_config())
             .map_err(|e| format!("lbug database open failed: {e}"))?;
         // Safety: see comment on the struct. The Database is heap-stable and
         // outlives the Connection because struct fields drop in declaration order.

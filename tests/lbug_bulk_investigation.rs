@@ -1,11 +1,15 @@
 // Investigation: what bulk-insert patterns does lbug 0.15.3 actually support?
 // Each test is a compile-and-run probe, not a product test.
 
-use lbug::{Connection, Database, LogicalType, SystemConfig, Value};
+use ai_architect_mcp::graph_store;
+use lbug::{Connection, Database, LogicalType, Value};
 
 fn tmpdb(name: &str) -> (tempfile::TempDir, Database) {
     let dir = tempfile::Builder::new().prefix(name).tempdir().unwrap();
-    let db = Database::new(dir.path().join("testdb"), SystemConfig::default()).unwrap();
+    // Bounded via graph_store::system_config() — the single by-construction
+    // choke point for lbug's max_db_size (see its doc comment in
+    // src/graph_store.rs for the root cause and sourced bound).
+    let db = Database::new(dir.path().join("testdb"), graph_store::system_config()).unwrap();
     (dir, db)
 }
 
