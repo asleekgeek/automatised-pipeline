@@ -6,48 +6,43 @@
 // and updates <output_dir>/runs/<run_id>/index.json with stage4 markers.
 //
 // Pipeline:
-//   1. Load stage-2.verified.json   (must have verified:true)
+//   1. Load stage-2.verified.json   (must have verified:true) — finding mode
+//      only; feature mode has no stage-2 gate (see `matching` module note).
 //   2. Load stage-1.refined.json    (for title/description — the verified
 //      receipt intentionally omits the finding body per stage-2.md §5.3)
-//   3. Tokenize description → whitespace tokens, lowercased, alpha/_/:: only
-//   4. For each token, search_graph top-3 → collect matched qualified_names
-//   5. Dedup → for each matched symbol load 1-hop context (community, procs,
-//      calls, called_by, uses)
-//   6. Write artifact + update index
+//   3. Extract backtick-verbatim identifiers + tokenize the remaining text
+//      (see `matching` module for the exact/lexical classification that
+//      fixes issue #14's false-positive grounding).
+//   4. Search + classify → `matched_symbols` (verbatim/exact-name, verified
+//      grounding) and `candidate_symbols` (lexical-only, exposed with score,
+//      never treated as verified).
+//   5. For each matched/candidate symbol load 1-hop context (community,
+//      procs, calls, called_by, uses).
+//   6. Write artifact + update index.
 //
 // source: stages/stage-2.md §5.3 (verified schema), stage-1.md §4.2
 // (refined schema). The symbol-search-from-description pattern is the
 // explicit spec for stage 4 (see the architect's brief embedded in
-// docs/stage-4-spec when it lands).
+// docs/stage-4-spec when it lands). Match-mode classification: issue #14
+// root-cause discussion, see `matching` module doc comment.
+
+mod matching;
 
 use crate::graph_store::GraphStore;
-use crate::search;
+use matching::{MatchOutcome, MatchedSymbol};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// source: stage-4 brief — "top-3 matches per token" caps the cost of
-// description-driven search. Not paper-backed; chosen to keep output
-// compact while capturing the obvious per-token hit plus two backups.
-pub const MATCHES_PER_TOKEN: usize = 3;
-
 // source: stage-4 brief — preparer schema version. "1.0.0" = first release.
-pub const PREPARER_VERSION: &str = "1.0.0";
+// Bumped to "1.1.0" by issue #14: matched_symbols now carries match_mode +
+// confidence (additive fields, old consumers unaffected), and a new
+// candidate_symbols array separates lexical-only hits from verified
+// grounding. No field was removed or renamed — additive/backward-compatible.
+pub const PREPARER_VERSION: &str = "1.1.0";
 
 // source: stage-4 brief — artifact filename (mirrors stage-1/2 conventions).
 pub const PRD_INPUT_FILE_NAME: &str = "stage-4.prd_input.json";
-
-// Minimum token length — single-letter tokens ("a", "i") produce noise.
-// source: Lucene StandardAnalyzer default behavior (min length 2+ for
-// general-purpose text indexing). Stricter than BM25's bare minimum so
-// the per-token search stays focused on symbol-like words.
-const MIN_TOKEN_LEN: usize = 3;
-
-// Cap token count so a pathologically-long description can't explode the
-// search budget. 32 tokens × 3 matches = 96 candidate symbols, dedup caps
-// the real work below that. Chosen to match the stage-4 brief guidance
-// ("compact artifact") — no paper source.
-const MAX_TOKENS: usize = 32;
 
 // ---------------------------------------------------------------------------
 // Public result types
@@ -56,13 +51,19 @@ const MAX_TOKENS: usize = 32;
 /// Outcome of a successful prepare_prd_input run. Drives the MCP receipt.
 pub struct PrdInputOutcome {
     pub artifact_path: PathBuf,
+    /// Count of trustworthy (verbatim/exact-name) matches — the same set
+    /// written to `prd_context.matched_symbols`.
     pub matched_symbol_count: usize,
+    /// Count of lexical-only hits — the same set written to
+    /// `prd_context.candidate_symbols`. Never counted as verified grounding.
+    pub candidate_symbol_count: usize,
     pub impacted_community_count: usize,
     pub impacted_process_count: usize,
-    /// The grounding payload (matched_symbols / impacted_communities /
-    /// impacted_processes / graph_stats) returned INLINE so MCP consumers
-    /// (the PRD generator) get the grounding from the tool response without a
-    /// second file read. Same object that is also persisted in the artifact.
+    /// The grounding payload (matched_symbols / candidate_symbols /
+    /// impacted_communities / impacted_processes / graph_stats) returned
+    /// INLINE so MCP consumers (the PRD generator) get the grounding from
+    /// the tool response without a second file read. Same object that is
+    /// also persisted in the artifact.
     pub prd_context: Value,
 }
 
@@ -111,7 +112,11 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
                 stage1_refined_path: String::new(),
                 verified: true,
             };
-            (feature_dir_for(args, &summary.finding_id), summary, verified)
+            (
+                feature_dir_for(args, &summary.finding_id),
+                summary,
+                verified,
+            )
         }
         (None, None) => {
             return Err(
@@ -124,27 +129,40 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
 
     let store = GraphStore::open_or_create(&args.graph_path)?;
     let stats = collect_graph_stats(&store);
-    let tokens = tokenize_description(&summary);
-    let matched = search_and_enrich(&store, &tokens);
-    let impacted_communities = dedup_keys(&matched, |s| s.community_id.clone());
-    let impacted_processes = impacted_processes_from_symbols(&matched);
-    let artifact = build_artifact(
-        args, &verified, &summary, &prepared_at,
-        &matched, &impacted_communities, &impacted_processes, &stats,
-    );
+    let combined_text = format!("{} {}", summary.title, summary.description);
+    let verbatim_tokens = matching::extract_verbatim_identifiers(&combined_text);
+    let natural_tokens = matching::tokenize_natural(&summary.title, &summary.description);
+    let MatchOutcome {
+        matched,
+        candidates,
+    } = matching::search_and_classify(&store, &verbatim_tokens, &natural_tokens);
+    // Impacted communities/processes are derived ONLY from trustworthy
+    // matches — folding in lexical-only candidates would leak the same
+    // false-positive grounding into the impact-analysis fields (issue #14).
+    let impacted_communities = matching::dedup_keys(&matched, |s| s.community_id.clone());
+    let impacted_processes = matching::impacted_processes_from_symbols(&matched);
+    let artifact = build_artifact(&ArtifactInputs {
+        args,
+        verified: &verified,
+        summary: &summary,
+        prepared_at: &prepared_at,
+        matched: &matched,
+        candidates: &candidates,
+        impacted_communities: &impacted_communities,
+        impacted_processes: &impacted_processes,
+        stats: &stats,
+    });
     let artifact_path = out_dir.join(PRD_INPUT_FILE_NAME);
     write_json(&artifact_path, &artifact)?;
     // index.json is a finding-run artifact; only update it in finding mode.
     if args.finding_id.is_some() {
         update_index(args, &prepared_at)?;
     }
-    let prd_context = artifact
-        .get("prd_context")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let prd_context = artifact.get("prd_context").cloned().unwrap_or(Value::Null);
     Ok(PrdInputOutcome {
         artifact_path,
         matched_symbol_count: matched.len(),
+        candidate_symbol_count: candidates.len(),
         impacted_community_count: impacted_communities.len(),
         impacted_process_count: impacted_processes.len(),
         prd_context,
@@ -172,7 +190,11 @@ fn feature_dir_for(args: &PrdInputArgs, slug: &str) -> PathBuf {
 /// finding_id is a stable slug of the description; title is its first line.
 fn synth_summary_from_description(desc: &str) -> FindingSummary {
     let title = desc.lines().next().unwrap_or(desc).trim();
-    let title = if title.len() > 80 { &title[..80] } else { title };
+    let title = if title.len() > 80 {
+        &title[..80]
+    } else {
+        title
+    };
     FindingSummary {
         finding_id: slugify(desc),
         title: title.to_string(),
@@ -185,7 +207,13 @@ fn synth_summary_from_description(desc: &str) -> FindingSummary {
 fn slugify(text: &str) -> String {
     let mut slug: String = text
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     while slug.contains("--") {
         slug = slug.replace("--", "-");
@@ -256,10 +284,10 @@ fn load_finding_summary(finding_dir: &Path) -> Result<FindingSummary, String> {
             path.display()
         ));
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("stage_1_refined_unreadable: {}", e))?;
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("stage_1_refined_corrupt: {}", e))?;
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("stage_1_refined_unreadable: {}", e))?;
+    let v: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("stage_1_refined_corrupt: {}", e))?;
     let extracted = v.get("extracted").cloned().unwrap_or(Value::Null);
     let finding_id = str_field(&extracted, "finding_id");
     let title = str_field(&extracted, "title");
@@ -278,146 +306,6 @@ fn str_field(v: &Value, key: &str) -> String {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string()
-}
-
-// ---------------------------------------------------------------------------
-// Tokenization — whitespace split + lowercase + basic sanitization
-// ---------------------------------------------------------------------------
-
-fn tokenize_description(summary: &FindingSummary) -> Vec<String> {
-    let combined = format!("{} {}", summary.title, summary.description);
-    let mut seen: Vec<String> = Vec::new();
-    for raw in combined.split_whitespace() {
-        if seen.len() >= MAX_TOKENS {
-            break;
-        }
-        let cleaned = clean_token(raw);
-        if cleaned.len() < MIN_TOKEN_LEN {
-            continue;
-        }
-        if !seen.iter().any(|t| t == &cleaned) {
-            seen.push(cleaned);
-        }
-    }
-    seen
-}
-
-fn clean_token(raw: &str) -> String {
-    raw.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
-        .collect::<String>()
-        .to_ascii_lowercase()
-}
-
-// ---------------------------------------------------------------------------
-// Per-token search + enrichment
-// ---------------------------------------------------------------------------
-
-struct MatchedSymbol {
-    qualified_name: String,
-    name: String,
-    label: String,
-    file_path: String,
-    community_id: Option<String>,
-    community_size: Option<u64>,
-    processes: Vec<String>,
-    calls: Vec<String>,
-    called_by: Vec<String>,
-    uses: Vec<String>,
-}
-
-fn search_and_enrich(store: &GraphStore, tokens: &[String]) -> Vec<MatchedSymbol> {
-    let mut by_qn: Vec<MatchedSymbol> = Vec::new();
-    for token in tokens {
-        let opts = search::SearchOptions {
-            limit: MATCHES_PER_TOKEN,
-            label_filter: None,
-            min_score: 0.0,
-        };
-        let hits = match search::search_graph(store, token, &opts, None) {
-            Ok(h) => h,
-            Err(_) => continue,
-        };
-        for hit in hits {
-            if by_qn.iter().any(|m| m.qualified_name == hit.qualified_name) {
-                continue;
-            }
-            by_qn.push(enrich(store, hit));
-        }
-    }
-    by_qn
-}
-
-fn enrich(store: &GraphStore, hit: search::SearchResult) -> MatchedSymbol {
-    let community_size = hit
-        .community_id
-        .as_ref()
-        .and_then(|cid| lookup_community_size(store, cid));
-    // 1-hop neighbors via get_context — reuses the SAME three-layer lookup
-    // that get_context uses, so PRD consumers see exactly what the search
-    // tools expose. Graceful degradation if the symbol is fuzzy-matched
-    // only.
-    let (calls, called_by, uses) = match search::get_context(store, &hit.qualified_name) {
-        Ok(ctx) => (
-            ctx.calls.iter().map(|r| r.name.clone()).collect(),
-            ctx.called_by.iter().map(|r| r.name.clone()).collect(),
-            ctx.uses.iter().map(|r| r.name.clone()).collect(),
-        ),
-        Err(_) => (Vec::new(), Vec::new(), Vec::new()),
-    };
-    MatchedSymbol {
-        qualified_name: hit.qualified_name,
-        name: hit.name,
-        label: hit.label,
-        file_path: hit.file_path,
-        community_id: hit.community_id,
-        community_size,
-        processes: hit.process_names,
-        calls,
-        called_by,
-        uses,
-    }
-}
-
-fn lookup_community_size(store: &GraphStore, community_id: &str) -> Option<u64> {
-    let escaped = community_id.replace('\'', "\\'");
-    let cypher = format!(
-        "MATCH (c:Community) WHERE c.id = '{escaped}' RETURN c.member_count LIMIT 1"
-    );
-    let qr = store.execute_query(&cypher).ok()?;
-    let row = qr.rows.first()?;
-    row.first().and_then(|s| s.parse::<u64>().ok())
-}
-
-// ---------------------------------------------------------------------------
-// Impact aggregation helpers
-// ---------------------------------------------------------------------------
-
-fn dedup_keys<F>(matched: &[MatchedSymbol], key: F) -> Vec<String>
-where
-    F: Fn(&MatchedSymbol) -> Option<String>,
-{
-    let mut out: Vec<String> = Vec::new();
-    for m in matched {
-        if let Some(k) = key(m) {
-            if !k.is_empty() && !out.contains(&k) {
-                out.push(k);
-            }
-        }
-    }
-    out
-}
-
-fn impacted_processes_from_symbols(matched: &[MatchedSymbol]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for m in matched {
-        for p in &m.processes {
-            if !out.contains(p) {
-                out.push(p.clone());
-            }
-        }
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -461,17 +349,42 @@ fn count_label(store: &GraphStore, label: &str) -> u64 {
 // Artifact builder — pure; no I/O
 // ---------------------------------------------------------------------------
 
-fn build_artifact(
-    args: &PrdInputArgs,
-    verified: &VerifiedReceipt,
-    summary: &FindingSummary,
-    prepared_at: &str,
-    matched: &[MatchedSymbol],
-    impacted_communities: &[String],
-    impacted_processes: &[String],
-    stats: &GraphStats,
-) -> Value {
-    let matched_symbols: Vec<Value> = matched.iter().map(matched_to_json).collect();
+/// Parameter object for `build_artifact` — coding-standards §4.4 caps
+/// function parameters at 4; this pure builder needs every one of these
+/// pieces, so they're grouped into a single borrowed struct instead of nine
+/// positional arguments.
+#[derive(Clone, Copy)]
+struct ArtifactInputs<'a> {
+    args: &'a PrdInputArgs,
+    verified: &'a VerifiedReceipt,
+    summary: &'a FindingSummary,
+    prepared_at: &'a str,
+    /// Verbatim/exact-name evidence — verified grounding.
+    matched: &'a [MatchedSymbol],
+    /// Lexical-only hits, kept separate so a consumer can never mistake a
+    /// substring coincidence for confirmed relatedness (issue #14).
+    candidates: &'a [MatchedSymbol],
+    impacted_communities: &'a [String],
+    impacted_processes: &'a [String],
+    stats: &'a GraphStats,
+}
+
+/// Bundles matched/candidate symbols and impact fields into the stage-4
+/// artifact. Pure; no I/O.
+fn build_artifact(inputs: &ArtifactInputs) -> Value {
+    let ArtifactInputs {
+        args,
+        verified,
+        summary,
+        prepared_at,
+        matched,
+        candidates,
+        impacted_communities,
+        impacted_processes,
+        stats,
+    } = *inputs;
+    let matched_symbols: Vec<Value> = matched.iter().map(matching::matched_to_json).collect();
+    let candidate_symbols: Vec<Value> = candidates.iter().map(matching::matched_to_json).collect();
 
     let summary_text = if summary.description.is_empty() {
         summary.title.clone()
@@ -509,9 +422,24 @@ fn build_artifact(
             "relevance_category": summary.relevance_category,
             "finalized_at": verified.finalized_at,
             "stage1_refined_path": verified.stage1_refined_path,
+            // NOTE (issue #14): this flag reports whether the SOURCE FINDING
+            // passed the stage-2 verification gate (finding mode) or is a
+            // synthesized feature request (feature mode, always true here).
+            // It says nothing about the reliability of individual
+            // `matched_symbols` entries — that is now carried per-symbol by
+            // `match_mode`/`confidence`, and lexical-only hits are excluded
+            // from `matched_symbols` entirely (see `candidate_symbols`).
             "verified": verified.verified,
             "finding_id": summary.finding_id,
             "matched_symbols": matched_symbols,
+            // Lexical-only hits (issue #14): substring/fuzzy matches with no
+            // exact-identity evidence. Exposed with `match_mode: "lexical"`
+            // and a raw `confidence` score for visibility, but deliberately
+            // NOT folded into `matched_symbols` or into the impact fields
+            // below — an empty array here (or an empty matched_symbols) is
+            // the correct output when nothing can be verified, per issue #14
+            // ("a misleading bundle is worse than an empty one").
+            "candidate_symbols": candidate_symbols,
             "impacted_communities": impacted_communities,
             "impacted_processes": impacted_processes,
             "graph_stats": {
@@ -525,34 +453,15 @@ fn build_artifact(
     })
 }
 
-fn matched_to_json(m: &MatchedSymbol) -> Value {
-    json!({
-        "qualified_name": m.qualified_name,
-        "name": m.name,
-        "label": m.label,
-        "file_path": m.file_path,
-        "community_id": m.community_id,
-        "community_size": m.community_size,
-        "processes": m.processes,
-        "relationships": {
-            "calls": m.calls,
-            "called_by": m.called_by,
-            "uses": m.uses,
-        }
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Filesystem writes
 // ---------------------------------------------------------------------------
 
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {:?}: {}", parent, e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {:?}: {}", parent, e))?;
     }
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|e| format!("serialize: {}", e))?;
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| format!("serialize: {}", e))?;
     fs::write(path, bytes).map_err(|e| format!("write {:?}: {}", path, e))?;
     Ok(())
 }
@@ -568,10 +477,8 @@ fn update_index(args: &PrdInputArgs, prepared_at: &str) -> Result<(), String> {
     if !index_path.exists() {
         return Ok(());
     }
-    let raw = fs::read_to_string(&index_path)
-        .map_err(|e| format!("read index: {}", e))?;
-    let mut v: Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("parse index: {}", e))?;
+    let raw = fs::read_to_string(&index_path).map_err(|e| format!("read index: {}", e))?;
+    let mut v: Value = serde_json::from_str(&raw).map_err(|e| format!("parse index: {}", e))?;
     if let Some(obj) = v.as_object_mut() {
         obj.insert(
             "stage4_prepared_at".into(),
@@ -584,8 +491,7 @@ fn update_index(args: &PrdInputArgs, prepared_at: &str) -> Result<(), String> {
         );
         obj.insert("stage4_path".into(), Value::String(rel));
     }
-    let bytes = serde_json::to_vec_pretty(&v)
-        .map_err(|e| format!("serialize index: {}", e))?;
+    let bytes = serde_json::to_vec_pretty(&v).map_err(|e| format!("serialize index: {}", e))?;
     fs::write(&index_path, bytes).map_err(|e| format!("write index: {}", e))?;
     Ok(())
 }
@@ -599,49 +505,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tokenize_description_basic() {
-        let s = FindingSummary {
-            finding_id: "f1".into(),
-            title: "Handle tool call should reject unknown tools".into(),
-            description: "The handle_tool_call function in main.rs silently returns".into(),
-            relevance_category: "bug".into(),
-        };
-        let t = tokenize_description(&s);
-        assert!(t.iter().any(|x| x == "handle"));
-        assert!(t.iter().any(|x| x == "tool"));
-        assert!(t.iter().any(|x| x == "handle_tool_call"));
-        // Short tokens below MIN_TOKEN_LEN must be filtered.
-        assert!(!t.iter().any(|x| x.len() < MIN_TOKEN_LEN));
-    }
-
-    #[test]
-    fn test_tokenize_respects_max_tokens() {
-        let description = (0..100)
-            .map(|i| format!("word{i}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let s = FindingSummary {
-            finding_id: "f1".into(),
-            title: "title".into(),
-            description,
-            relevance_category: "bug".into(),
-        };
-        let t = tokenize_description(&s);
-        assert!(t.len() <= MAX_TOKENS);
-    }
-
-    #[test]
-    fn test_clean_token_strips_punctuation() {
-        assert_eq!(clean_token("Foo,"), "foo");
-        assert_eq!(clean_token("bar.baz"), "barbaz");
-        assert_eq!(clean_token("x::y"), "x::y");
-        assert_eq!(clean_token("(parens)"), "parens");
-    }
-
-    #[test]
     fn test_load_verified_rejects_false_flag() {
-        let tmp = std::env::temp_dir()
-            .join(format!("prd_input_false_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("prd_input_false_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         let body = json!({

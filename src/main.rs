@@ -3543,6 +3543,8 @@ fn do_prepare_prd_input(arguments: &Value) -> Result<Value, String> {
         "artifact_path": outcome.artifact_path.to_string_lossy(),
         "prepared_at": prepared_at,
         "matched_symbol_count": outcome.matched_symbol_count,
+        // Lexical-only hits, never counted as verified grounding (issue #14).
+        "candidate_symbol_count": outcome.candidate_symbol_count,
         "impacted_community_count": outcome.impacted_community_count,
         "impacted_process_count": outcome.impacted_process_count,
         // Grounding returned inline so the PRD generator can inject it without
