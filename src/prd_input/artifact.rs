@@ -31,6 +31,11 @@ pub(super) struct ArtifactInputs<'a> {
     pub(super) impacted_communities: &'a [String],
     pub(super) impacted_processes: &'a [String],
     pub(super) stats: &'a GraphStats,
+    /// "hybrid" if the BM25/vector search index was found and used for this
+    /// run, "substring_fallback" if none was found (issue #18). Additive
+    /// field — reports which scorer produced `matched_symbols`/
+    /// `candidate_symbols`, never silently.
+    pub(super) search_backend: &'static str,
 }
 
 /// Computes the mode-dependent envelope fields: the effective finding id
@@ -71,6 +76,7 @@ struct PrdContextInputs<'a> {
     impacted_communities: &'a [String],
     impacted_processes: &'a [String],
     stats: &'a GraphStats,
+    search_backend: &'static str,
 }
 
 /// Builds the `prd_context` grounding payload — everything the PRD generator
@@ -87,6 +93,7 @@ fn build_prd_context(inputs: PrdContextInputs) -> Value {
         impacted_communities,
         impacted_processes,
         stats,
+        search_backend,
     } = inputs;
     let matched_symbols: Vec<Value> = matched.iter().map(matching::matched_to_json).collect();
     let candidate_symbols: Vec<Value> = candidates.iter().map(matching::matched_to_json).collect();
@@ -122,6 +129,8 @@ fn build_prd_context(inputs: PrdContextInputs) -> Value {
         "candidate_symbols": candidate_symbols,
         "impacted_communities": impacted_communities,
         "impacted_processes": impacted_processes,
+        // issue #18: which scorer actually produced the symbols above.
+        "search_backend": search_backend,
         "graph_stats": graph_stats_json(stats),
     })
 }
@@ -150,6 +159,7 @@ pub(super) fn build_artifact(inputs: &ArtifactInputs) -> Value {
         impacted_communities,
         impacted_processes,
         stats,
+        search_backend,
     } = *inputs;
     let (effective_finding_id, stage2_rel, mode) = artifact_mode_fields(args, summary);
     let prd_context = build_prd_context(PrdContextInputs {
@@ -160,6 +170,7 @@ pub(super) fn build_artifact(inputs: &ArtifactInputs) -> Value {
         impacted_communities,
         impacted_processes,
         stats,
+        search_backend,
     });
 
     json!({

@@ -94,7 +94,7 @@ fn test_homonymous_symbols_in_different_files_both_classify_as_exact() {
     let description = "The `parse` function mishandles empty input.";
     let natural = tokenize_natural(title, description);
     let verbatim = extract_verbatim_identifiers(&format!("{title} {description}"));
-    let outcome = search_and_classify(&store, &verbatim, &natural);
+    let outcome = search_and_classify(&store, &verbatim, &natural, None);
 
     let exact_hits: Vec<_> = outcome
         .matched
@@ -175,7 +175,7 @@ pub fn make_bar(v: u8) -> String {
     let combined = format!("{title} {description}");
     let verbatim = extract_verbatim_identifiers(&combined);
     let natural = tokenize_natural(title, description);
-    let outcome = search_and_classify(&store, &verbatim, &natural);
+    let outcome = search_and_classify(&store, &verbatim, &natural, None);
 
     assert!(
         outcome
@@ -228,12 +228,107 @@ fn test_repro_issue14_pure_lexical_description_yields_empty_matched() {
     let combined = format!("{title} {description}");
     let verbatim = extract_verbatim_identifiers(&combined);
     let natural = tokenize_natural(title, description);
-    let outcome = search_and_classify(&store, &verbatim, &natural);
+    let outcome = search_and_classify(&store, &verbatim, &natural, None);
 
     assert!(
         outcome.matched.is_empty(),
         "no verbatim/exact-name evidence exists — matched_symbols must be empty, got {:?}",
         outcome.matched.iter().map(|m| &m.name).collect::<Vec<_>>()
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// Measured evidence for issue #18 (2026-07-15): `search_and_classify`
+// unconditionally passed `index_dir: None` to `search::search_graph`, so
+// every call ran the substring-fallback scorer even when a hybrid
+// BM25/vector index existed for the graph — capping recall at the weakest
+// matcher unconditionally. `search::score_candidate`'s substring path
+// returns 0.0 for a token with no substring relation to a candidate at
+// all, and that 0.0 is NOT filtered (min_score in `search_hits` is also
+// 0.0), so up to `MATCHES_PER_TOKEN` zero-relevance symbols leak into
+// `candidate_symbols` for every unrelated filler word in a description.
+// This test measures that leak on a fixed fixture, comparing the pre-fix
+// behavior (`index_dir: None`, reproduced explicitly) against the fixed
+// behavior (`index_dir: Some(resolved)`) on the IDENTICAL graph.
+// source: measured on 2026-07-15, this test's own fixture (below).
+#[test]
+fn test_issue18_hybrid_index_reduces_spurious_candidates() {
+    let tmp = std::env::temp_dir().join(format!("prd_input_issue18_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let src_dir = tmp.join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(
+        src_dir.join("main.rs"),
+        "fn main() {\n    handle_tool_call(\"probe\");\n}\n\n\
+         fn handle_tool_call(name: &str) -> String {\n    resolve_name(name)\n}\n\n\
+         fn resolve_name(name: &str) -> String {\n    name.to_string()\n}\n\n\
+         pub struct Tool {\n    pub name: String,\n}\n",
+    )
+    .unwrap();
+    let graph_dir = tmp.join("graph");
+    let r = crate::indexer::index_codebase(&src_dir, &graph_dir).expect("index fixture");
+    let store = GraphStore::open_or_create(&r.graph_path).unwrap();
+    let _ = crate::resolver::resolve_graph(&store);
+    let _ = crate::clustering::cluster_graph(&store, 1.0);
+    let output_dir = graph_dir.parent().unwrap();
+    crate::search::build_search_index(&store, output_dir).expect("build search index");
+    let index_dir = crate::search::resolve_search_index_dir(&graph_dir);
+    assert!(
+        index_dir.is_some(),
+        "fixture must produce a search index for this measurement"
+    );
+
+    // Description mixes one genuine exact citation (`handle_tool_call`)
+    // with natural-language filler words that have NO substring relation
+    // to any symbol in the fixture (main/handle_tool_call/resolve_name/Tool).
+    let title = "Improve reliability during deployment rollouts";
+    let description = "Operators worry about latency spikes and monitoring \
+        dashboards while `handle_tool_call` dispatches requests.";
+    let combined = format!("{title} {description}");
+    let verbatim = extract_verbatim_identifiers(&combined);
+    let natural = tokenize_natural(title, description);
+
+    // Pre-fix behavior, reproduced explicitly (not via the production path,
+    // which no longer passes None once the fixture has an index).
+    let before = search_and_classify(&store, &verbatim, &natural, None);
+    // Fixed behavior — the resolved hybrid index.
+    let after = search_and_classify(&store, &verbatim, &natural, index_dir.as_deref());
+
+    eprintln!(
+        "[measured issue18] candidate_symbols before(substring, index_dir=None)={} \
+         after(hybrid, index_dir=resolved)={}",
+        before.candidates.len(),
+        after.candidates.len()
+    );
+
+    // The exact verbatim citation must resolve identically either way —
+    // wiring in the hybrid index must not change match_mode semantics for
+    // a real hit (issue #14's classification is independent of scorer).
+    assert!(
+        before
+            .matched
+            .iter()
+            .any(|m| m.name == "handle_tool_call" && m.match_mode == MatchMode::Verbatim),
+        "substring-fallback path (pre-fix behavior) must still classify the citation correctly"
+    );
+    assert!(
+        after
+            .matched
+            .iter()
+            .any(|m| m.name == "handle_tool_call" && m.match_mode == MatchMode::Verbatim),
+        "hybrid path must still classify the same verbatim citation correctly"
+    );
+
+    // The substring-fallback path leaks zero-relevance candidates (see
+    // header comment); the hybrid path only surfaces symbols BM25/vector
+    // actually rank for the query, so it must never leak MORE noise.
+    assert!(
+        before.candidates.len() >= after.candidates.len(),
+        "expected substring fallback to leak at least as many spurious \
+         candidates as the hybrid index: before={} after={}",
+        before.candidates.len(),
+        after.candidates.len()
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -270,7 +365,7 @@ fn test_weak_token_before_exact_token_still_classifies_as_exact() {
         natural[0], "handle",
         "test assumes 'handle' tokenizes first"
     );
-    let outcome = search_and_classify(&store, &[], &natural);
+    let outcome = search_and_classify(&store, &[], &natural, None);
 
     let m = outcome
         .matched

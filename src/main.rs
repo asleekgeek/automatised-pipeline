@@ -2877,10 +2877,9 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     // The search index lives in a sibling ``search_index/`` of the graph dir.
     // Pass it explicitly to search_graph — no process-global env hand-off
     // (that channel raced across parallel callers; see search::search_graph).
-    let search_index_dir = graph_path
-        .parent()
-        .map(|p| p.join("search_index"))
-        .filter(|p| p.exists());
+    // Shared with Stage 4's prepare_prd_input via search::resolve_search_index_dir
+    // (issue #18) so both stages resolve the same graph to the same index.
+    let search_index_dir = search::resolve_search_index_dir(graph_path);
 
     let start = std::time::Instant::now();
     // Read-only tool: reuse cached handle. source: graph_cache module docs.

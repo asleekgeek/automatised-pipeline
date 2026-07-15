@@ -37,6 +37,7 @@
 use crate::graph_store::GraphStore;
 use crate::search;
 use serde_json::{json, Value};
+use std::path::Path;
 
 // Minimum token length — single-letter tokens ("a", "i") produce noise.
 // source: Lucene StandardAnalyzer default behavior (min length 2+ for
@@ -186,15 +187,25 @@ pub fn clean_token(raw: &str) -> String {
 /// `MatchMode::rank` (Verbatim > ExactName > Lexical) so a later, stronger
 /// hit always upgrades an earlier, weaker one and a later weaker hit never
 /// downgrades an already-confirmed one.
+/// `index_dir` is the resolved search-index directory for the graph being
+/// searched (see `search::resolve_search_index_dir`), or `None` when no
+/// hybrid BM25/vector index was built for it — `search_hits` then falls
+/// back to `search::search_graph`'s substring scorer, same as before issue
+/// #18. Passing `None` here is a legitimate, explicit choice by the caller
+/// (e.g. no index yet); it must never happen SILENTLY by construction the
+/// way it did pre-fix, where this function always passed `None` regardless
+/// of what the caller had available (see `mod.rs::prepare`'s explicit
+/// `eprintln!` when it resolves no index).
 pub fn search_and_classify(
     store: &GraphStore,
     verbatim_tokens: &[String],
     natural_tokens: &[String],
+    index_dir: Option<&Path>,
 ) -> MatchOutcome {
     let mut best: Vec<(search::SearchResult, MatchMode)> = Vec::new();
 
     for token in verbatim_tokens {
-        for hit in search_hits(store, token) {
+        for hit in search_hits(store, token, index_dir) {
             if !is_exact_hit(token, &hit) {
                 continue; // unverifiable citation — drop, not a candidate
             }
@@ -203,7 +214,7 @@ pub fn search_and_classify(
     }
 
     for token in natural_tokens {
-        for hit in search_hits(store, token) {
+        for hit in search_hits(store, token, index_dir) {
             let mode = if is_exact_hit(token, &hit) {
                 MatchMode::ExactName
             } else {
@@ -250,13 +261,17 @@ fn upsert_best(
     best.push((hit, mode));
 }
 
-fn search_hits(store: &GraphStore, token: &str) -> Vec<search::SearchResult> {
+fn search_hits(
+    store: &GraphStore,
+    token: &str,
+    index_dir: Option<&Path>,
+) -> Vec<search::SearchResult> {
     let opts = search::SearchOptions {
         limit: MATCHES_PER_TOKEN,
         label_filter: None,
         min_score: 0.0,
     };
-    search::search_graph(store, token, &opts, None).unwrap_or_default()
+    search::search_graph(store, token, &opts, index_dir).unwrap_or_default()
 }
 
 /// True iff `token` equals the hit's name or the tail of its qualified name
