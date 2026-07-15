@@ -3693,6 +3693,7 @@ fn do_validate_prd_against_graph(arguments: &Value) -> Result<Value, String> {
             "claimed_symbols": report.summary.claimed_symbols,
             "resolved_symbols": report.summary.resolved_symbols,
             "hallucinated_symbols": report.summary.hallucinated_symbols,
+            "unverifiable_symbols": report.summary.unverifiable_symbols,
             "communities_spanned": report.summary.communities_spanned,
             "processes_impacted": report.summary.processes_impacted,
         },

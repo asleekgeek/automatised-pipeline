@@ -12,8 +12,10 @@
 // source: stages/stage-6.md §4 (extraction contract + regex fallback),
 //         §5 (validation axes), §6 (output schema).
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
+use crate::language_provider::ALL_EXTENSIONS;
 use crate::search;
+use crate::search::strip_leading_path_component;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -65,6 +67,13 @@ pub struct ValidationSummary {
     pub claimed_symbols: u64,
     pub resolved_symbols: u64,
     pub hallucinated_symbols: u64,
+    // source: issue #13 — symbols whose containing file is outside the
+    // indexer's coverage (unsupported language, or not present in the
+    // graph at all) can neither be confirmed nor refuted; they are kept
+    // out of `hallucinated_symbols` so validation_status never fails on
+    // a coverage gap alone. Mirrors epistemic.rs's exact/lower-bound
+    // philosophy: say what the graph cannot verify, don't call it wrong.
+    pub unverifiable_symbols: u64,
     pub communities_spanned: u64,
     pub processes_impacted: u64,
 }
@@ -83,19 +92,29 @@ pub fn validate_prd(
         load_claims(&prd_text, affected_symbols_path);
     let resolved = resolve_claims(store, &claims);
     let mut findings: Vec<ValidationFinding> = Vec::new();
-    emit_symbol_hallucination(&resolved, &mut findings);
+    let verdicts = classify_unresolved(store, &resolved);
+    emit_symbol_hallucination(&resolved, &verdicts, &mut findings);
     let communities = communities_for_resolved(store, &resolved);
     emit_community_consistency(&scope_claims, &communities, &mut findings);
     let processes = processes_for_resolved(store, &resolved);
     emit_process_impact(&scope_claims, &processes, &mut findings);
     emit_unresolved_info(&resolved, mode == "regex_fallback", &mut findings);
     let status = compute_status(&findings);
+    let hallucinated_symbols = verdicts
+        .iter()
+        .filter(|v| matches!(v, ClaimVerdict::Hallucinated))
+        .count() as u64;
+    let unverifiable_symbols = verdicts
+        .iter()
+        .filter(|v| matches!(v, ClaimVerdict::Unverifiable(_)))
+        .count() as u64;
     Ok(ValidationReport {
         validation_status: status,
         summary: ValidationSummary {
             claimed_symbols: claims.len() as u64,
             resolved_symbols: resolved.iter().filter(|r| r.resolved_qn.is_some()).count() as u64,
-            hallucinated_symbols: resolved.iter().filter(|r| r.resolved_qn.is_none()).count() as u64,
+            hallucinated_symbols,
+            unverifiable_symbols,
             communities_spanned: distinct_count(&communities) as u64,
             processes_impacted: processes.len() as u64,
         },
@@ -123,9 +142,10 @@ fn read_prd_text(prd_path: &Path) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 struct SymbolClaim {
-    token: String,          // raw text as it appeared (qualified_name or identifier)
-    change_kind: String,    // add | modify | remove | rename | unknown
-    #[allow(dead_code)] // retained from structured contract; future axes will surface it in findings.
+    token: String,       // raw text as it appeared (qualified_name or identifier)
+    change_kind: String, // add | modify | remove | rename | unknown
+    #[allow(dead_code)]
+    // retained from structured contract; future axes will surface it in findings.
     rationale: String,
 }
 
@@ -135,7 +155,9 @@ enum ScopeClaim {
         #[allow(dead_code)] // surfaced in future "expected community name" axis (stage-6 §5 V2).
         assertion: String,
     },
-    ProcessExclusion { processes: Vec<String> },
+    ProcessExclusion {
+        processes: Vec<String>,
+    },
 }
 
 fn load_claims(
@@ -162,7 +184,9 @@ fn parse_structured_claims(v: &Value) -> (Vec<SymbolClaim>, Vec<ScopeClaim>) {
     if let Some(arr) = v.get("affected_symbols").and_then(|x| x.as_array()) {
         for item in arr {
             let qn = str_field(item, "qualified_name");
-            if qn.is_empty() { continue; }
+            if qn.is_empty() {
+                continue;
+            }
             claims.push(SymbolClaim {
                 token: qn,
                 change_kind: str_field_default(item, "change_kind", "unknown"),
@@ -181,7 +205,11 @@ fn parse_structured_claims(v: &Value) -> (Vec<SymbolClaim>, Vec<ScopeClaim>) {
                     let procs: Vec<String> = item
                         .get("processes")
                         .and_then(|x| x.as_array())
-                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     scopes.push(ScopeClaim::ProcessExclusion { processes: procs });
                 }
@@ -193,12 +221,19 @@ fn parse_structured_claims(v: &Value) -> (Vec<SymbolClaim>, Vec<ScopeClaim>) {
 }
 
 fn str_field(v: &Value, key: &str) -> String {
-    v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_string()
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn str_field_default(v: &Value, key: &str, default: &str) -> String {
     let s = str_field(v, key);
-    if s.is_empty() { default.to_string() } else { s }
+    if s.is_empty() {
+        default.to_string()
+    } else {
+        s
+    }
 }
 
 // Regex fallback (implemented without an external regex crate — the "rules"
@@ -212,18 +247,26 @@ fn regex_extract_symbols(text: &str) -> Vec<SymbolClaim> {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for raw in extract_backticked(text) {
         push_token(&mut out, &mut seen, raw);
-        if out.len() >= FALLBACK_MAX_TOKENS { return out; }
+        if out.len() >= FALLBACK_MAX_TOKENS {
+            return out;
+        }
     }
     for raw in extract_file_paths(text) {
         push_token(&mut out, &mut seen, raw);
-        if out.len() >= FALLBACK_MAX_TOKENS { return out; }
+        if out.len() >= FALLBACK_MAX_TOKENS {
+            return out;
+        }
     }
     out
 }
 
 fn push_token(out: &mut Vec<SymbolClaim>, seen: &mut BTreeSet<String>, token: String) {
-    if token.len() < FALLBACK_MIN_TOKEN_LEN { return; }
-    if !seen.insert(token.clone()) { return; }
+    if token.len() < FALLBACK_MIN_TOKEN_LEN {
+        return;
+    }
+    if !seen.insert(token.clone()) {
+        return;
+    }
     out.push(SymbolClaim {
         token,
         change_kind: "unknown".into(),
@@ -257,15 +300,20 @@ fn extract_backticked(text: &str) -> Vec<String> {
 }
 
 fn is_identifier_or_qn(s: &str) -> bool {
-    if s.is_empty() { return false; }
-    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+    if s.is_empty() {
+        return false;
+    }
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
         && s.chars().any(|c| c.is_ascii_alphabetic() || c == '_')
 }
 
 fn extract_file_paths(text: &str) -> Vec<String> {
     // Match `word(/word)+\.(rs|ts|tsx|py|go|js)` — file-path-looking tokens.
     let mut out = Vec::new();
-    for raw in text.split(|c: char| c.is_ascii_whitespace() || c == '`' || c == '(' || c == ')' || c == ',') {
+    for raw in text
+        .split(|c: char| c.is_ascii_whitespace() || c == '`' || c == '(' || c == ')' || c == ',')
+    {
         if looks_like_file_path(raw) {
             out.push(raw.trim_end_matches(&['.', ',', ';', ':'][..]).to_string());
         }
@@ -277,7 +325,8 @@ fn looks_like_file_path(s: &str) -> bool {
     let exts = [".rs", ".ts", ".tsx", ".py", ".go", ".js"];
     s.contains('/')
         && exts.iter().any(|e| s.ends_with(e))
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '-' | '.'))
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '-' | '.'))
 }
 
 // ---------------------------------------------------------------------------
@@ -291,13 +340,24 @@ struct ResolvedClaim<'a> {
 }
 
 fn resolve_claims<'a>(store: &GraphStore, claims: &'a [SymbolClaim]) -> Vec<ResolvedClaim<'a>> {
-    claims.iter().map(|claim| resolve_one(store, claim)).collect()
+    claims
+        .iter()
+        .map(|claim| resolve_one(store, claim))
+        .collect()
 }
 
 fn resolve_one<'a>(store: &GraphStore, claim: &'a SymbolClaim) -> ResolvedClaim<'a> {
     match search::resolve_qualified_name(store, &claim.token) {
-        Ok(qn) => ResolvedClaim { claim, resolved_qn: Some(qn), did_you_mean: Vec::new() },
-        Err(nf) => ResolvedClaim { claim, resolved_qn: None, did_you_mean: nf.did_you_mean },
+        Ok(qn) => ResolvedClaim {
+            claim,
+            resolved_qn: Some(qn),
+            did_you_mean: Vec::new(),
+        },
+        Err(nf) => ResolvedClaim {
+            claim,
+            resolved_qn: None,
+            did_you_mean: nf.did_you_mean,
+        },
     }
 }
 
@@ -305,27 +365,162 @@ fn resolve_one<'a>(store: &GraphStore, claim: &'a SymbolClaim) -> ResolvedClaim<
 // Axis 1 — symbol hallucination
 // ---------------------------------------------------------------------------
 
-fn emit_symbol_hallucination(resolved: &[ResolvedClaim], findings: &mut Vec<ValidationFinding>) {
-    for r in resolved {
-        if r.resolved_qn.is_some() { continue; }
-        // `add` + regex_fallback tokens are info; structured `modify/remove/rename`
-        // absent = critical (can't modify what isn't in the graph).
+// Verdict on a claim's containing file, computed once per resolved claim and
+// shared by `emit_symbol_hallucination` (finding severity) and `validate_prd`
+// (summary counters) so the two never diverge on what counts as "hallucinated".
+//
+// `Unscored` covers claims outside the structured-modify gate (change_kind
+// `add`/`unknown`, or regex-fallback tokens) — unchanged pre-existing
+// behavior: they were never critical findings and are not counted as
+// hallucinated in the summary either (see issue #13 discussion; regex
+// fallback already gets its own "info" finding via `emit_unresolved_info`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClaimVerdict {
+    /// resolved_qn was Some — not a candidate for this axis at all.
+    Resolved,
+    /// Symbol absent from a file the indexer actually covers: a real claim
+    /// the graph can refute. Critical finding.
+    Hallucinated,
+    /// Symbol absent, but its file is outside indexer coverage (unsupported
+    /// language extension, or no File node at all despite an indexed-looking
+    /// extension — pruned, filtered, or never walked). The graph cannot
+    /// confirm or refute the claim. Info finding, not counted as hallucinated.
+    Unverifiable(String),
+    /// Outside the structured-modify gate — not evaluated by this axis.
+    Unscored,
+}
+
+fn classify_unresolved(store: &GraphStore, resolved: &[ResolvedClaim]) -> Vec<ClaimVerdict> {
+    resolved.iter().map(|r| classify_one(store, r)).collect()
+}
+
+fn classify_one(store: &GraphStore, r: &ResolvedClaim) -> ClaimVerdict {
+    if r.resolved_qn.is_some() {
+        return ClaimVerdict::Resolved;
+    }
+    let kind = r.claim.change_kind.as_str();
+    if !matches!(kind, "modify" | "remove" | "rename") {
+        return ClaimVerdict::Unscored;
+    }
+    match unverifiable_reason(store, &r.claim.token) {
+        Some(reason) => ClaimVerdict::Unverifiable(reason),
+        None => ClaimVerdict::Hallucinated,
+    }
+}
+
+// A claimed qualified_name follows `<file_path>::name[::name...]` — file_path
+// up to the FIRST `::`, with the rest naming a possibly-nested symbol
+// (method, nested module). source: tests/corpus_full.rs::file_id_of, whose
+// doc comment cites the authoritative convention from parser/mod.rs::qual;
+// the same first-`::` split search::resolve_qualified_name's layer-2
+// strip-prefix retry relies on. Splitting on the LAST `::` instead would
+// mis-extract the file_path of any multi-segment QN (e.g.
+// `src/foo.rs::MyStruct::new` -> wrongly "src/foo.rs::MyStruct"), routing
+// real hallucinations into Unverifiable. Returns None when the token
+// carries no file prefix at all (a bare identifier) — those cannot be
+// checked against file coverage and are conservatively treated as
+// verifiable-and-absent (Hallucinated), preserving pre-existing behavior
+// for tokens without path context.
+fn claim_file_path(token: &str) -> Option<&str> {
+    let idx = token.find("::")?;
+    let file_path = &token[..idx];
+    if file_path.contains('.') {
+        Some(file_path)
+    } else {
+        None
+    }
+}
+
+// source: issue #13 — a claim's file may be unverifiable for two distinct
+// reasons, both meaning "the indexer never produced a File node here":
+//   1. The extension isn't in language_provider::ALL_EXTENSIONS at all — the
+//      indexer has no parser for it (e.g. bash `.sh`).
+//   2. The extension IS supported, but no File node exists for this path —
+//      the file was pruned (dependency scope), excluded by a language
+//      filter, or simply never walked. Same observable effect: unverifiable.
+// Distinguished only in the message text; both return Some(reason).
+fn unverifiable_reason(store: &GraphStore, token: &str) -> Option<String> {
+    let file_path = claim_file_path(token)?;
+    let ext = Path::new(file_path).extension().and_then(|e| e.to_str());
+    if let Some(ext) = ext {
+        if !ALL_EXTENSIONS.contains(&ext) {
+            return Some(format!(
+                "language not indexed: '.{ext}' has no parser (file '{file_path}')"
+            ));
+        }
+    }
+    // Check graph coverage against both the raw claimed path and the
+    // parser's stripped-leading-path-component form (the same retry
+    // search::resolve_qualified_name performs at layer 2 — the indexer
+    // strips a leading `src/`-style component when building
+    // qualified_names, so a claim like `src/main.rs::foo` must be checked
+    // against `main.rs` too before concluding the file is unindexed).
+    if file_has_graph_node(store, file_path) {
+        return None;
+    }
+    if let Some(stripped_token) = strip_leading_path_component(token) {
+        if let Some(stripped_file_path) = claim_file_path(&stripped_token) {
+            if file_has_graph_node(store, stripped_file_path) {
+                return None;
+            }
+        }
+    }
+    Some(format!(
+        "file not present in the indexed graph: '{file_path}' \
+         (outside indexed scope, or excluded by a language/dependency filter)"
+    ))
+}
+
+fn file_has_graph_node(store: &GraphStore, file_path: &str) -> bool {
+    // source: M1 fix precedent in git_diff.rs — manual `.replace('\'', ...)`
+    // escaping is vulnerable to a `\'` payload that closes the string early;
+    // claim.token originates from LLM-generated PRD content and must go
+    // through the tested cypher_str helper, not ad-hoc escaping.
+    let literal = cypher_str(file_path);
+    let cypher = format!("MATCH (f:File) WHERE f.path = {literal} RETURN f.id LIMIT 1");
+    matches!(store.execute_query(&cypher), Ok(qr) if !qr.rows.is_empty())
+}
+
+fn emit_symbol_hallucination(
+    resolved: &[ResolvedClaim],
+    verdicts: &[ClaimVerdict],
+    findings: &mut Vec<ValidationFinding>,
+) {
+    for (r, verdict) in resolved.iter().zip(verdicts.iter()) {
         let kind = r.claim.change_kind.as_str();
-        let is_structured_modify = matches!(kind, "modify" | "remove" | "rename");
-        if is_structured_modify {
-            findings.push(ValidationFinding {
-                axis: "symbol_hallucination".into(),
-                severity: "critical".into(),
-                message: format!(
-                    "claimed symbol '{}' (change_kind={}) not found in graph",
-                    r.claim.token, kind
-                ),
-                symbol: Some(r.claim.token.clone()),
-                details: json!({
-                    "change_kind": kind,
-                    "did_you_mean": r.did_you_mean,
-                }),
-            });
+        match verdict {
+            ClaimVerdict::Hallucinated => {
+                findings.push(ValidationFinding {
+                    axis: "symbol_hallucination".into(),
+                    severity: "critical".into(),
+                    message: format!(
+                        "claimed symbol '{}' (change_kind={}) not found in graph",
+                        r.claim.token, kind
+                    ),
+                    symbol: Some(r.claim.token.clone()),
+                    details: json!({
+                        "change_kind": kind,
+                        "did_you_mean": r.did_you_mean,
+                    }),
+                });
+            }
+            ClaimVerdict::Unverifiable(reason) => {
+                findings.push(ValidationFinding {
+                    axis: "symbol_hallucination".into(),
+                    severity: "info".into(),
+                    message: format!(
+                        "claimed symbol '{}' (change_kind={}) could not be verified: {}",
+                        r.claim.token, kind, reason
+                    ),
+                    symbol: Some(r.claim.token.clone()),
+                    details: json!({
+                        "change_kind": kind,
+                        "did_you_mean": r.did_you_mean,
+                        "unverifiable_reason": reason,
+                    }),
+                });
+            }
+            ClaimVerdict::Resolved | ClaimVerdict::Unscored => {}
         }
     }
 }
@@ -335,13 +530,20 @@ fn emit_unresolved_info(
     is_regex_fallback: bool,
     findings: &mut Vec<ValidationFinding>,
 ) {
-    if !is_regex_fallback { return; }
+    if !is_regex_fallback {
+        return;
+    }
     for r in resolved {
-        if r.resolved_qn.is_some() { continue; }
+        if r.resolved_qn.is_some() {
+            continue;
+        }
         findings.push(ValidationFinding {
             axis: "symbol_hallucination".into(),
             severity: "info".into(),
-            message: format!("unresolved token '{}' (regex fallback — likely prose)", r.claim.token),
+            message: format!(
+                "unresolved token '{}' (regex fallback — likely prose)",
+                r.claim.token
+            ),
             symbol: Some(r.claim.token.clone()),
             details: json!({ "did_you_mean": r.did_you_mean, "extraction_mode": "regex_fallback" }),
         });
@@ -364,8 +566,16 @@ fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
     // Iterate per-label rather than using rel-type alternation — mirrors
     // search/mod.rs::lookup_community for lbug dialect compatibility.
     let escaped = qualified_name.replace('\'', "\\'");
-    for label in ["Function", "Method", "Struct", "Enum", "Trait",
-                  "Constant", "TypeAlias", "Module"] {
+    for label in [
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
+    ] {
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
@@ -375,7 +585,9 @@ fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
                 if let Some(cid) = row.first() {
-                    if !cid.is_empty() { return Some(cid.clone()); }
+                    if !cid.is_empty() {
+                        return Some(cid.clone());
+                    }
                 }
             }
         }
@@ -389,7 +601,9 @@ fn emit_community_consistency(
     findings: &mut Vec<ValidationFinding>,
 ) {
     let distinct = distinct_count(communities) as u64;
-    let has_scope_assertion = scope_claims.iter().any(|s| matches!(s, ScopeClaim::CommunityScope { .. }));
+    let has_scope_assertion = scope_claims
+        .iter()
+        .any(|s| matches!(s, ScopeClaim::CommunityScope { .. }));
     if !has_scope_assertion && distinct < COMMUNITY_SPAN_WARNING_THRESHOLD {
         return;
     }
@@ -401,7 +615,12 @@ fn emit_community_consistency(
         return;
     };
     let touched: Vec<String> = communities.iter().filter_map(|c| c.clone()).collect();
-    let mut unique: Vec<String> = touched.iter().cloned().collect::<BTreeSet<_>>().into_iter().collect();
+    let mut unique: Vec<String> = touched
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     unique.sort();
     findings.push(ValidationFinding {
         axis: "community_consistency".into(),
@@ -434,7 +653,11 @@ fn processes_for_resolved(
 ) -> Vec<(String, Vec<String>)> {
     resolved
         .iter()
-        .filter_map(|r| r.resolved_qn.as_ref().map(|qn| (qn.clone(), processes_of(store, qn))))
+        .filter_map(|r| {
+            r.resolved_qn
+                .as_ref()
+                .map(|qn| (qn.clone(), processes_of(store, qn)))
+        })
         .collect()
 }
 
@@ -450,7 +673,9 @@ fn processes_of(store: &GraphStore, qualified_name: &str) -> Vec<String> {
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
                 if let Some(name) = row.first() {
-                    if !name.is_empty() && !out.contains(name) { out.push(name.clone()); }
+                    if !name.is_empty() && !out.contains(name) {
+                        out.push(name.clone());
+                    }
                 }
             }
         }
@@ -499,9 +724,13 @@ fn compute_status(findings: &[ValidationFinding]) -> String {
             _ => {}
         }
     }
-    if has_critical { "fail".into() }
-    else if has_warning { "warning".into() }
-    else { "ok".into() }
+    if has_critical {
+        "fail".into()
+    } else if has_warning {
+        "warning".into()
+    } else {
+        "ok".into()
+    }
 }
 
 pub fn report_to_json(
@@ -512,10 +741,16 @@ pub fn report_to_json(
     graph_path: &Path,
     validated_at: &str,
 ) -> Value {
-    let findings: Vec<Value> = report.findings.iter().map(|f| json!({
-        "axis": f.axis, "severity": f.severity, "message": f.message,
-        "symbol": f.symbol, "details": f.details,
-    })).collect();
+    let findings: Vec<Value> = report
+        .findings
+        .iter()
+        .map(|f| {
+            json!({
+                "axis": f.axis, "severity": f.severity, "message": f.message,
+                "symbol": f.symbol, "details": f.details,
+            })
+        })
+        .collect();
     json!({
         "run_id": run_id,
         "finding_id": finding_id,
@@ -532,6 +767,7 @@ pub fn report_to_json(
             "claimed_symbols": report.summary.claimed_symbols,
             "resolved_symbols": report.summary.resolved_symbols,
             "hallucinated_symbols": report.summary.hallucinated_symbols,
+            "unverifiable_symbols": report.summary.unverifiable_symbols,
             "communities_spanned": report.summary.communities_spanned,
             "processes_impacted": report.summary.processes_impacted,
         },
@@ -554,15 +790,94 @@ pub fn write_validation(path: &Path, value: &Value) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph_store::NODE_FILE;
+
+    // source: review finding #3 on issue #13's fix — file_has_graph_node used
+    // to build its Cypher literal via `.replace('\'', "\\'")`, which a
+    // `\'` payload in claim.token (LLM-generated PRD content, not trusted)
+    // can defeat: the escape turns `\'` into `\\'`, an escaped backslash
+    // followed by an UNescaped closing quote, breaking out of the string
+    // literal early. Mirrors graph_store::tests::test_cypher_injection_rejected.
+    #[test]
+    fn test_file_has_graph_node_escapes_adversarial_path() {
+        // GraphStore persists as a single-file embedded db, not a directory
+        // (source: main.rs::remove_stale_graph_artifact / the ENOTDIR fix it
+        // documents). `remove_dir_all` on that file fails silently (ignored
+        // errors below would otherwise leak the db across test runs and
+        // cause spurious "duplicated primary key" failures on rerun) — so,
+        // matching graph_store::tests::test_cypher_injection_rejected, the
+        // db lives inside a wrapping directory that IS safe to remove_dir_all.
+        let dir = std::env::temp_dir().join("prd_validator_cypher_inject_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let db_path = dir.join("testdb");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
+        store.create_schema().expect("create_schema");
+
+        // Adversarial path: a literal `\'` sequence followed by a Cypher
+        // payload. Under the old naive escape this closes the string early
+        // and lets `DETACH DELETE n` execute as live Cypher.
+        let evil_path = r"weird\'.rs' DETACH DELETE n //";
+        store
+            .insert_node(
+                NODE_FILE,
+                &[
+                    ("id", &cypher_str(evil_path)),
+                    ("path", &cypher_str(evil_path)),
+                    ("name", &cypher_str("evil.rs")),
+                    ("extension", &cypher_str("rs")),
+                    ("size_bytes", "0"),
+                ],
+            )
+            .expect("insert adversarial file node");
+
+        // A second, benign node — if the adversarial path's DETACH DELETE
+        // had executed, this node would vanish too.
+        store
+            .insert_node(
+                NODE_FILE,
+                &[
+                    ("id", &cypher_str("safe.rs")),
+                    ("path", &cypher_str("safe.rs")),
+                    ("name", &cypher_str("safe.rs")),
+                    ("extension", &cypher_str("rs")),
+                    ("size_bytes", "0"),
+                ],
+            )
+            .expect("insert safe file node");
+
+        assert!(
+            file_has_graph_node(&store, evil_path),
+            "the adversarial path must still round-trip as an ordinary string and match its own node"
+        );
+        assert!(
+            file_has_graph_node(&store, "safe.rs"),
+            "the benign node must survive — the adversarial path must not have executed DETACH DELETE"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_regex_extract_backticked() {
         let prd = "modify `handle_tool_call` in `src/main.rs` and the `GraphStore` helper.";
         let syms = regex_extract_symbols(prd);
         let tokens: Vec<String> = syms.iter().map(|s| s.token.clone()).collect();
-        assert!(tokens.contains(&"handle_tool_call".to_string()), "got {:?}", tokens);
-        assert!(tokens.contains(&"GraphStore".to_string()), "got {:?}", tokens);
-        assert!(tokens.iter().any(|t| t == "src/main.rs"), "got {:?}", tokens);
+        assert!(
+            tokens.contains(&"handle_tool_call".to_string()),
+            "got {:?}",
+            tokens
+        );
+        assert!(
+            tokens.contains(&"GraphStore".to_string()),
+            "got {:?}",
+            tokens
+        );
+        assert!(
+            tokens.iter().any(|t| t == "src/main.rs"),
+            "got {:?}",
+            tokens
+        );
     }
 
     #[test]
@@ -578,18 +893,27 @@ mod tests {
     fn test_compute_status_escalation() {
         let mut findings = Vec::new();
         findings.push(ValidationFinding {
-            axis: "x".into(), severity: "info".into(),
-            message: "".into(), symbol: None, details: json!({}),
+            axis: "x".into(),
+            severity: "info".into(),
+            message: "".into(),
+            symbol: None,
+            details: json!({}),
         });
         assert_eq!(compute_status(&findings), "ok");
         findings.push(ValidationFinding {
-            axis: "x".into(), severity: "warning".into(),
-            message: "".into(), symbol: None, details: json!({}),
+            axis: "x".into(),
+            severity: "warning".into(),
+            message: "".into(),
+            symbol: None,
+            details: json!({}),
         });
         assert_eq!(compute_status(&findings), "warning");
         findings.push(ValidationFinding {
-            axis: "x".into(), severity: "critical".into(),
-            message: "".into(), symbol: None, details: json!({}),
+            axis: "x".into(),
+            severity: "critical".into(),
+            message: "".into(),
+            symbol: None,
+            details: json!({}),
         });
         assert_eq!(compute_status(&findings), "fail");
     }
