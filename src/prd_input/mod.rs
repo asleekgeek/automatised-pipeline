@@ -30,6 +30,7 @@ mod artifact;
 mod matching;
 
 use crate::graph_store::GraphStore;
+use crate::search;
 use artifact::{build_artifact, ArtifactInputs};
 use matching::MatchOutcome;
 use serde_json::Value;
@@ -40,8 +41,11 @@ use std::path::{Path, PathBuf};
 // Bumped to "1.1.0" by issue #14: matched_symbols now carries match_mode +
 // confidence (additive fields, old consumers unaffected), and a new
 // candidate_symbols array separates lexical-only hits from verified
-// grounding. No field was removed or renamed — additive/backward-compatible.
-pub const PREPARER_VERSION: &str = "1.1.0";
+// grounding. Bumped to "1.2.0" by issue #18: prd_context now carries
+// `search_backend` ("hybrid" | "substring_fallback"), additive, reporting
+// whether the hybrid BM25/vector index was actually used for this run — no
+// field was removed or renamed either time.
+pub const PREPARER_VERSION: &str = "1.2.0";
 
 // source: stage-4 brief — artifact filename (mirrors stage-1/2 conventions).
 pub const PRD_INPUT_FILE_NAME: &str = "stage-4.prd_input.json";
@@ -141,10 +145,18 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
     let combined_text = format!("{} {}", summary.title, summary.description);
     let verbatim_tokens = matching::extract_verbatim_identifiers(&combined_text);
     let natural_tokens = matching::tokenize_natural(&summary.title, &summary.description);
+
+    let (search_index_dir, search_backend) = resolve_search_backend(&args.graph_path);
+
     let MatchOutcome {
         matched,
         candidates,
-    } = matching::search_and_classify(&store, &verbatim_tokens, &natural_tokens);
+    } = matching::search_and_classify(
+        &store,
+        &verbatim_tokens,
+        &natural_tokens,
+        search_index_dir.as_deref(),
+    );
     // Impacted communities/processes are derived ONLY from trustworthy
     // matches — folding in lexical-only candidates would leak the same
     // false-positive grounding into the impact-analysis fields (issue #14).
@@ -160,6 +172,7 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
         impacted_communities: &impacted_communities,
         impacted_processes: &impacted_processes,
         stats: &stats,
+        search_backend,
     });
     let artifact_path = out_dir.join(PRD_INPUT_FILE_NAME);
     write_json(&artifact_path, &artifact)?;
@@ -176,6 +189,32 @@ pub fn prepare(args: &PrdInputArgs, prepared_at: String) -> Result<PrdInputOutco
         impacted_process_count: impacted_processes.len(),
         prd_context,
     })
+}
+
+/// Resolves the search-index directory for `graph_path` and the label that
+/// describes which scorer `search_and_classify` will use as a result
+/// (issue #18: resolve the SAME directory Stage 3d's `search_codebase`
+/// resolves — `search::resolve_search_index_dir` — instead of always
+/// passing `index_dir: None`, which made prepare_prd_input run the
+/// substring-fallback scorer even when a hybrid BM25/vector index existed
+/// next to `graph_path`, capping recall at the weakest matcher
+/// unconditionally). The fallback is deliberate and always logged — never
+/// silent (an unlogged silent fallback is the same class of bug as the
+/// FlashRank incident: a degraded path masquerading as the real one).
+fn resolve_search_backend(graph_path: &Path) -> (Option<PathBuf>, &'static str) {
+    let search_index_dir = search::resolve_search_index_dir(graph_path);
+    if search_index_dir.is_some() {
+        (search_index_dir, "hybrid")
+    } else {
+        eprintln!(
+            "[ap] prepare_prd_input: no search_index found next to {} — \
+             falling back to substring search (run analyze_codebase, which \
+             builds the index after clustering, to enable hybrid BM25/vector \
+             ranking)",
+            graph_path.display()
+        );
+        (None, "substring_fallback")
+    }
 }
 
 fn finding_dir_for(args: &PrdInputArgs) -> PathBuf {

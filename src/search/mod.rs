@@ -16,8 +16,34 @@ pub mod vector;
 
 use crate::graph_store::GraphStore;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+// ---------------------------------------------------------------------------
+// Search-index path resolution — single source of truth
+// ---------------------------------------------------------------------------
+
+/// Resolves the search-index directory for a persisted graph, if one was
+/// built. The index lives in a sibling `search_index/` of the graph
+/// directory (built by `build_search_index` after clustering, in the
+/// `analyze_codebase` flow — see this module's header comment).
+///
+/// Every caller of [`search_graph`] against a persisted `graph_path` MUST
+/// resolve the index directory through this function rather than
+/// reimplementing the sibling-path logic inline — `do_search_codebase`
+/// (Stage 3d, `src/main.rs`) and `prd_input::matching::search_and_classify`
+/// (Stage 4) both depend on this returning the SAME answer for the same
+/// graph, otherwise one stage silently gets hybrid BM25/vector ranking
+/// while the other silently falls back to substring search on identical
+/// input (issue #18: Stage 4 never called this at all and always passed
+/// `index_dir: None`, so it ran the substring-fallback scorer even when a
+/// hybrid index existed next to the graph it was searching).
+pub fn resolve_search_index_dir(graph_path: &Path) -> Option<PathBuf> {
+    graph_path
+        .parent()
+        .map(|p| p.join("search_index"))
+        .filter(|p| p.exists())
+}
 
 // ---------------------------------------------------------------------------
 // Public types

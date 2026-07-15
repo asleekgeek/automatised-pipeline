@@ -8,6 +8,35 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`prepare_prd_input` now uses the hybrid BM25/vector search index when one
+  exists, instead of always running the substring-only fallback scorer
+  (issue #18).** `search_and_classify` (`src/prd_input/matching.rs`)
+  unconditionally passed `index_dir: None` to `search::search_graph`
+  regardless of whether `analyze_codebase` had already built a
+  `search_index/` next to the graph — Stage 4 recall was capped at the
+  weakest matcher unconditionally, even when Stage 3d's `search_codebase`
+  on the same graph used the real hybrid index. Fix: extracted
+  `search::resolve_search_index_dir` (the sibling-`search_index/`-directory
+  logic previously inlined in `do_search_codebase`, `src/main.rs`) as the
+  single source of truth for resolving a graph's index directory, and
+  `prepare_prd_input` now calls it and threads the result through
+  `search_and_classify` → `search_hits`. When no index exists, the fallback
+  to substring search is now explicit and always logged
+  (`eprintln!("[ap] prepare_prd_input: no search_index found ...")`) —
+  never silent. Measured on a fixed fixture (`src/prd_input/matching_tests.rs::
+  test_issue18_hybrid_index_reduces_spurious_candidates`): substring
+  fallback (pre-fix behavior) surfaced 2 spurious `candidate_symbols` from
+  unrelated filler words in the description; the hybrid index (post-fix)
+  surfaced 1 on the identical graph and description — source: measured on
+  2026-07-15, that test's fixture.
+
+### Changed — `prepare_prd_input` tool schema, `preparer_version` 1.1.0 → 1.2.0
+
+Additive only. `prd_context` gains a new `search_backend` field —
+`"hybrid"` when the search index was found and used, `"substring_fallback"`
+when none was found — so consumers can see which scorer produced
+`matched_symbols`/`candidate_symbols` for a given run.
+
 - **`prepare_prd_input` (feature mode) no longer presents lexical substring
   matches as verified grounding (issue #14).** The matcher ran every
   natural-language word from the description through the graph search with

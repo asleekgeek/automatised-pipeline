@@ -38,6 +38,21 @@ fn tmp(tag: &str) -> PathBuf {
 }
 
 fn build_fixture_graph(fixture_dir: &std::path::Path, graph_dir: &std::path::Path) {
+    build_fixture_graph_inner(fixture_dir, graph_dir, true);
+}
+
+/// Same fixture, but skips `build_search_index` — used to assert the
+/// explicit, logged substring fallback (issue #18) when no hybrid index
+/// exists next to the graph.
+fn build_fixture_graph_no_index(fixture_dir: &std::path::Path, graph_dir: &std::path::Path) {
+    build_fixture_graph_inner(fixture_dir, graph_dir, false);
+}
+
+fn build_fixture_graph_inner(
+    fixture_dir: &std::path::Path,
+    graph_dir: &std::path::Path,
+    build_index: bool,
+) {
     fs::create_dir_all(fixture_dir.join("src")).unwrap();
     fs::write(fixture_dir.join("src/main.rs"), FIXTURE_MAIN).unwrap();
     let result = indexer::index_codebase(&fixture_dir.join("src"), graph_dir)
@@ -46,8 +61,10 @@ fn build_fixture_graph(fixture_dir: &std::path::Path, graph_dir: &std::path::Pat
     let store = GraphStore::open_or_create(graph_dir).unwrap();
     let _ = resolver::resolve_graph(&store);
     let _ = clustering::cluster_graph(&store, 1.0);
-    let output_dir = graph_dir.parent().unwrap();
-    let _ = search::build_search_index(&store, output_dir);
+    if build_index {
+        let output_dir = graph_dir.parent().unwrap();
+        let _ = search::build_search_index(&store, output_dir);
+    }
 }
 
 fn stage_fake_verified(output_dir: &std::path::Path, run_id: &str, finding_id: &str) {
@@ -169,13 +186,21 @@ fn test_prepare_prd_input_end_to_end() {
     let v: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(v["run_id"], run_id);
     assert_eq!(v["finding_id"], finding_id);
-    // Bumped by issue #14: matched_symbols/candidate_symbols split + per-symbol
-    // match_mode/confidence (additive, see prd_input::PREPARER_VERSION doc).
-    assert_eq!(v["preparer_version"], "1.1.0");
+    // Bumped by issue #18: prd_context now reports search_backend (additive,
+    // see prd_input::PREPARER_VERSION doc). Issue #14 bumped 1.0.0->1.1.0.
+    assert_eq!(v["preparer_version"], "1.2.0");
     assert!(v["prd_context"]["finding_summary"]
         .as_str()
         .unwrap()
         .contains("handle_tool_call"));
+
+    // issue #18: build_fixture_graph calls search::build_search_index, so
+    // this run must have actually used the hybrid BM25/vector index rather
+    // than silently falling back to substring search.
+    assert_eq!(
+        v["prd_context"]["search_backend"], "hybrid",
+        "a fixture with a built search index must report search_backend: hybrid"
+    );
 
     // matched_symbols should contain at least handle_tool_call.
     let ms = v["prd_context"]["matched_symbols"].as_array().unwrap();
@@ -319,6 +344,59 @@ fn test_prepare_prd_input_feature_mode_no_finding() {
         ms.iter()
             .any(|m| m["name"].as_str() == Some("handle_tool_call")),
         "expected handle_tool_call grounded from feature text; got {:?}",
+        ms.iter().map(|m| m["name"].clone()).collect::<Vec<_>>()
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+// issue #18: when no search index exists next to graph_path, prepare must
+// still succeed, using the explicit (logged, see prd_input::mod's
+// eprintln!) substring fallback — never silently and never erroring out.
+#[test]
+fn test_prepare_prd_input_falls_back_to_substring_without_index() {
+    let root = tmp("no_index");
+    let _ = fs::remove_dir_all(&root);
+
+    let fixture_dir = root.join("fixture");
+    let graph_dir = root.join("graph");
+    build_fixture_graph_no_index(&fixture_dir, &graph_dir);
+    assert!(
+        !graph_dir
+            .parent()
+            .unwrap()
+            .join("search_index")
+            .exists(),
+        "test setup: no search_index directory must exist for this fixture"
+    );
+
+    let output_dir = root.join("out");
+    let run_id = "run-noidx";
+    let finding_id = "f-003";
+    stage_fake_verified(&output_dir, run_id, finding_id);
+
+    let args = PrdInputArgs {
+        run_id: run_id.to_string(),
+        finding_id: Some(finding_id.to_string()),
+        feature_description: None,
+        output_dir: output_dir.clone(),
+        graph_path: graph_dir.clone(),
+    };
+    let outcome = prd_input::prepare(&args, "2026-04-11T00:04:00Z".into())
+        .expect("prepare must succeed even without a search index");
+
+    let raw = fs::read_to_string(&outcome.artifact_path).unwrap();
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        v["prd_context"]["search_backend"], "substring_fallback",
+        "no search_index on disk must report search_backend: substring_fallback"
+    );
+    // Grounding must still work via the substring path.
+    let ms = v["prd_context"]["matched_symbols"].as_array().unwrap();
+    assert!(
+        ms.iter()
+            .any(|m| m["name"].as_str() == Some("handle_tool_call")),
+        "substring fallback must still ground handle_tool_call; got {:?}",
         ms.iter().map(|m| m["name"].clone()).collect::<Vec<_>>()
     );
 
