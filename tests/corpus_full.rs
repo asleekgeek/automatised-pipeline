@@ -166,7 +166,10 @@ fn index_target(target_root: &Path, graph_path: &Path) -> Result<(), String> {
     // Mirror the target directory tree into a tempdir before indexing so
     // the file_id (relative_path-from-root) matches the JSON's rel_path.
     indexer::index_codebase_with_language(
-        target_root, graph_path, Some(Language::Python), indexer::DependencyScope::None,
+        target_root,
+        graph_path,
+        Some(Language::Python),
+        indexer::DependencyScope::None,
     )?;
     let store = GraphStore::open_or_create(graph_path)?;
     let _ = resolver::resolve_graph(&store);
@@ -175,9 +178,7 @@ fn index_target(target_root: &Path, graph_path: &Path) -> Result<(), String> {
 
 fn run_corpus(corpus_path: &str) {
     if !opt_in() {
-        eprintln!(
-            "[skipped] corpus_full {corpus_path} — set CORTEX_FULL_CORPUS=1 to run"
-        );
+        eprintln!("[skipped] corpus_full {corpus_path} — set CORTEX_FULL_CORPUS=1 to run");
         return;
     }
     let corpus_text = fs::read_to_string(corpus_path)
@@ -192,14 +193,20 @@ fn run_corpus(corpus_path: &str) {
         target_root.display()
     );
 
-    let tmp = std::env::temp_dir().join(format!(
-        "corpus_full_{}_{}",
-        target_root
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "root".to_string()),
-        std::process::id()
-    ));
+    // issue #25 audit: process::id()-based naming collides across processes
+    // under PID reuse (observed under back-to-back soak runs). tempfile's
+    // Builder allocates a cryptographically-random suffix instead, which
+    // does not depend on or repeat across OS PIDs; `.keep()` hands the path
+    // to this test's own manual cleanup below instead of auto-deleting it.
+    let target_tag = target_root
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "root".to_string());
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("corpus_full_{target_tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("mkdir tempdir");
     let graph_path = tmp.join("graph.lbug");
@@ -214,9 +221,7 @@ fn run_corpus(corpus_path: &str) {
     let mut checked = 0usize;
     for f in &corpus.files {
         let actual = actuals.get(&f.rel_path).cloned().unwrap_or_default();
-        let want = (
-            f.imports, f.constants, f.functions, f.classes, f.methods,
-        );
+        let want = (f.imports, f.constants, f.functions, f.classes, f.methods);
         let got = (
             actual.imports,
             actual.constants,
@@ -232,18 +237,21 @@ fn run_corpus(corpus_path: &str) {
                     "MISMATCH {}: \
                      imports={}/{} constants={}/{} functions={}/{} classes={}/{} methods={}/{}",
                     f.rel_path,
-                    actual.imports, f.imports,
-                    actual.constants, f.constants,
-                    actual.functions, f.functions,
-                    actual.classes, f.classes,
-                    actual.methods, f.methods,
+                    actual.imports,
+                    f.imports,
+                    actual.constants,
+                    f.constants,
+                    actual.functions,
+                    f.functions,
+                    actual.classes,
+                    f.classes,
+                    actual.methods,
+                    f.methods,
                 );
             }
         }
     }
-    println!(
-        "\nCorpus {corpus_path}: checked={checked} failures={failures}",
-    );
+    println!("\nCorpus {corpus_path}: checked={checked} failures={failures}",);
     assert_eq!(
         failures, 0,
         "{} of {} files in {} failed structural-count parity. \

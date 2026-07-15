@@ -1,10 +1,9 @@
 // parser::c::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     let mut cursor = parent.walk();
@@ -32,7 +31,6 @@ pub(crate) fn extract_top(ctx: &mut Ctx, parent: Node, scope: &str) {
     }
 }
 
-
 pub(super) fn is_function_prototype(node: Node) -> bool {
     let mut cursor = node.walk();
     for c in node.children(&mut cursor) {
@@ -52,7 +50,6 @@ pub(super) fn is_function_prototype(node: Node) -> bool {
     false
 }
 
-
 pub(super) fn find_identifier(source: &str, node: Node) -> String {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
@@ -66,7 +63,6 @@ pub(super) fn find_identifier(source: &str, node: Node) -> String {
     }
     String::new()
 }
-
 
 pub(super) fn extract_struct(ctx: &mut Ctx, node: Node, scope: &str, label: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -101,7 +97,6 @@ pub(super) fn extract_struct(ctx: &mut Ctx, node: Node, scope: &str, label: &str
         extract_struct_fields(ctx, body, &qn);
     }
 }
-
 
 /// Emits Field nodes + HasField edges for each field_declaration in a
 /// field_declaration_list. The field name is the first `field_identifier`
@@ -159,7 +154,6 @@ pub(super) fn extract_struct_fields(ctx: &mut Ctx, body: Node, owner_qn: &str) {
     }
 }
 
-
 /// Finds the first `field_identifier` anywhere under `node` (the field name,
 /// unwrapping pointer/array/function declarators).
 pub(super) fn find_field_identifier(source: &str, node: Node) -> String {
@@ -175,7 +169,6 @@ pub(super) fn find_field_identifier(source: &str, node: Node) -> String {
     }
     String::new()
 }
-
 
 pub(super) fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -230,7 +223,6 @@ pub(super) fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
         }
     }
 }
-
 
 pub(super) fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);

@@ -1,10 +1,9 @@
 // parser::objc::extract::g3 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 /// The declared alias name of a typedef — the `type_identifier` reached through
 /// the `declarator` field (unwrapping pointer/array declarators). Falls back to
@@ -24,7 +23,6 @@ pub(super) fn find_c_typedef_name(source: &str, node: Node) -> String {
     }
     last
 }
-
 
 pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
@@ -59,7 +57,6 @@ pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
 pub(super) fn extract_module_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
@@ -87,7 +84,6 @@ pub(super) fn extract_module_import(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: cleaned,
     });
 }
-
 
 pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
@@ -122,7 +118,6 @@ pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
         }
     }
 }
-
 
 pub(super) fn emit_call(ctx: &mut Ctx, n: Node, caller_qn: &str, callee: &str) {
     if callee.is_empty()

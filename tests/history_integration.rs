@@ -16,7 +16,8 @@ use std::process::Command;
 
 fn git(repo: &Path, args: &[&str]) {
     let status = Command::new("git")
-        .arg("-C").arg(repo)
+        .arg("-C")
+        .arg(repo)
         .args(args)
         .status()
         .expect("git must be available");
@@ -25,7 +26,8 @@ fn git(repo: &Path, args: &[&str]) {
 
 fn count(store: &GraphStore, cypher: &str) -> u64 {
     let qr = store.execute_query(cypher).unwrap();
-    qr.rows.first()
+    qr.rows
+        .first()
         .and_then(|r| r.first())
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0)
@@ -60,7 +62,13 @@ pub fn gamma() -> i32 {
 
 #[test]
 fn test_index_history_builds_traversable_version_spine() {
-    let repo = std::env::temp_dir().join(format!("history_it_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let repo = tempfile::Builder::new()
+        .prefix("history_it_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&repo);
     let src = repo.join("src");
     std::fs::create_dir_all(&src).unwrap();
@@ -87,29 +95,45 @@ fn test_index_history_builds_traversable_version_spine() {
 
     // --- Ingest history ----------------------------------------------------
     let result = history::index_history(&store, &repo, None).expect("index_history");
-    assert_eq!(result.commits, 2, "two commits expected, got {}", result.commits);
+    assert_eq!(
+        result.commits, 2,
+        "two commits expected, got {}",
+        result.commits
+    );
     assert!(result.versions > 0, "version nodes must be created");
 
     // Commit lineage: commit2 -PreviousVersion-> commit1.
     assert_eq!(
-        count(&store, "MATCH ()-[r:PreviousVersion_Commit_Commit]->() RETURN count(r)"),
+        count(
+            &store,
+            "MATCH ()-[r:PreviousVersion_Commit_Commit]->() RETURN count(r)"
+        ),
         1,
         "exactly one commit-ancestry edge expected"
     );
 
     // Every Version points to a Commit (ChangedIn) and to an entity (VersionOf).
     assert!(
-        count(&store, "MATCH ()-[r:ChangedIn_Version_Commit]->() RETURN count(r)") > 0,
+        count(
+            &store,
+            "MATCH ()-[r:ChangedIn_Version_Commit]->() RETURN count(r)"
+        ) > 0,
         "ChangedIn edges must exist"
     );
     assert!(
-        count(&store, "MATCH ()-[r:VersionOf_Version_File]->() RETURN count(r)") > 0,
+        count(
+            &store,
+            "MATCH ()-[r:VersionOf_Version_File]->() RETURN count(r)"
+        ) > 0,
         "VersionOf(File) edges must exist"
     );
 
     // src/lib.rs changed in BOTH commits, so its versions chain.
     assert!(
-        count(&store, "MATCH ()-[r:PreviousVersion_Version_Version]->() RETURN count(r)") > 0,
+        count(
+            &store,
+            "MATCH ()-[r:PreviousVersion_Version_Version]->() RETURN count(r)"
+        ) > 0,
         "an entity changed in two commits must have a PreviousVersion chain"
     );
 
@@ -124,21 +148,25 @@ fn test_index_history_builds_traversable_version_spine() {
         "src/lib.rs should have >=2 versions across commits, got {}",
         fwd.rows.len()
     );
-    let messages: Vec<&str> = fwd.rows.iter().filter_map(|r| r.first().map(|s| s.as_str())).collect();
+    let messages: Vec<&str> = fwd
+        .rows
+        .iter()
+        .filter_map(|r| r.first().map(|s| s.as_str()))
+        .collect();
     assert!(
         messages.iter().any(|m| m.contains("initial")),
         "lib.rs history must include the initial commit; got {messages:?}"
     );
 
     // --- Reverse traversal: Commit -> the entities it changed --------------
-    let rev = store.execute_query(
-        "MATCH (c:Commit)<-[:ChangedIn_Version_Commit]-(v:Version) \
+    let rev = store
+        .execute_query(
+            "MATCH (c:Commit)<-[:ChangedIn_Version_Commit]-(v:Version) \
          WHERE c.message = 'change beta, add gamma' \
-         RETURN v.qualified_name, v.entity_kind"
-    ).unwrap();
-    let changed: Vec<String> = rev.rows.iter()
-        .filter_map(|r| r.first().cloned())
-        .collect();
+         RETURN v.qualified_name, v.entity_kind",
+        )
+        .unwrap();
+    let changed: Vec<String> = rev.rows.iter().filter_map(|r| r.first().cloned()).collect();
     assert!(
         changed.iter().any(|q| q == "src/extra.rs"),
         "the second commit added src/extra.rs; reverse traversal must surface it, got {changed:?}"
@@ -151,11 +179,13 @@ fn test_index_history_builds_traversable_version_spine() {
     // --- Symbol-level: beta changed in commit 2, alpha did not -------------
     // beta's body changed, so a Version of the beta function must attach to
     // the second commit; alpha (untouched) must not.
-    let sym = store.execute_query(
-        "MATCH (c:Commit)<-[:ChangedIn_Version_Commit]-(v:Version) \
+    let sym = store
+        .execute_query(
+            "MATCH (c:Commit)<-[:ChangedIn_Version_Commit]-(v:Version) \
          WHERE c.message = 'change beta, add gamma' AND v.entity_kind = 'Function' \
-         RETURN v.qualified_name"
-    ).unwrap();
+         RETURN v.qualified_name",
+        )
+        .unwrap();
     let changed_fns: Vec<String> = sym.rows.iter().filter_map(|r| r.first().cloned()).collect();
     assert!(
         changed_fns.iter().any(|q| q.ends_with("::beta")),

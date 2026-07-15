@@ -74,16 +74,14 @@ pub(super) struct WalkOptions {
 /// Symlinks are intentionally NOT followed — source: security hardening (C4).
 /// This prevents a symlink inside the codebase from causing `read_dir` to
 /// silently traverse outside the tree (e.g. to `/etc/passwd` or `~/.ssh`).
-pub(super) fn collect_source_files(
-    root: &Path,
-    opts: WalkOptions,
-) -> Result<Vec<PathBuf>, String> {
+pub(super) fn collect_source_files(root: &Path, opts: WalkOptions) -> Result<Vec<PathBuf>, String> {
     let mut result = Vec::new();
     walk_dir_recursive(root, &mut result, opts, 0)?;
     if result.len() > super::MAX_FILES {
         return Err(format!(
             "too_many_files: codebase contains {} files, MAX_FILES is {}",
-            result.len(), super::MAX_FILES
+            result.len(),
+            super::MAX_FILES
         ));
     }
     result.sort();
@@ -103,8 +101,7 @@ fn walk_dir_recursive(
             dir.display()
         ));
     }
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
         let path = entry.path();
@@ -135,7 +132,9 @@ fn walk_dir_recursive(
             if meta.len() > super::MAX_FILE_BYTES {
                 eprintln!(
                     "indexer: skipping oversized file ({} bytes > MAX_FILE_BYTES {}): {}",
-                    meta.len(), super::MAX_FILE_BYTES, path.display()
+                    meta.len(),
+                    super::MAX_FILE_BYTES,
+                    path.display()
                 );
                 continue;
             }

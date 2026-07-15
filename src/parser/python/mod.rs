@@ -7,12 +7,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 // ---------------------------------------------------------------------------
 // Tree-sitter node type constants
@@ -33,7 +30,6 @@ pub(crate) const TS_DECORATED_DEF: &str = "decorated_definition";
 pub(crate) const TS_EXPRESSION_STMT: &str = "expression_statement";
 pub(crate) const TS_ASSIGNMENT: &str = "assignment";
 pub(crate) const TS_CALL: &str = "call";
-
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -63,7 +59,6 @@ pub fn parse_python_file(source: &str, file_path: &str) -> Result<ParseResult, S
     })
 }
 
-
 // ---------------------------------------------------------------------------
 // Extraction context
 // ---------------------------------------------------------------------------
@@ -80,7 +75,6 @@ pub(crate) struct ExtractCtx<'a> {
     pub(crate) emitted_qns: std::collections::HashSet<String>,
 }
 
-
 impl<'a> ExtractCtx<'a> {
     /// Returns a unique qn: the input if unseen, else `qn@{start_line}` so
     /// every Method/Function node has a unique primary key while preserving
@@ -94,7 +88,6 @@ impl<'a> ExtractCtx<'a> {
         unique
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,14 +106,14 @@ pub(crate) fn python_visibility(name: &str) -> String {
     }
 }
 
-
 /// Checks if a name is UPPER_SNAKE_CASE (Python constant convention).
 pub(crate) fn is_upper_snake_case(name: &str) -> bool {
     !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
         && name.chars().any(|c| c.is_ascii_uppercase())
 }
-
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -184,19 +177,36 @@ class Dog(Animal):
         assert!(names.contains(&"MAX_SIZE"), "missing MAX_SIZE constant");
 
         // Async detection
-        let fetch = result.nodes.iter().find(|n| n.name == "fetch_data").unwrap();
-        let is_async = fetch.properties.iter().find(|(k, _)| k == "is_async").unwrap();
+        let fetch = result
+            .nodes
+            .iter()
+            .find(|n| n.name == "fetch_data")
+            .unwrap();
+        let is_async = fetch
+            .properties
+            .iter()
+            .find(|(k, _)| k == "is_async")
+            .unwrap();
         assert_eq!(is_async.1, "true");
 
         // Extends edge for Dog(Animal)
-        let extends = result.refs.iter()
+        let extends = result
+            .refs
+            .iter()
             .any(|r| r.kind == "Extends" && r.from_qualified_name.contains("Dog"));
         assert!(extends, "missing Extends edge for Dog");
 
         // Glob import
-        let glob_import = result.nodes.iter()
-            .any(|n| n.label == "Import" && n.properties.iter().any(|(k, v)| k == "is_glob" && v == "true"));
-        assert!(glob_import, "missing glob import for 'from typing import *'");
+        let glob_import = result.nodes.iter().any(|n| {
+            n.label == "Import"
+                && n.properties
+                    .iter()
+                    .any(|(k, v)| k == "is_glob" && v == "true")
+        });
+        assert!(
+            glob_import,
+            "missing glob import for 'from typing import *'"
+        );
     }
 
     #[test]
@@ -226,14 +236,21 @@ import os.path
 from collections.abc import Mapping
 "#;
         let result = parse_python_file(src, "test.py").expect("parse");
-        let imports: Vec<_> = result.nodes.iter()
+        let imports: Vec<_> = result
+            .nodes
+            .iter()
             .filter(|n| n.label == "Import")
             .collect();
 
         // os.path should be normalized to os::path
-        let has_normalized = imports.iter().any(|n|
-            n.properties.iter().any(|(k, v)| k == "path" && v == "os::path")
+        let has_normalized = imports.iter().any(|n| {
+            n.properties
+                .iter()
+                .any(|(k, v)| k == "path" && v == "os::path")
+        });
+        assert!(
+            has_normalized,
+            "import paths should be normalized to :: separator"
         );
-        assert!(has_normalized, "import paths should be normalized to :: separator");
     }
 }

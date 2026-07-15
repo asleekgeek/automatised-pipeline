@@ -36,9 +36,11 @@ fn has_ref(r: &ParseResult, kind: &str, to_substr: &str) -> bool {
 }
 
 fn has_prop(r: &ParseResult, key: &str, val: &str) -> bool {
-    r.nodes
-        .iter()
-        .any(|n| n.properties.iter().any(|(k, v)| k.as_str() == key && v.as_str() == val))
+    r.nodes.iter().any(|n| {
+        n.properties
+            .iter()
+            .any(|(k, v)| k.as_str() == key && v.as_str() == val)
+    })
 }
 
 // ---- F3: parse errors are captured ----------------------------------------
@@ -84,16 +86,28 @@ class Dog : Greeter {
 enum class Color { RED, GREEN }
 "#;
     let r = parse(src, "A.kt", Language::Kotlin);
-    assert!(r.parse_errors == 0, "kotlin fixture should parse clean, got {}", r.parse_errors);
-    assert!(has_node(&r, "Import", "List") || count_label(&r, "Import") >= 1,
-            "F1: kotlin import dropped (import_header vs import)");
-    assert!(has_ref(&r, "Extends", "Greeter"),
-            "F1: kotlin supertype Extends dropped (delegation_specifiers is a child, not a field)");
+    assert!(
+        r.parse_errors == 0,
+        "kotlin fixture should parse clean, got {}",
+        r.parse_errors
+    );
+    assert!(
+        has_node(&r, "Import", "List") || count_label(&r, "Import") >= 1,
+        "F1: kotlin import dropped (import_header vs import)"
+    );
+    assert!(
+        has_ref(&r, "Extends", "Greeter"),
+        "F1: kotlin supertype Extends dropped (delegation_specifiers is a child, not a field)"
+    );
     // enum entries RED/GREEN become Variant/Constant nodes reachable via enum_class_body
-    assert!(count_label(&r, "Variant") + count_label(&r, "Constant") >= 2,
-            "F1: kotlin enum entries dropped");
-    assert!(has_ref(&r, "Calls", "bark"),
-            "F1: kotlin call callee dropped (callee field absent in -ng)");
+    assert!(
+        count_label(&r, "Variant") + count_label(&r, "Constant") >= 2,
+        "F1: kotlin enum entries dropped"
+    );
+    assert!(
+        has_ref(&r, "Calls", "bark"),
+        "F1: kotlin call callee dropped (callee field absent in -ng)"
+    );
 }
 
 // ---- F2: ObjC re-keyed to tree-sitter-grammars/tree-sitter-objc 3.0.2 ------
@@ -108,11 +122,15 @@ fn f2_objc_category_and_selector() {
 "#;
     let r = parse(src, "A.m", Language::ObjC);
     // category is now a field on class_interface, not a distinct node kind
-    assert!(has_prop(&r, "is_category", "true") || has_prop(&r, "category", "MyCategory"),
-            "F2: objc category not detected");
+    assert!(
+        has_prop(&r, "is_category", "true") || has_prop(&r, "category", "MyCategory"),
+        "F2: objc category not detected"
+    );
     // full keyword selector, not a degraded fallback fragment
-    assert!(has_node(&r, "Method", "doThingWith"),
-            "F2: objc selector degraded (keyword_declarator not walked)");
+    assert!(
+        has_node(&r, "Method", "doThingWith"),
+        "F2: objc selector degraded (keyword_declarator not walked)"
+    );
 }
 
 #[test]
@@ -124,11 +142,20 @@ enum Dir { NORTH, SOUTH };
 typedef int MyInt;
 "#;
     let r = parse(src, "B.m", Language::ObjC);
-    assert!(has_node(&r, "Struct", "Point"), "F2: embedded C struct dropped");
+    assert!(
+        has_node(&r, "Struct", "Point"),
+        "F2: embedded C struct dropped"
+    );
     // multi-declarator `int x, y;` must yield two fields
-    assert!(count_label(&r, "Field") >= 2, "F2: embedded C multi-declarator fields dropped");
+    assert!(
+        count_label(&r, "Field") >= 2,
+        "F2: embedded C multi-declarator fields dropped"
+    );
     assert!(has_node(&r, "Enum", "Dir"), "F2: embedded C enum dropped");
-    assert!(has_prop(&r, "typedef", "true"), "F2: embedded C typedef dropped");
+    assert!(
+        has_prop(&r, "typedef", "true"),
+        "F2: embedded C typedef dropped"
+    );
 }
 
 // ---- F4: TSX dialect for .tsx / .jsx ---------------------------------------
@@ -137,9 +164,15 @@ typedef int MyInt;
 fn f4_tsx_parses_jsx_clean() {
     let src = "export const App = () => <div className=\"x\">{greet()}</div>;\n";
     let r = parse(src, "App.tsx", Language::TypeScript);
-    assert_eq!(r.parse_errors, 0,
-               "F4: JSX must parse clean under the TSX dialect, got {} errors", r.parse_errors);
-    assert!(has_ref(&r, "Calls", "greet"), "F4: tsx JSX degraded call extraction");
+    assert_eq!(
+        r.parse_errors, 0,
+        "F4: JSX must parse clean under the TSX dialect, got {} errors",
+        r.parse_errors
+    );
+    assert!(
+        has_ref(&r, "Calls", "greet"),
+        "F4: tsx JSX degraded call extraction"
+    );
 }
 
 // ---- F5: C++ inheritance ---------------------------------------------------
@@ -148,8 +181,10 @@ fn f4_tsx_parses_jsx_clean() {
 fn f5_cpp_base_class() {
     let src = "class Base {}; class Derived : public Base { void f(){} };\n";
     let r = parse(src, "a.cpp", Language::Cpp);
-    assert!(has_ref(&r, "Extends", "Base"),
-            "F5: cpp base class Extends dropped (bases field does not exist on class_specifier)");
+    assert!(
+        has_ref(&r, "Extends", "Base"),
+        "F5: cpp base class Extends dropped (bases field does not exist on class_specifier)"
+    );
 }
 
 // ---- F8: Swift members + declaration_kind ----------------------------------
@@ -164,10 +199,19 @@ struct S {
 enum E { case red, green, blue }
 "#;
     let r = parse(src, "S.swift", Language::Swift);
-    assert!(has_prop(&r, "member_kind", "init"), "F8: swift init not extracted");
-    assert!(has_prop(&r, "member_kind", "subscript"), "F8: swift subscript not extracted");
+    assert!(
+        has_prop(&r, "member_kind", "init"),
+        "F8: swift init not extracted"
+    );
+    assert!(
+        has_prop(&r, "member_kind", "subscript"),
+        "F8: swift subscript not extracted"
+    );
     // multi-case `case red, green, blue` must yield three variants
-    assert!(count_label(&r, "Variant") >= 3, "F8: swift multi-case enum entries dropped");
+    assert!(
+        count_label(&r, "Variant") >= 3,
+        "F8: swift multi-case enum entries dropped"
+    );
 }
 
 // ---- F9: Go & C struct fields ----------------------------------------------
@@ -176,14 +220,20 @@ enum E { case red, green, blue }
 fn f9_go_struct_fields() {
     let src = "package p\ntype Point struct {\n\tX, Y int\n}\n";
     let r = parse(src, "p.go", Language::Go);
-    assert!(count_label(&r, "Field") >= 2, "F9: go struct multi-name fields dropped");
+    assert!(
+        count_label(&r, "Field") >= 2,
+        "F9: go struct multi-name fields dropped"
+    );
 }
 
 #[test]
 fn f9_c_struct_fields() {
     let src = "struct Point { int x, y; };\n";
     let r = parse(src, "p.c", Language::C);
-    assert!(count_label(&r, "Field") >= 2, "F9: c struct multi-declarator fields dropped");
+    assert!(
+        count_label(&r, "Field") >= 2,
+        "F9: c struct multi-declarator fields dropped"
+    );
 }
 
 // ---- F10: TS abstract/generator/var + Java enum constants ------------------
@@ -192,16 +242,26 @@ fn f9_c_struct_fields() {
 fn f10_ts_abstract_and_generator() {
     let src = "abstract class Shape { abstract area(): number; }\nfunction* gen() { yield 1; }\n";
     let r = parse(src, "t.ts", Language::TypeScript);
-    assert!(has_node(&r, "Struct", "Shape") || has_node(&r, "Trait", "Shape") || count_label(&r, "Struct") + count_label(&r, "Trait") >= 1,
-            "F10: ts abstract class dropped");
-    assert!(has_node(&r, "Function", "gen"), "F10: ts generator function dropped");
+    assert!(
+        has_node(&r, "Struct", "Shape")
+            || has_node(&r, "Trait", "Shape")
+            || count_label(&r, "Struct") + count_label(&r, "Trait") >= 1,
+        "F10: ts abstract class dropped"
+    );
+    assert!(
+        has_node(&r, "Function", "gen"),
+        "F10: ts generator function dropped"
+    );
 }
 
 #[test]
 fn f10_java_enum_constants() {
     let src = "enum Color { RED, GREEN, BLUE }\n";
     let r = parse(src, "C.java", Language::Java);
-    assert!(count_label(&r, "Variant") >= 3, "F10: java enum constants dropped");
+    assert!(
+        count_label(&r, "Variant") >= 3,
+        "F10: java enum constants dropped"
+    );
 }
 
 // ---- F11: Rust statics / unions / macros / extern crate --------------------
@@ -214,9 +274,15 @@ union U { a: u32, b: f32 }
 macro_rules! my_macro { () => {}; }
 "#;
     let r = parse(src, "r.rs", Language::Rust);
-    assert!(has_node(&r, "Constant", "COUNT"), "F11: rust static_item dropped");
+    assert!(
+        has_node(&r, "Constant", "COUNT"),
+        "F11: rust static_item dropped"
+    );
     assert!(has_node(&r, "Struct", "U"), "F11: rust union_item dropped");
-    assert!(has_prop(&r, "is_macro", "true"), "F11: rust macro_definition dropped");
+    assert!(
+        has_prop(&r, "is_macro", "true"),
+        "F11: rust macro_definition dropped"
+    );
 }
 
 // ---- Universal: every supported language yields SOME symbols on real code --
@@ -239,7 +305,14 @@ fn universal_all_languages_extract_symbols() {
     ];
     for (src, path, lang) in cases {
         let r = parse(src, path, *lang);
-        assert_eq!(r.parse_errors, 0, "{path}: should parse clean, got {} errors", r.parse_errors);
-        assert!(!r.nodes.is_empty(), "{path}: no nodes extracted for {lang:?}");
+        assert_eq!(
+            r.parse_errors, 0,
+            "{path}: should parse clean, got {} errors",
+            r.parse_errors
+        );
+        assert!(
+            !r.nodes.is_empty(),
+            "{path}: no nodes extracted for {lang:?}"
+        );
     }
 }

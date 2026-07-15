@@ -11,71 +11,106 @@ use std::path::Path;
 #[test]
 fn test_multilang_auto_index() {
     let fixture = Path::new("tests/fixtures/multilang");
-    let tmp = std::env::temp_dir()
-        .join(format!("multilang_test_{}", std::process::id()));
+    // issue #25 audit: process::id() is IDENTICAL for every #[test] in this
+    // binary (all run as threads of one process) and can additionally repeat
+    // across process invocations under PID reuse (observed: this test and
+    // test_language_filter_rust_only both hit "duplicated primary key"
+    // errors under a back-to-back soak — a leftover DB from a prior process
+    // that got the same recycled PID). tempfile's random suffix depends on
+    // neither the thread nor the OS PID.
+    let tmp = tempfile::Builder::new()
+        .prefix("multilang_test_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
 
-    let result = indexer::index_codebase_with_language(
-        fixture, &tmp, None, indexer::DependencyScope::None,
-    )
-    .expect("index should succeed");
+    let result =
+        indexer::index_codebase_with_language(fixture, &tmp, None, indexer::DependencyScope::None)
+            .expect("index should succeed");
 
     assert_eq!(result.files_indexed, 3, "should index 3 files (rs, py, ts)");
-    assert!(result.node_count > 15, "should have many nodes, got {}", result.node_count);
-    assert!(result.edge_count > 5, "should have edges, got {}", result.edge_count);
+    assert!(
+        result.node_count > 15,
+        "should have many nodes, got {}",
+        result.node_count
+    );
+    assert!(
+        result.edge_count > 5,
+        "should have edges, got {}",
+        result.edge_count
+    );
 
     // Query the graph for language-specific symbols
     let store = GraphStore::open_or_create(&tmp).unwrap();
 
     // Rust: 3 functions (greet, add, fetch_data) + 1 struct (Config) + 2 fields
-    let rust_fns = store.execute_query(
-        "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.rs' RETURN f.name"
-    ).unwrap();
+    let rust_fns = store
+        .execute_query(
+            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.rs' RETURN f.name",
+        )
+        .unwrap();
     assert!(
         rust_fns.rows.len() >= 3,
-        "should find Rust functions, got {:?}", rust_fns.rows
+        "should find Rust functions, got {:?}",
+        rust_fns.rows
     );
 
-    let rust_structs = store.execute_query(
-        "MATCH (s:Struct) WHERE s.qualified_name STARTS WITH 'sample.rs' RETURN s.name"
-    ).unwrap();
+    let rust_structs = store
+        .execute_query(
+            "MATCH (s:Struct) WHERE s.qualified_name STARTS WITH 'sample.rs' RETURN s.name",
+        )
+        .unwrap();
     assert!(
         rust_structs.rows.len() >= 1,
-        "should find Rust struct Config, got {:?}", rust_structs.rows
+        "should find Rust struct Config, got {:?}",
+        rust_structs.rows
     );
 
     // Python: 2 functions (greet, add) + 1 struct/class (Config) + methods
-    let py_fns = store.execute_query(
-        "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.py' RETURN f.name"
-    ).unwrap();
+    let py_fns = store
+        .execute_query(
+            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.py' RETURN f.name",
+        )
+        .unwrap();
     assert!(
         py_fns.rows.len() >= 2,
-        "should find Python functions, got {:?}", py_fns.rows
+        "should find Python functions, got {:?}",
+        py_fns.rows
     );
 
-    let py_classes = store.execute_query(
-        "MATCH (s:Struct) WHERE s.qualified_name STARTS WITH 'sample.py' RETURN s.name"
-    ).unwrap();
+    let py_classes = store
+        .execute_query(
+            "MATCH (s:Struct) WHERE s.qualified_name STARTS WITH 'sample.py' RETURN s.name",
+        )
+        .unwrap();
     assert!(
         py_classes.rows.len() >= 1,
-        "should find Python class Config (as Struct), got {:?}", py_classes.rows
+        "should find Python class Config (as Struct), got {:?}",
+        py_classes.rows
     );
 
     // TypeScript: function greet + class Config + interface Serializable
-    let ts_fns = store.execute_query(
-        "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.ts' RETURN f.name"
-    ).unwrap();
+    let ts_fns = store
+        .execute_query(
+            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.ts' RETURN f.name",
+        )
+        .unwrap();
     assert!(
         ts_fns.rows.len() >= 1,
-        "should find TypeScript functions, got {:?}", ts_fns.rows
+        "should find TypeScript functions, got {:?}",
+        ts_fns.rows
     );
 
-    let ts_traits = store.execute_query(
-        "MATCH (t:Trait) WHERE t.qualified_name STARTS WITH 'sample.ts' RETURN t.name"
-    ).unwrap();
+    let ts_traits = store
+        .execute_query(
+            "MATCH (t:Trait) WHERE t.qualified_name STARTS WITH 'sample.ts' RETURN t.name",
+        )
+        .unwrap();
     assert!(
         ts_traits.rows.len() >= 1,
-        "should find TypeScript interface (as Trait), got {:?}", ts_traits.rows
+        "should find TypeScript interface (as Trait), got {:?}",
+        ts_traits.rows
     );
 
     // Cleanup
@@ -85,20 +120,31 @@ fn test_multilang_auto_index() {
 #[test]
 fn test_language_filter_rust_only() {
     let fixture = Path::new("tests/fixtures/multilang");
-    let tmp = std::env::temp_dir()
-        .join(format!("multilang_rust_only_{}", std::process::id()));
+    // issue #25 audit: see test_multilang_auto_index, above, for why
+    // process::id() is unsafe here.
+    let tmp = tempfile::Builder::new()
+        .prefix("multilang_rust_only_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
 
     let result = indexer::index_codebase_with_language(
-        fixture, &tmp, Some(Language::Rust), indexer::DependencyScope::None,
-    ).expect("index should succeed");
+        fixture,
+        &tmp,
+        Some(Language::Rust),
+        indexer::DependencyScope::None,
+    )
+    .expect("index should succeed");
 
     assert_eq!(result.files_indexed, 1, "should only index 1 .rs file");
 
     let store = GraphStore::open_or_create(&tmp).unwrap();
-    let py_nodes = store.execute_query(
-        "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.py' RETURN f.name"
-    ).unwrap();
+    let py_nodes = store
+        .execute_query(
+            "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'sample.py' RETURN f.name",
+        )
+        .unwrap();
     assert!(py_nodes.rows.is_empty(), "should NOT have Python nodes");
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -126,23 +172,39 @@ class Dog(Animal):
     def speak(self):
         return "Woof"
 "#;
-    let result = parser::parse_file(src, "test.py", Language::Python)
-        .expect("parse should succeed");
+    let result =
+        parser::parse_file(src, "test.py", Language::Python).expect("parse should succeed");
 
-    let fn_count = result.nodes.iter().filter(|n| n.label == "Function").count();
+    let fn_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.label == "Function")
+        .count();
     let class_count = result.nodes.iter().filter(|n| n.label == "Struct").count();
     let method_count = result.nodes.iter().filter(|n| n.label == "Method").count();
     let import_count = result.nodes.iter().filter(|n| n.label == "Import").count();
-    let const_count = result.nodes.iter().filter(|n| n.label == "Constant").count();
+    let const_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.label == "Constant")
+        .count();
 
     assert!(fn_count >= 1, "should find functions, got {fn_count}");
-    assert!(class_count >= 2, "should find classes (Animal, Dog), got {class_count}");
+    assert!(
+        class_count >= 2,
+        "should find classes (Animal, Dog), got {class_count}"
+    );
     assert!(method_count >= 3, "should find methods, got {method_count}");
     assert!(import_count >= 2, "should find imports, got {import_count}");
-    assert!(const_count >= 1, "should find constant MAX_SIZE, got {const_count}");
+    assert!(
+        const_count >= 1,
+        "should find constant MAX_SIZE, got {const_count}"
+    );
 
     // Extends edge
-    let extends = result.refs.iter()
+    let extends = result
+        .refs
+        .iter()
         .any(|r| r.kind == "Extends" && r.from_qualified_name.contains("Dog"));
     assert!(extends, "Dog should extend Animal");
 }
@@ -183,27 +245,50 @@ export enum Color {
 
 export type Alias = string | number;
 "#;
-    let result = parser::parse_file(src, "test.ts", Language::TypeScript)
-        .expect("parse should succeed");
+    let result =
+        parser::parse_file(src, "test.ts", Language::TypeScript).expect("parse should succeed");
 
-    let fn_count = result.nodes.iter().filter(|n| n.label == "Function").count();
+    let fn_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.label == "Function")
+        .count();
     let class_count = result.nodes.iter().filter(|n| n.label == "Struct").count();
     let trait_count = result.nodes.iter().filter(|n| n.label == "Trait").count();
     let enum_count = result.nodes.iter().filter(|n| n.label == "Enum").count();
-    let type_alias_count = result.nodes.iter().filter(|n| n.label == "TypeAlias").count();
+    let type_alias_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.label == "TypeAlias")
+        .count();
     let import_count = result.nodes.iter().filter(|n| n.label == "Import").count();
-    let const_count = result.nodes.iter().filter(|n| n.label == "Constant").count();
+    let const_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.label == "Constant")
+        .count();
 
     assert!(fn_count >= 1, "should find function greet, got {fn_count}");
-    assert!(class_count >= 2, "should find classes (Animal, Dog), got {class_count}");
-    assert!(trait_count >= 1, "should find interface Serializable, got {trait_count}");
+    assert!(
+        class_count >= 2,
+        "should find classes (Animal, Dog), got {class_count}"
+    );
+    assert!(
+        trait_count >= 1,
+        "should find interface Serializable, got {trait_count}"
+    );
     assert!(enum_count >= 1, "should find enum Color, got {enum_count}");
-    assert!(type_alias_count >= 1, "should find type alias, got {type_alias_count}");
+    assert!(
+        type_alias_count >= 1,
+        "should find type alias, got {type_alias_count}"
+    );
     assert!(import_count >= 1, "should find imports, got {import_count}");
     assert!(const_count >= 1, "should find constant, got {const_count}");
 
     // Extends edge for Dog extends Animal
-    let extends = result.refs.iter()
+    let extends = result
+        .refs
+        .iter()
         .any(|r| r.kind == "Extends" && r.from_qualified_name.contains("Dog"));
     assert!(extends, "Dog should extend Animal");
 }
@@ -262,25 +347,54 @@ typealias Handler = () -> Void
     let result = parser::parse_file(src, "test.swift", Language::Swift)
         .expect("Swift parse should succeed (ABI 15 runtime required)");
 
-    let fn_count = result.nodes.iter().filter(|n| n.label == "Function").count();
+    let fn_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.label == "Function")
+        .count();
     let struct_count = result.nodes.iter().filter(|n| n.label == "Struct").count();
     let enum_count = result.nodes.iter().filter(|n| n.label == "Enum").count();
     let variant_count = result.nodes.iter().filter(|n| n.label == "Variant").count();
     let trait_count = result.nodes.iter().filter(|n| n.label == "Trait").count();
     let method_count = result.nodes.iter().filter(|n| n.label == "Method").count();
-    let const_count = result.nodes.iter().filter(|n| n.label == "Constant").count();
+    let const_count = result
+        .nodes
+        .iter()
+        .filter(|n| n.label == "Constant")
+        .count();
     let import_count = result.nodes.iter().filter(|n| n.label == "Import").count();
 
-    assert!(import_count >= 2, "should find imports (Foundation, UIKit), got {import_count}");
-    assert!(fn_count >= 1, "should find top-level func greet, got {fn_count}");
-    assert!(struct_count >= 2, "should find struct Point + class Animal (as Struct), got {struct_count}");
+    assert!(
+        import_count >= 2,
+        "should find imports (Foundation, UIKit), got {import_count}"
+    );
+    assert!(
+        fn_count >= 1,
+        "should find top-level func greet, got {fn_count}"
+    );
+    assert!(
+        struct_count >= 2,
+        "should find struct Point + class Animal (as Struct), got {struct_count}"
+    );
     assert!(enum_count >= 1, "should find enum Color, got {enum_count}");
-    assert!(trait_count >= 1, "should find protocol Serializable (as Trait), got {trait_count}");
-    assert!(variant_count >= 3, "should find enum cases red/green/blue, got {variant_count}");
+    assert!(
+        trait_count >= 1,
+        "should find protocol Serializable (as Trait), got {trait_count}"
+    );
+    assert!(
+        variant_count >= 3,
+        "should find enum cases red/green/blue, got {variant_count}"
+    );
     assert!(method_count >= 3, "should find methods (distance/speak/init/deinit/subscript/describe/serialize), got {method_count}");
-    assert!(const_count >= 3, "should find properties/typealias (x/y/name/maxRetries/Handler), got {const_count}");
+    assert!(
+        const_count >= 3,
+        "should find properties/typealias (x/y/name/maxRetries/Handler), got {const_count}"
+    );
 
     // Call extraction: distance() calls compute, deinit calls cleanup.
     let has_call = result.refs.iter().any(|r| r.kind == "Calls");
-    assert!(has_call, "should extract at least one Calls edge (compute/cleanup)");
+    assert!(
+        has_call,
+        "should extract at least one Calls edge (compute/cleanup)"
+    );
 }

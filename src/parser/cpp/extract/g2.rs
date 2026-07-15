@@ -1,10 +1,9 @@
 // parser::cpp::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn extract_member_proto(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);
@@ -35,7 +34,6 @@ pub(super) fn extract_member_proto(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
 pub(super) fn extract_member_field(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);
     if name.is_empty() {
@@ -58,7 +56,6 @@ pub(super) fn extract_member_field(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
 pub(super) fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_identifier(ctx.source, node);
     if name.is_empty() {
@@ -80,7 +77,6 @@ pub(super) fn extract_typedef(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: qn,
     });
 }
-
 
 pub(super) fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
@@ -118,7 +114,6 @@ pub(super) fn extract_include(ctx: &mut Ctx, node: Node, scope: &str) {
     let _ = LABEL_TRAIT;
 }
 
-
 pub(super) fn extract_using(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     let cleaned = text
@@ -147,7 +142,6 @@ pub(super) fn extract_using(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: cleaned,
     });
 }
-
 
 pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];

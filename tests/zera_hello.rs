@@ -38,8 +38,18 @@ fn opt_in() -> bool {
 /// refactor). One source of truth, no parallel implementation.
 fn graph_state_from_store(store: &GraphStore) -> GraphState {
     let labels = &[
-        "File", "Directory", "Module", "Function", "Method", "Struct",
-        "Enum", "Variant", "Trait", "Constant", "TypeAlias", "Import",
+        "File",
+        "Directory",
+        "Module",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Variant",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Import",
         "CallSite",
     ];
     let nodes: Vec<NodeRef> = iter_nodes_by_labels(store, labels)
@@ -321,14 +331,23 @@ fn zera_hello_on_cortex_mcp_server() {
     let target = PathBuf::from("/Users/cdeust/Developments/Cortex/mcp_server");
     assert!(target.is_dir(), "Cortex not at {}", target.display());
 
-    let tmp = std::env::temp_dir().join(format!("zera_s1_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("zera_s1_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("mkdir");
     let graph_path = tmp.join("graph.lbug");
 
     let t0 = Instant::now();
     indexer::index_codebase_with_language(
-        &target, &graph_path, Some(Language::Python), indexer::DependencyScope::None,
+        &target,
+        &graph_path,
+        Some(Language::Python),
+        indexer::DependencyScope::None,
     )
     .expect("index");
     let store = GraphStore::open_or_create(&graph_path).expect("open");

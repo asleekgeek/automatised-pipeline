@@ -1,10 +1,9 @@
 // parser::java::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn extract_field(ctx: &mut Ctx, node: Node, scope: &str) {
     let mut cursor = node.walk();
@@ -33,7 +32,6 @@ pub(super) fn extract_field(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
-
 pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
     // ``import a.b.C;`` or ``import static a.b.C.method;``
@@ -49,11 +47,7 @@ pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     if cleaned.is_empty() {
         return;
     }
-    let name = cleaned
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let name = cleaned.rsplit('.').next().unwrap_or("").to_string();
     let qn = qual(scope, &format!("import:{cleaned}"));
     ctx.nodes.push(ExtractedNode {
         label: LABEL_IMPORT.to_string(),
@@ -70,7 +64,6 @@ pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: cleaned,
     });
 }
-
 
 pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];

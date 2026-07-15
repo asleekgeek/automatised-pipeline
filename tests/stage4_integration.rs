@@ -34,7 +34,14 @@ pub struct Tool {
 "#;
 
 fn tmp(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("stage4_{tag}_{}", std::process::id()))
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (tag is kept as a
+    // human-readable prefix for debuggability, not for uniqueness).
+    tempfile::Builder::new()
+        .prefix(&format!("stage4_{tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep()
 }
 
 fn build_fixture_graph(fixture_dir: &std::path::Path, graph_dir: &std::path::Path) {
@@ -55,8 +62,7 @@ fn build_fixture_graph_inner(
 ) {
     fs::create_dir_all(fixture_dir.join("src")).unwrap();
     fs::write(fixture_dir.join("src/main.rs"), FIXTURE_MAIN).unwrap();
-    let result = indexer::index_codebase(&fixture_dir.join("src"), graph_dir)
-        .expect("index");
+    let result = indexer::index_codebase(&fixture_dir.join("src"), graph_dir).expect("index");
     assert!(result.node_count > 0);
     let store = GraphStore::open_or_create(graph_dir).unwrap();
     let _ = resolver::resolve_graph(&store);
@@ -147,10 +153,7 @@ fn stage_fake_verified(output_dir: &std::path::Path, run_id: &str, finding_id: &
         }
     });
     fs::write(
-        output_dir
-            .join("runs")
-            .join(run_id)
-            .join("index.json"),
+        output_dir.join("runs").join(run_id).join("index.json"),
         serde_json::to_vec_pretty(&index).unwrap(),
     )
     .unwrap();
@@ -177,8 +180,8 @@ fn test_prepare_prd_input_end_to_end() {
         output_dir: output_dir.clone(),
         graph_path: graph_dir.clone(),
     };
-    let outcome = prd_input::prepare(&args, "2026-04-11T00:02:00Z".into())
-        .expect("prepare must succeed");
+    let outcome =
+        prd_input::prepare(&args, "2026-04-11T00:02:00Z".into()).expect("prepare must succeed");
 
     assert!(outcome.artifact_path.exists(), "artifact must be on disk");
 
@@ -212,13 +215,8 @@ fn test_prepare_prd_input_end_to_end() {
     );
 
     // index.json must have stage4 markers.
-    let idx_raw = fs::read_to_string(
-        output_dir
-            .join("runs")
-            .join(run_id)
-            .join("index.json"),
-    )
-    .unwrap();
+    let idx_raw =
+        fs::read_to_string(output_dir.join("runs").join(run_id).join("index.json")).unwrap();
     let idx: Value = serde_json::from_str(&idx_raw).unwrap();
     assert_eq!(idx["stage4_prepared_at"], "2026-04-11T00:02:00Z");
     assert!(idx["stage4_path"]
@@ -317,9 +315,7 @@ fn test_prepare_prd_input_feature_mode_no_finding() {
     let args = PrdInputArgs {
         run_id: "adhoc".to_string(),
         finding_id: None,
-        feature_description: Some(
-            "Harden handle_tool_call to reject unknown tools".to_string(),
-        ),
+        feature_description: Some("Harden handle_tool_call to reject unknown tools".to_string()),
         output_dir: output_dir.clone(),
         graph_path: graph_dir.clone(),
     };
@@ -329,7 +325,10 @@ fn test_prepare_prd_input_feature_mode_no_finding() {
     assert!(outcome.artifact_path.exists(), "artifact must be on disk");
     // Written under features/, not findings/.
     assert!(
-        outcome.artifact_path.to_string_lossy().contains("/features/"),
+        outcome
+            .artifact_path
+            .to_string_lossy()
+            .contains("/features/"),
         "feature-mode artifact should live under features/: {:?}",
         outcome.artifact_path
     );
@@ -362,11 +361,7 @@ fn test_prepare_prd_input_falls_back_to_substring_without_index() {
     let graph_dir = root.join("graph");
     build_fixture_graph_no_index(&fixture_dir, &graph_dir);
     assert!(
-        !graph_dir
-            .parent()
-            .unwrap()
-            .join("search_index")
-            .exists(),
+        !graph_dir.parent().unwrap().join("search_index").exists(),
         "test setup: no search_index directory must exist for this fixture"
     );
 

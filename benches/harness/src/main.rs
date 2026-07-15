@@ -76,7 +76,10 @@ fn main() -> ExitCode {
 
     let mut runs = Vec::new();
     for corpus in &corpora {
-        eprintln!("[bench] running corpus={} lang={}", corpus.name, corpus.language);
+        eprintln!(
+            "[bench] running corpus={} lang={}",
+            corpus.name, corpus.language
+        );
         let run = runner::run_corpus(corpus, &binary);
         runs.push(run);
     }
@@ -103,9 +106,8 @@ fn main() -> ExitCode {
 /// Walks up from CARGO_MANIFEST_DIR to find the repo root (the one with
 /// `Cargo.toml` containing `[workspace]`). Falls back to two levels up.
 fn detect_repo_root() -> PathBuf {
-    let manifest_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")); // benches/harness
-    // benches/harness -> benches -> repo_root
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")); // benches/harness
+                                                                  // benches/harness -> benches -> repo_root
     manifest_dir
         .parent()
         .and_then(|p| p.parent())

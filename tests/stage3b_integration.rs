@@ -65,10 +65,13 @@ impl Processor for Config {
 
 #[test]
 fn test_resolution_pipeline() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_integration_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_integration_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     // -- Set up fixture project --
@@ -79,10 +82,8 @@ fn test_resolution_pipeline() {
 
     // -- Index the fixture (3a) --
     let graph_dir = tmp_root.join("graph");
-    let idx_result = indexer::index_codebase(
-        &fixture_dir.join("src"),
-        &graph_dir,
-    ).expect("index_codebase should succeed");
+    let idx_result = indexer::index_codebase(&fixture_dir.join("src"), &graph_dir)
+        .expect("index_codebase should succeed");
 
     assert_eq!(idx_result.files_indexed, 2);
     assert!(idx_result.node_count > 0);
@@ -96,7 +97,9 @@ fn test_resolution_pipeline() {
     assert!(
         res.imports_resolved > 0 || res.calls_resolved > 0 || res.uses_resolved > 0,
         "expected at least one resolution edge, got: imports={}, calls={}, uses={}",
-        res.imports_resolved, res.calls_resolved, res.uses_resolved
+        res.imports_resolved,
+        res.calls_resolved,
+        res.uses_resolved
     );
     assert!(res.total_edges > 0, "expected total_edges > 0");
 
@@ -112,9 +115,9 @@ fn test_resolution_pipeline() {
     );
 
     // -- Verify call-site nodes exist --
-    let cs_qr = store.execute_query(
-        "MATCH (cs:CallSite) RETURN count(cs)"
-    ).expect("count call sites");
+    let cs_qr = store
+        .execute_query("MATCH (cs:CallSite) RETURN count(cs)")
+        .expect("count call sites");
     let cs_count: u64 = cs_qr.rows[0][0].parse().unwrap_or(0);
     assert!(
         cs_count > 0,
@@ -126,8 +129,12 @@ fn test_resolution_pipeline() {
     // For this small fixture, most refs should resolve.
     eprintln!(
         "resolution stats: imports={}, calls={}, impls={}, extends={}, uses={}, unresolved={}",
-        res.imports_resolved, res.calls_resolved, res.impls_resolved,
-        res.extends_resolved, res.uses_resolved, res.unresolved.len()
+        res.imports_resolved,
+        res.calls_resolved,
+        res.impls_resolved,
+        res.extends_resolved,
+        res.uses_resolved,
+        res.unresolved.len()
     );
 
     // -- Cleanup --
@@ -136,15 +143,20 @@ fn test_resolution_pipeline() {
 
 #[test]
 fn test_field_type_uses_resolution() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_uses_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_uses_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture");
     fs::create_dir_all(fixture_dir.join("src")).unwrap();
-    fs::write(fixture_dir.join("src/lib.rs"), r#"
+    fs::write(
+        fixture_dir.join("src/lib.rs"),
+        r#"
 pub struct Inner {
     pub value: i32,
 }
@@ -153,27 +165,29 @@ pub struct Outer {
     pub child: Inner,
     pub name: String,
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let graph_dir = tmp_root.join("graph");
-    indexer::index_codebase(
-        &fixture_dir.join("src"),
-        &graph_dir,
-    ).expect("index");
+    indexer::index_codebase(&fixture_dir.join("src"), &graph_dir).expect("index");
 
     let store = GraphStore::open_or_create(&graph_dir).expect("open");
     let res = resolver::resolve_graph(&store).expect("resolve");
 
     // The `child: Inner` field should create a Uses_Field_Struct edge
-    let qr = store.execute_query(
-        "MATCH (f:Field)-[r:Uses_Field_Struct]->(s:Struct) \
-         RETURN f.id, s.name"
-    ).expect("query uses edges");
+    let qr = store
+        .execute_query(
+            "MATCH (f:Field)-[r:Uses_Field_Struct]->(s:Struct) \
+         RETURN f.id, s.name",
+        )
+        .expect("query uses edges");
 
     assert!(
         !qr.rows.is_empty(),
         "expected Uses_Field_Struct edge for child: Inner, got none. \
-         Resolution stats: uses={}", res.uses_resolved
+         Resolution stats: uses={}",
+        res.uses_resolved
     );
 
     let _ = fs::remove_dir_all(&tmp_root);
@@ -190,28 +204,32 @@ pub struct Outer {
 // analyze_codebase call aborted with status="error".
 #[test]
 fn test_field_type_alias_uses_resolution() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_uses_typealias_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_uses_typealias_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture");
     fs::create_dir_all(fixture_dir.join("src")).unwrap();
-    fs::write(fixture_dir.join("src/lib.rs"), r#"
+    fs::write(
+        fixture_dir.join("src/lib.rs"),
+        r#"
 pub type Payload = Vec<u8>;
 
 pub struct Envelope {
     pub body: Payload,
     pub label: String,
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let graph_dir = tmp_root.join("graph");
-    indexer::index_codebase(
-        &fixture_dir.join("src"),
-        &graph_dir,
-    ).expect("index");
+    indexer::index_codebase(&fixture_dir.join("src"), &graph_dir).expect("index");
 
     let store = GraphStore::open_or_create(&graph_dir).expect("open");
     let res = resolver::resolve_graph(&store).expect("resolve");
@@ -219,15 +237,18 @@ pub struct Envelope {
     // The `body: Payload` field must produce a Uses_Field_TypeAlias edge.
     // If the schema / indexer / main.rs dispatch don't register that
     // edge table, resolve_graph returns an error before this point.
-    let qr = store.execute_query(
-        "MATCH (f:Field)-[r:Uses_Field_TypeAlias]->(t:TypeAlias) \
-         RETURN f.id, t.name"
-    ).expect("query Uses_Field_TypeAlias edges");
+    let qr = store
+        .execute_query(
+            "MATCH (f:Field)-[r:Uses_Field_TypeAlias]->(t:TypeAlias) \
+         RETURN f.id, t.name",
+        )
+        .expect("query Uses_Field_TypeAlias edges");
 
     assert!(
         !qr.rows.is_empty(),
         "expected Uses_Field_TypeAlias edge for body: Payload, got none. \
-         Resolution stats: uses={}", res.uses_resolved
+         Resolution stats: uses={}",
+        res.uses_resolved
     );
 
     let _ = fs::remove_dir_all(&tmp_root);
@@ -259,9 +280,13 @@ impl Greet for Robot {
 
 #[test]
 fn test_implements_resolution_declared() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_impl_{}", std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_impl_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
     let src = tmp_root.join("src");
     fs::create_dir_all(&src).unwrap();
@@ -273,23 +298,33 @@ fn test_implements_resolution_declared() {
     let res = resolver::resolve_graph(&store).expect("resolve");
 
     // (B) impl Trait for Type: Robot implements the local Greet trait.
-    let trait_edge = store.execute_query(
-        "MATCH (s:Struct)-[:Implements_Struct_Trait]->(t:Trait) \
-         WHERE s.name = 'Robot' RETURN t.name"
-    ).expect("query Implements_Struct_Trait");
+    let trait_edge = store
+        .execute_query(
+            "MATCH (s:Struct)-[:Implements_Struct_Trait]->(t:Trait) \
+         WHERE s.name = 'Robot' RETURN t.name",
+        )
+        .expect("query Implements_Struct_Trait");
     assert!(
-        trait_edge.rows.iter().any(|r| r.first().map(|n| n == "Greet").unwrap_or(false)),
+        trait_edge
+            .rows
+            .iter()
+            .any(|r| r.first().map(|n| n == "Greet").unwrap_or(false)),
         "Robot must implement local trait Greet (impl-block path); impls={}",
         res.impls_resolved
     );
 
     // (A) #[derive(Debug)]: Robot implements std::fmt::Debug via the macro table.
-    let std_edge = store.execute_query(
-        "MATCH (s:Struct)-[:Implements_Struct_StdlibSymbol]->(d:StdlibSymbol) \
-         WHERE s.name = 'Robot' RETURN d.id"
-    ).expect("query Implements_Struct_StdlibSymbol");
+    let std_edge = store
+        .execute_query(
+            "MATCH (s:Struct)-[:Implements_Struct_StdlibSymbol]->(d:StdlibSymbol) \
+         WHERE s.name = 'Robot' RETURN d.id",
+        )
+        .expect("query Implements_Struct_StdlibSymbol");
     assert!(
-        std_edge.rows.iter().any(|r| r.first().map(|n| n == "std::fmt::Debug").unwrap_or(false)),
+        std_edge
+            .rows
+            .iter()
+            .any(|r| r.first().map(|n| n == "std::fmt::Debug").unwrap_or(false)),
         "Robot must implement std::fmt::Debug via #[derive(Debug)]; got {:?}",
         std_edge.rows
     );
@@ -299,8 +334,10 @@ fn test_implements_resolution_declared() {
     // a spurious trait edge to any trait lacking a real impl. Greet is the only
     // implemented trait, so exactly one local-trait edge from Robot.
     assert_eq!(
-        trait_edge.rows.len(), 1,
-        "exactly one declared local-trait impl expected, got {:?}", trait_edge.rows
+        trait_edge.rows.len(),
+        1,
+        "exactly one declared local-trait impl expected, got {:?}",
+        trait_edge.rows
     );
 
     let _ = fs::remove_dir_all(&tmp_root);
@@ -330,9 +367,13 @@ class Dog extends Animal implements Greeter {
 
 #[test]
 fn test_java_implements_and_extends_resolution() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_java_{}", std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_java_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
     let src = tmp_root.join("src");
     fs::create_dir_all(&src).unwrap();
@@ -344,25 +385,37 @@ fn test_java_implements_and_extends_resolution() {
     let res = resolver::resolve_graph(&store).expect("resolve");
 
     // Java `implements`: Dog -> Greeter (interface carries the Trait label).
-    let impl_edge = store.execute_query(
-        "MATCH (s:Struct)-[:Implements_Struct_Trait]->(t:Trait) \
-         WHERE s.name = 'Dog' RETURN t.name"
-    ).expect("query Implements_Struct_Trait");
+    let impl_edge = store
+        .execute_query(
+            "MATCH (s:Struct)-[:Implements_Struct_Trait]->(t:Trait) \
+         WHERE s.name = 'Dog' RETURN t.name",
+        )
+        .expect("query Implements_Struct_Trait");
     assert!(
-        impl_edge.rows.iter().any(|r| r.first().map(|n| n == "Greeter").unwrap_or(false)),
+        impl_edge
+            .rows
+            .iter()
+            .any(|r| r.first().map(|n| n == "Greeter").unwrap_or(false)),
         "Dog must implement Greeter (Java implements); impls={}, got {:?}",
-        res.impls_resolved, impl_edge.rows
+        res.impls_resolved,
+        impl_edge.rows
     );
 
     // Java `extends`: Dog -> Animal.
-    let ext_edge = store.execute_query(
-        "MATCH (a:Struct)-[:Extends_Struct_Struct]->(b:Struct) \
-         WHERE a.name = 'Dog' RETURN b.name"
-    ).expect("query Extends_Struct_Struct");
+    let ext_edge = store
+        .execute_query(
+            "MATCH (a:Struct)-[:Extends_Struct_Struct]->(b:Struct) \
+         WHERE a.name = 'Dog' RETURN b.name",
+        )
+        .expect("query Extends_Struct_Struct");
     assert!(
-        ext_edge.rows.iter().any(|r| r.first().map(|n| n == "Animal").unwrap_or(false)),
+        ext_edge
+            .rows
+            .iter()
+            .any(|r| r.first().map(|n| n == "Animal").unwrap_or(false)),
         "Dog must extend Animal (Java extends); extends={}, got {:?}",
-        res.extends_resolved, ext_edge.rows
+        res.extends_resolved,
+        ext_edge.rows
     );
 
     let _ = fs::remove_dir_all(&tmp_root);

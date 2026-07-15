@@ -38,10 +38,7 @@ pub(super) fn link_loose_file_imports(
     files: &[PathBuf],
 ) -> Result<u64, String> {
     // Set of indexed File ids (repo-relative, forward-slash) for O(1) lookup.
-    let file_ids: HashSet<String> = files
-        .iter()
-        .map(|f| rel_id(root, f))
-        .collect();
+    let file_ids: HashSet<String> = files.iter().map(|f| rel_id(root, f)).collect();
 
     let mut seen: HashSet<(String, String)> = HashSet::new();
     // Staged per rel_table and bulk-inserted once at the end instead of one
@@ -59,21 +56,30 @@ pub(super) fn link_loose_file_imports(
         // Decide the link kind from the file type:
         //   JS family   → import/require   → Imports_File_File   (code dep)
         //   Markdown     → [text](path)     → References_File_File (doc link)
-        let (rel_table, method, targets): (&'static str, &str, Vec<String>) = if JS_EXTS.contains(&ext.as_str()) {
-            let src = match read_text(file_path) {
-                Some(s) => s,
-                None => continue,
+        let (rel_table, method, targets): (&'static str, &str, Vec<String>) =
+            if JS_EXTS.contains(&ext.as_str()) {
+                let src = match read_text(file_path) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                (
+                    "Imports_File_File",
+                    "js-regex",
+                    extract_relative_specifiers(&src),
+                )
+            } else if MD_EXTS.contains(&ext.as_str()) {
+                let src = match read_text(file_path) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                (
+                    "References_File_File",
+                    "md-link",
+                    extract_markdown_targets(&src),
+                )
+            } else {
+                continue;
             };
-            ("Imports_File_File", "js-regex", extract_relative_specifiers(&src))
-        } else if MD_EXTS.contains(&ext.as_str()) {
-            let src = match read_text(file_path) {
-                Some(s) => s,
-                None => continue,
-            };
-            ("References_File_File", "md-link", extract_markdown_targets(&src))
-        } else {
-            continue;
-        };
 
         let from_id = rel_id(root, file_path);
         for spec in targets {
@@ -247,11 +253,7 @@ fn first_quoted(s: &str) -> Option<String> {
 
 /// Resolves a relative specifier (`./x`, `../y/z`) against the set of indexed
 /// File ids using Node-style suffix resolution. Returns the matched File id.
-fn resolve_specifier(
-    from_id: &str,
-    spec: &str,
-    file_ids: &HashSet<String>,
-) -> Option<String> {
+fn resolve_specifier(from_id: &str, spec: &str, file_ids: &HashSet<String>) -> Option<String> {
     let from_dir = Path::new(from_id).parent().unwrap_or_else(|| Path::new(""));
     // Try the specifier relative to the referrer's directory first, then as a
     // repo-root path (Markdown links are often written root-relative). For each
@@ -317,14 +319,10 @@ mod tests {
 
     #[test]
     fn resolves_with_node_suffixes() {
-        let ids: HashSet<String> = [
-            "ui/js/app.js",
-            "ui/js/util.js",
-            "ui/core/index.js",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let ids: HashSet<String> = ["ui/js/app.js", "ui/js/util.js", "ui/core/index.js"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(
             resolve_specifier("ui/js/app.js", "./util", &ids),
             Some("ui/js/util.js".to_string())

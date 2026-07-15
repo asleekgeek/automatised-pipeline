@@ -42,10 +42,7 @@ pub struct ImpactResult {
 // source: stages/stage-3c.md §5 get_impact
 // ---------------------------------------------------------------------------
 
-pub fn get_impact(
-    store: &GraphStore,
-    qualified_name: &str,
-) -> Result<ImpactResult, String> {
+pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResult, String> {
     let esc = qualified_name.replace('\'', "\\'");
 
     // Find communities this symbol belongs to
@@ -59,7 +56,9 @@ pub fn get_impact(
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
-                if !row.is_empty() { communities.push(row[0].clone()); }
+                if !row.is_empty() {
+                    communities.push(row[0].clone());
+                }
             }
         }
     }
@@ -75,7 +74,9 @@ pub fn get_impact(
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
-                if !row.is_empty() { processes.push(row[0].clone()); }
+                if !row.is_empty() {
+                    processes.push(row[0].clone());
+                }
             }
         }
     }

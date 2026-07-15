@@ -8,12 +8,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 pub(crate) const TS_NAMESPACE: &str = "namespace_definition";
 pub(crate) const TS_CLASS: &str = "class_specifier";
@@ -27,7 +24,6 @@ pub(crate) const TS_TYPEDEF: &str = "type_definition";
 pub(crate) const TS_INCLUDE: &str = "preproc_include";
 pub(crate) const TS_USING: &str = "using_declaration";
 pub(crate) const TS_CALL: &str = "call_expression";
-
 
 pub fn parse_cpp_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
     let lang: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
@@ -51,7 +47,6 @@ pub fn parse_cpp_file(source: &str, file_path: &str) -> Result<ParseResult, Stri
         parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
-
 
 pub(crate) struct Ctx<'a> {
     pub(crate) source: &'a str,

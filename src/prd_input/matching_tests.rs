@@ -70,8 +70,13 @@ fn test_is_exact_hit_name_match() {
 // by file/module context is a follow-up, not part of issue #14's scope.
 #[test]
 fn test_homonymous_symbols_in_different_files_both_classify_as_exact() {
-    let tmp =
-        std::env::temp_dir().join(format!("prd_input_issue14_homonym_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("prd_input_issue14_homonym_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
     let src_dir = tmp.join("src");
     std::fs::create_dir_all(src_dir.join("a")).unwrap();
@@ -144,7 +149,13 @@ fn test_lexical_and_exact_score_identically_by_ratio() {
 // the actual `search_and_classify` pipeline stage-4 uses in production.
 #[test]
 fn test_repro_issue14_lexical_false_positive_excluded_from_matched() {
-    let tmp = std::env::temp_dir().join(format!("prd_input_issue14_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("prd_input_issue14_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
     let src_dir = tmp.join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -210,7 +221,13 @@ pub fn make_bar(v: u8) -> String {
 // #14: "an empty bundle beats a misleading one").
 #[test]
 fn test_repro_issue14_pure_lexical_description_yields_empty_matched() {
-    let tmp = std::env::temp_dir().join(format!("prd_input_issue14_empty_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("prd_input_issue14_empty_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
     let src_dir = tmp.join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -254,7 +271,13 @@ fn test_repro_issue14_pure_lexical_description_yields_empty_matched() {
 // source: measured on 2026-07-15, this test's own fixture (below).
 #[test]
 fn test_issue18_hybrid_index_reduces_spurious_candidates() {
-    let tmp = std::env::temp_dir().join(format!("prd_input_issue18_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("prd_input_issue18_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
     let src_dir = tmp.join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -342,7 +365,13 @@ fn test_issue18_hybrid_index_reduces_spurious_candidates() {
 // exists — caught by tests/stage4_integration.rs's end-to-end test.
 #[test]
 fn test_weak_token_before_exact_token_still_classifies_as_exact() {
-    let tmp = std::env::temp_dir().join(format!("prd_input_issue14_order_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("prd_input_issue14_order_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
     let src_dir = tmp.join("src");
     std::fs::create_dir_all(&src_dir).unwrap();

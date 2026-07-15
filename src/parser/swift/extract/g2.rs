@@ -1,10 +1,9 @@
 // parser::swift::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 /// Emits init/deinit/subscript declarations as a Method (inside a type) or
 /// Function (rare, top level). These have no `name` field in the grammar, so a
@@ -58,7 +57,6 @@ pub(super) fn extract_member_fn(
     }
 }
 
-
 /// Emits an enum case (`enum_entry`) as a Variant of the enclosing enum. The
 /// case name is the `name` field (a `simple_identifier`).
 /// source: alex-pinkus/tree-sitter-swift v0.7.3 enum_entry.name.
@@ -108,7 +106,6 @@ pub(super) fn extract_enum_entry(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
-
 pub(super) fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
     if name.is_empty() {
@@ -130,7 +127,6 @@ pub(super) fn extract_property(ctx: &mut Ctx, node: Node, scope: &str) {
         to_qualified_name: qn,
     });
 }
-
 
 pub(super) fn extract_typealias(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = find_name(ctx.source, node);
@@ -154,14 +150,9 @@ pub(super) fn extract_typealias(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
 pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
-    let cleaned = text
-        .trim()
-        .trim_start_matches("import")
-        .trim()
-        .to_string();
+    let cleaned = text.trim().trim_start_matches("import").trim().to_string();
     if cleaned.is_empty() {
         return;
     }
@@ -182,7 +173,6 @@ pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
 pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
@@ -199,7 +189,10 @@ pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
                 .trim()
                 .to_string();
             if !tail.is_empty()
-                && tail.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+                && tail
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_alphabetic() || c == '_')
             {
                 let seq = {
                     ctx.next_seq += 1;

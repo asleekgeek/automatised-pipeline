@@ -11,12 +11,9 @@
 
 use tree_sitter::{Node, Parser};
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 // Grammar reference: tree-sitter-grammars/tree-sitter-kotlin (the -ng crate)
 // v1.1.0 src/node-types.json. The vocabulary below is verified against that
@@ -35,7 +32,6 @@ pub(crate) const TS_FUNCTION_BODY: &str = "function_body";
 pub(crate) const TS_ENUM_ENTRY: &str = "enum_entry";
 pub(crate) const TS_DELEGATION_SPECIFIERS: &str = "delegation_specifiers";
 pub(crate) const TS_CALL_EXPR: &str = "call_expression";
-
 
 pub fn parse_kotlin_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
     let lang: tree_sitter::Language = tree_sitter_kotlin_ng::LANGUAGE.into();
@@ -60,7 +56,6 @@ pub fn parse_kotlin_file(source: &str, file_path: &str) -> Result<ParseResult, S
     })
 }
 
-
 pub(crate) struct Ctx<'a> {
     pub(crate) source: &'a str,
     #[allow(dead_code)]
@@ -73,7 +68,6 @@ pub(crate) struct Ctx<'a> {
     // collide on the LadybugDB primary key; the counter disambiguates.
     pub(crate) next_seq: u64,
 }
-
 
 /// Returns the first direct child of `node` whose kind matches `kind`.
 /// The cursor-borrow pattern can't be closed over, so this is a small helper

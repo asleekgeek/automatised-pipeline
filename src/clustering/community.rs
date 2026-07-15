@@ -35,8 +35,14 @@ pub struct ClusterMemberships {
 const CLUSTERS_RESPONSE_CAP: usize = 10_000;
 
 const MEMBEROF_LABELS: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait",
-    "Constant", "TypeAlias", "Module",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Constant",
+    "TypeAlias",
+    "Module",
 ];
 
 /// Collect per-symbol community memberships by scanning every
@@ -152,15 +158,27 @@ struct Adjacency {
 /// NOT persisted — see `persist_communities`.
 const CLUSTER_NODE_LABELS: &[&str] = &[
     "File",
-    "Function", "Method", "Struct", "Enum", "Trait",
-    "Constant", "TypeAlias", "Module",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Constant",
+    "TypeAlias",
+    "Module",
 ];
 
 fn extract_adjacency(store: &GraphStore) -> Result<Adjacency, String> {
     let (node_ids, node_labels, id_to_idx) = collect_symbol_nodes(store)?;
     let n = node_ids.len();
     let (neighbors, total_weight) = collect_weighted_edges(store, &id_to_idx, n)?;
-    Ok(Adjacency { node_ids, node_labels, id_to_idx, neighbors, total_weight })
+    Ok(Adjacency {
+        node_ids,
+        node_labels,
+        id_to_idx,
+        neighbors,
+        total_weight,
+    })
 }
 
 fn collect_symbol_nodes(
@@ -176,7 +194,9 @@ fn collect_symbol_nodes(
             Err(_) => continue,
         };
         for row in &qr.rows {
-            if row.is_empty() { continue; }
+            if row.is_empty() {
+                continue;
+            }
             let id = &row[0];
             if !map.contains_key(id) {
                 map.insert(id.clone(), ids.len());
@@ -189,19 +209,26 @@ fn collect_symbol_nodes(
 }
 
 fn collect_weighted_edges(
-    store: &GraphStore, id_to_idx: &HashMap<String, usize>, n: usize,
+    store: &GraphStore,
+    id_to_idx: &HashMap<String, usize>,
+    n: usize,
 ) -> Result<(Vec<Vec<(usize, f64)>>, f64), String> {
     let mut neighbors: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     let mut total_weight = 0.0;
     for &(rel, from_label, to_label) in edge_rel_tables() {
         let w = edge_weight(rel);
-        if w == 0.0 { continue; }
-        let cypher = format!(
-            "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) RETURN a.id, b.id"
-        );
-        let qr = match store.execute_query(&cypher) { Ok(q) => q, Err(_) => continue };
+        if w == 0.0 {
+            continue;
+        }
+        let cypher = format!("MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) RETURN a.id, b.id");
+        let qr = match store.execute_query(&cypher) {
+            Ok(q) => q,
+            Err(_) => continue,
+        };
         for row in &qr.rows {
-            if row.len() < 2 { continue; }
+            if row.len() < 2 {
+                continue;
+            }
             if let (Some(&a), Some(&b)) = (id_to_idx.get(&row[0]), id_to_idx.get(&row[1])) {
                 neighbors[a].push((b, w));
                 neighbors[b].push((a, w));
@@ -294,7 +321,9 @@ fn louvain(adj: &Adjacency, gamma: f64) -> (Vec<usize>, f64) {
         level_neighbors = aggregate_graph(&level_neighbors, &comm, num_comms);
     }
 
-    let k: Vec<f64> = adj.neighbors.iter()
+    let k: Vec<f64> = adj
+        .neighbors
+        .iter()
         .map(|nbrs| nbrs.iter().map(|(_, w)| w).sum())
         .collect();
     let q = compute_modularity(&adj.neighbors, &node_to_comm, &k, m);
@@ -310,7 +339,8 @@ fn one_level(neighbors: &[Vec<(usize, f64)>], m: f64, gamma: f64) -> Vec<usize> 
 
     // k[i] = sum of incident weights (self-loops stored with their full
     // degree contribution by aggregate_graph, so a plain sum is correct).
-    let k: Vec<f64> = neighbors.iter()
+    let k: Vec<f64> = neighbors
+        .iter()
         .map(|nbrs| nbrs.iter().map(|(_, w)| w).sum())
         .collect();
 
@@ -330,7 +360,9 @@ fn one_level(neighbors: &[Vec<(usize, f64)>], m: f64, gamma: f64) -> Vec<usize> 
             // in ki_in[old_c] would bias every node toward never moving.
             let mut ki_in: HashMap<usize, f64> = HashMap::new();
             for &(nbr, w) in &neighbors[i] {
-                if nbr == i { continue; }
+                if nbr == i {
+                    continue;
+                }
                 *ki_in.entry(comm[nbr]).or_insert(0.0) += w;
             }
 
@@ -346,8 +378,7 @@ fn one_level(neighbors: &[Vec<(usize, f64)>], m: f64, gamma: f64) -> Vec<usize> 
             // Sorted candidate order: HashMap iteration is nondeterministic,
             // and a tie on gain must resolve identically across runs (Q12 ARI
             // reproducibility requirement, d-review.md §6).
-            let mut candidates: Vec<(usize, f64)> =
-                ki_in.iter().map(|(&c, &w)| (c, w)).collect();
+            let mut candidates: Vec<(usize, f64)> = ki_in.iter().map(|(&c, &w)| (c, w)).collect();
             candidates.sort_unstable_by_key(|&(c, _)| c);
             for &(c, ki_in_c) in &candidates {
                 let gain = ki_in_c - gamma * sigma_tot[c] * ki / two_m;
@@ -359,9 +390,13 @@ fn one_level(neighbors: &[Vec<(usize, f64)>], m: f64, gamma: f64) -> Vec<usize> 
 
             comm[i] = best_c;
             sigma_tot[best_c] += ki;
-            if best_c != old_c { improved = true; }
+            if best_c != old_c {
+                improved = true;
+            }
         }
-        if !improved { break; }
+        if !improved {
+            break;
+        }
     }
 
     renumber_communities(&comm)
@@ -412,13 +447,10 @@ fn renumber_communities(comm: &[usize]) -> Vec<usize> {
 
 /// Newman 2004: Q = (1/2m) * sum_ij [A_ij - ki*kj/(2m)] * delta(ci,cj)
 /// `m` = sum of undirected edge weights (each edge counted once).
-fn compute_modularity(
-    neighbors: &[Vec<(usize, f64)>],
-    comm: &[usize],
-    k: &[f64],
-    m: f64,
-) -> f64 {
-    if m == 0.0 { return 0.0; }
+fn compute_modularity(neighbors: &[Vec<(usize, f64)>], comm: &[usize], k: &[f64], m: f64) -> f64 {
+    if m == 0.0 {
+        return 0.0;
+    }
     let two_m = 2.0 * m;
     let mut q = 0.0;
     // neighbors stores both directions, so the loop sums each pair (i,j) twice.
@@ -444,10 +476,14 @@ fn repair_c2(adj: &Adjacency, comm: &mut Vec<usize>) {
 
     for c in 0..num_comms {
         let members: Vec<usize> = (0..n).filter(|&i| comm[i] == c).collect();
-        if members.len() <= 1 { continue; }
+        if members.len() <= 1 {
+            continue;
+        }
 
         let components = connected_components_within(&members, &adj.neighbors, comm, c);
-        if components.len() <= 1 { continue; }
+        if components.len() <= 1 {
+            continue;
+        }
 
         // Keep first component as c, assign rest new IDs
         for component in components.iter().skip(1) {
@@ -471,7 +507,9 @@ fn connected_components_within(
     let mut components = Vec::new();
 
     for &start in members {
-        if visited.contains(&start) { continue; }
+        if visited.contains(&start) {
+            continue;
+        }
         let mut component = Vec::new();
         let mut queue = VecDeque::new();
         queue.push_back(start);
@@ -479,10 +517,7 @@ fn connected_components_within(
         while let Some(node) = queue.pop_front() {
             component.push(node);
             for &(nbr, _) in &neighbors[node] {
-                if member_set.contains(&nbr)
-                    && comm[nbr] == community
-                    && visited.insert(nbr)
-                {
+                if member_set.contains(&nbr) && comm[nbr] == community && visited.insert(nbr) {
                     queue.push_back(nbr);
                 }
             }
@@ -538,7 +573,10 @@ fn persist_communities(
                 ("algorithm".into(), "'louvain+c2'".into()),
                 ("resolution_param".into(), gamma.to_string()),
                 ("member_count".into(), count.to_string()),
-                ("modularity_contribution".into(), format!("{:.6}", modularity)),
+                (
+                    "modularity_contribution".into(),
+                    format!("{:.6}", modularity),
+                ),
             ]
         })
         .collect();
@@ -548,8 +586,7 @@ fn persist_communities(
     // MemberOf_<Label>_Community table are persisted — File nodes take part
     // in the Louvain adjacency as containment carriers but have no
     // membership table (and q12 scoring keys on symbol qualified names).
-    let mut by_rel: HashMap<String, Vec<(String, String, Vec<(String, String)>)>> =
-        HashMap::new();
+    let mut by_rel: HashMap<String, Vec<(String, String, Vec<(String, String)>)>> = HashMap::new();
     for (idx, &c) in comm.iter().enumerate() {
         let node_id = &adj.node_ids[idx];
         let label = &adj.node_labels[idx];
@@ -558,7 +595,10 @@ fn persist_communities(
         }
         let cid = format!("community::louvain::{gamma}::{c}");
         let rel = format!("MemberOf_{label}_Community");
-        by_rel.entry(rel).or_default().push((node_id.clone(), cid, Vec::new()));
+        by_rel
+            .entry(rel)
+            .or_default()
+            .push((node_id.clone(), cid, Vec::new()));
     }
     for (rel, edges) in &by_rel {
         store.bulk_insert_edges(rel, edges)?;
@@ -570,10 +610,7 @@ fn persist_communities(
 // Entry point: cluster_graph — source: stages/stage-3c.md §5
 // ---------------------------------------------------------------------------
 
-pub fn cluster_graph(
-    store: &GraphStore,
-    gamma: f64,
-) -> Result<ClusteringResult, String> {
+pub fn cluster_graph(store: &GraphStore, gamma: f64) -> Result<ClusteringResult, String> {
     let start = Instant::now();
     purge_prior_clustering(store)?;
     let adj = extract_adjacency(store)?;

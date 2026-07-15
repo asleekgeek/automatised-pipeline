@@ -90,18 +90,27 @@ struct SymbolIndex {
 
 fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
     let labels = &[
-        "Function", "Method", "Struct", "Enum", "Trait",
-        "Constant", "TypeAlias", "Module", "File",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
+        "File",
     ];
     let mut by_name: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
     let mut by_qn: HashMap<String, SymbolEntry> = HashMap::new();
     let mut by_parent_module: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
     for label in labels {
-        let qn_col = if *label == "File" { "path" } else { "qualified_name" };
+        let qn_col = if *label == "File" {
+            "path"
+        } else {
+            "qualified_name"
+        };
         let name_col = if *label == "File" { "name" } else { "name" };
-        let cypher = format!(
-            "MATCH (n:{label}) RETURN n.id, n.{name_col}, n.{qn_col}"
-        );
+        let cypher = format!("MATCH (n:{label}) RETURN n.id, n.{name_col}, n.{qn_col}");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
             Err(_) => continue,
@@ -115,14 +124,24 @@ fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
                 label: label.to_string(),
                 qualified_name: row[2].clone(),
             };
-            by_name.entry(row[1].clone()).or_default().push(entry.clone());
+            by_name
+                .entry(row[1].clone())
+                .or_default()
+                .push(entry.clone());
             if let Some((parent, _)) = row[2].rsplit_once("::") {
-                by_parent_module.entry(parent.to_string()).or_default().push(entry.clone());
+                by_parent_module
+                    .entry(parent.to_string())
+                    .or_default()
+                    .push(entry.clone());
             }
             by_qn.insert(row[2].clone(), entry);
         }
     }
-    Ok(SymbolIndex { by_name, by_qn, by_parent_module })
+    Ok(SymbolIndex {
+        by_name,
+        by_qn,
+        by_parent_module,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +159,7 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
     let (imp_resolved, imp_total, imp_unresolved) = resolve_imports(store, &idx, &mut buf)?;
     let (call_resolved, call_total, call_unresolved) =
         resolve_calls(store, &idx, &file_imports, &mut buf)?;
-    let (impl_resolved, impl_total, impl_unresolved) =
-        resolve_implements(store, &idx, &mut buf)?;
+    let (impl_resolved, impl_total, impl_unresolved) = resolve_implements(store, &idx, &mut buf)?;
     let (ext_resolved, ext_total, ext_unresolved) = resolve_extends(store, &idx, &mut buf)?;
     let (uses_resolved, uses_total, uses_unresolved) =
         resolve_uses(store, &idx, &file_imports, &mut buf)?;
@@ -150,11 +168,10 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
     // so resolver.rs's function surface stays stable for Q8 ground truth.
     // source: stages/stage-3b-v2.md §5.
     let idx_ref = &idx;
-    let macro_resolved = crate::resolver_layers::run_macro_expansion(
-        store,
-        &mut buf,
-        &|qn: &str| determine_caller_label(idx_ref, qn),
-    )?;
+    let macro_resolved =
+        crate::resolver_layers::run_macro_expansion(store, &mut buf, &|qn: &str| {
+            determine_caller_label(idx_ref, qn)
+        })?;
 
     buf.flush(store)?;
     let call_resolved = call_resolved + macro_resolved;
@@ -200,7 +217,10 @@ pub struct EdgeBuffer {
 
 impl EdgeBuffer {
     fn new(existing: HashSet<(String, String, String)>) -> Self {
-        Self { by_table: HashMap::new(), seen: existing }
+        Self {
+            by_table: HashMap::new(),
+            seen: existing,
+        }
     }
 
     /// Stages an edge. Returns true if newly staged, false if duplicate.
@@ -212,7 +232,11 @@ impl EdgeBuffer {
         confidence: f64,
         method: &str,
     ) -> bool {
-        let key = (rel_table.to_string(), from_id.to_string(), to_id.to_string());
+        let key = (
+            rel_table.to_string(),
+            from_id.to_string(),
+            to_id.to_string(),
+        );
         if self.seen.contains(&key) {
             return false;
         }
@@ -264,9 +288,7 @@ fn load_existing_edges(store: &GraphStore) -> Result<HashSet<(String, String, St
         if !is_resolution_edge(rel) {
             continue;
         }
-        let cypher = format!(
-            "MATCH (a:{from_label})-[r:{rel}]->(b:{to_label}) RETURN a.id, b.id"
-        );
+        let cypher = format!("MATCH (a:{from_label})-[r:{rel}]->(b:{to_label}) RETURN a.id, b.id");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
             Err(_) => continue,
@@ -295,14 +317,8 @@ fn is_resolution_edge(rel: &str) -> bool {
 
 type PhaseResult = Result<(u64, u64, Vec<UnresolvedRef>), String>;
 
-fn resolve_imports(
-    store: &GraphStore,
-    idx: &SymbolIndex,
-    buf: &mut EdgeBuffer,
-) -> PhaseResult {
-    let qr = store.execute_query(
-        "MATCH (i:Import) RETURN i.id, i.path, i.is_glob, i.language"
-    )?;
+fn resolve_imports(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) -> PhaseResult {
+    let qr = store.execute_query("MATCH (i:Import) RETURN i.id, i.path, i.is_glob, i.language")?;
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
@@ -335,10 +351,15 @@ fn resolve_one_import(
     is_glob_str: &str,
 ) -> (u64, Vec<UnresolvedRef>) {
     if provider.is_external_import(path) {
-        return (0, vec![UnresolvedRef {
-            kind: "Imports".to_string(), from_id: import_id.to_string(),
-            target_text: path.to_string(), reason: "external crate".to_string(),
-        }]);
+        return (
+            0,
+            vec![UnresolvedRef {
+                kind: "Imports".to_string(),
+                from_id: import_id.to_string(),
+                target_text: path.to_string(),
+                reason: "external crate".to_string(),
+            }],
+        );
     }
     let file_id = extract_file_from_import_id(import_id);
     let normalized = provider.normalize_import_path(path).to_string();
@@ -349,10 +370,15 @@ fn resolve_one_import(
     }
     match resolve_single_import(idx, buf, provider, &file_id, &normalized) {
         Some(count) => (count, vec![]),
-        None => (0, vec![UnresolvedRef {
-            kind: "Imports".to_string(), from_id: import_id.to_string(),
-            target_text: path.to_string(), reason: "no target found in graph".to_string(),
-        }]),
+        None => (
+            0,
+            vec![UnresolvedRef {
+                kind: "Imports".to_string(),
+                from_id: import_id.to_string(),
+                target_text: path.to_string(),
+                reason: "no target found in graph".to_string(),
+            }],
+        ),
     }
 }
 
@@ -422,9 +448,8 @@ fn resolve_calls(
     file_imports: &HashMap<String, Vec<String>>,
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
-    let qr = store.execute_query(
-        "MATCH (cs:CallSite) RETURN cs.id, cs.callee_name, cs.language"
-    )?;
+    let qr =
+        store.execute_query("MATCH (cs:CallSite) RETURN cs.id, cs.callee_name, cs.language")?;
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
@@ -471,13 +496,8 @@ fn resolve_calls(
                         if !check_known_rel_table(&rel, &caller_qn, &target.id) {
                             // Schema doesn't declare this label combination —
                             // already logged. Skip to next callee.
-                        } else if buf.add(
-                            &rel,
-                            &caller_qn,
-                            &target.id,
-                            conf,
-                            "import-scope-lookup",
-                        ) {
+                        } else if buf.add(&rel, &caller_qn, &target.id, conf, "import-scope-lookup")
+                        {
                             resolved += 1;
                             // The callee resolved to a graph target — flip the
                             // CallSite's is_resolved (§10.4). Applies to both
@@ -537,7 +557,8 @@ fn resolve_single_call(
     // Fallback: try direct name match (same-file definitions)
     let candidates = idx.by_name.get(callee)?;
     // Prefer same-file definitions
-    let same_file: Vec<_> = candidates.iter()
+    let same_file: Vec<_> = candidates
+        .iter()
         .filter(|e| e.qualified_name.starts_with(file_id))
         .collect();
     if same_file.len() == 1 {
@@ -566,11 +587,7 @@ fn resolve_single_call(
 /// with a trait method, producing false edges and missing every declared
 /// impl). Mirrors resolve_extends and finally wires the
 /// macro_expansion.emit_implements table (Debug → std::fmt::Debug, …).
-fn resolve_implements(
-    store: &GraphStore,
-    idx: &SymbolIndex,
-    buf: &mut EdgeBuffer,
-) -> PhaseResult {
+fn resolve_implements(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) -> PhaseResult {
     let mut resolved = 0u64;
     let mut total = 0u64;
     let mut unresolved = Vec::new();
@@ -600,7 +617,14 @@ fn resolve_implements(
                 }
                 total += 1;
                 if resolve_one_implements(
-                    store, idx, buf, provider, label, from_id, name, &mut created_stdlib,
+                    store,
+                    idx,
+                    buf,
+                    provider,
+                    label,
+                    from_id,
+                    name,
+                    &mut created_stdlib,
                 )? {
                     resolved += 1;
                 } else {
@@ -657,9 +681,7 @@ fn resolve_one_implements(
         let mut any = false;
         let table = format!("Implements_{label}_StdlibSymbol");
         for canonical in exp.emit_implements {
-            crate::resolver_layers::ensure_stdlib_symbol(
-                store, created_stdlib, canonical, "rust",
-            )?;
+            crate::resolver_layers::ensure_stdlib_symbol(store, created_stdlib, canonical, "rust")?;
             if buf.add(&table, from_id, canonical, 0.9, "derive-macro") {
                 any = true;
             }
@@ -768,7 +790,13 @@ fn resolve_extends(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) 
                 }
                 total += 1;
                 if resolve_one_extends_base(
-                    idx, buf, label, table_self, child_qn, raw_base, &mut unresolved,
+                    idx,
+                    buf,
+                    label,
+                    table_self,
+                    child_qn,
+                    raw_base,
+                    &mut unresolved,
                 ) {
                     resolved += 1;
                 }
@@ -869,9 +897,7 @@ fn resolve_field_type_uses(
     _file_imports: &HashMap<String, Vec<String>>,
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
-    let qr = store.execute_query(
-        "MATCH (f:Field) RETURN f.id, f.type_annotation, f.language"
-    )?;
+    let qr = store.execute_query("MATCH (f:Field) RETURN f.id, f.type_annotation, f.language")?;
     let mut resolved = 0u64;
     let total = qr.rows.len() as u64;
     let mut unresolved = Vec::new();
@@ -943,7 +969,8 @@ fn extract_type_identifiers(type_ann: &str, primitives: &[&str]) -> Vec<String> 
 fn find_type_target<'a>(idx: &'a SymbolIndex, type_name: &str) -> Option<&'a SymbolEntry> {
     let candidates = idx.by_name.get(type_name)?;
     // Filter to type-like labels only
-    let types: Vec<_> = candidates.iter()
+    let types: Vec<_> = candidates
+        .iter()
         .filter(|e| matches!(e.label.as_str(), "Struct" | "Enum" | "Trait" | "TypeAlias"))
         .collect();
     if types.len() == 1 {
@@ -1000,7 +1027,8 @@ pub(crate) fn extract_caller_from_callsite_id(cs_id: &str) -> String {
 }
 
 fn determine_caller_label(idx: &SymbolIndex, caller_qn: &str) -> String {
-    idx.by_qn.get(caller_qn)
+    idx.by_qn
+        .get(caller_qn)
         .map(|e| e.label.clone())
         .unwrap_or_else(|| "Function".to_string())
 }
@@ -1030,7 +1058,11 @@ fn pick_best_candidate<'a>(
 /// Confidence: 1.0 for unique match, 0.7 for ambiguous.
 /// source: stages/stage-3b.md §2 "Confidence assignment rules"
 fn compute_import_confidence(candidate_count: usize) -> f64 {
-    if candidate_count == 1 { 1.0 } else { 0.7 }
+    if candidate_count == 1 {
+        1.0
+    } else {
+        0.7
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,7 +1078,7 @@ mod tests {
         // Use the Rust primitive set (matches the prior module-level PRIMITIVES).
         let prims = crate::language_provider::provider_for("rust").primitives();
         let cases = vec![
-            ("String", vec![]),           // primitive
+            ("String", vec![]), // primitive
             ("GraphStore", vec!["GraphStore"]),
             ("Vec<GraphStore>", vec!["GraphStore"]),
             ("&'a MyType", vec!["MyType"]),
@@ -1064,7 +1096,10 @@ mod tests {
     fn test_normalize_import_path_via_provider() {
         // normalize_import_path moved to LanguageProvider (Rust strips crate::).
         let rust = crate::language_provider::provider_for("rust");
-        assert_eq!(rust.normalize_import_path("crate::graph_store::GraphStore"), "graph_store::GraphStore");
+        assert_eq!(
+            rust.normalize_import_path("crate::graph_store::GraphStore"),
+            "graph_store::GraphStore"
+        );
         assert_eq!(rust.normalize_import_path("std::io"), "std::io");
         assert_eq!(rust.normalize_import_path("self::foo"), "self::foo");
     }
@@ -1128,12 +1163,22 @@ mod tests {
                         label: "Function".to_string(),
                         qualified_name: qn.clone(),
                     };
-                    by_name.entry(format!("sym{s}")).or_default().push(entry.clone());
+                    by_name
+                        .entry(format!("sym{s}"))
+                        .or_default()
+                        .push(entry.clone());
                     by_qn.insert(qn.clone(), entry.clone());
-                    by_parent_module.entry(module_path.clone()).or_default().push(entry);
+                    by_parent_module
+                        .entry(module_path.clone())
+                        .or_default()
+                        .push(entry);
                 }
             }
-            SymbolIndex { by_name, by_qn, by_parent_module }
+            SymbolIndex {
+                by_name,
+                by_qn,
+                by_parent_module,
+            }
         }
 
         let modules = 2_000;

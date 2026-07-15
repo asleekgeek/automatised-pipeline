@@ -7,12 +7,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 // ---------------------------------------------------------------------------
 // Tree-sitter node type constants
@@ -45,7 +42,6 @@ pub(crate) const TS_ARROW_FUNC: &str = "arrow_function";
 pub(crate) const TS_VAR_DECLARATOR: &str = "variable_declarator";
 pub(crate) const TS_PROPERTY_SIGNATURE: &str = "property_signature";
 pub(crate) const TS_METHOD_SIGNATURE: &str = "method_signature";
-
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -90,7 +86,6 @@ pub fn parse_typescript_file(source: &str, file_path: &str) -> Result<ParseResul
     })
 }
 
-
 // ---------------------------------------------------------------------------
 // Extraction context
 // ---------------------------------------------------------------------------
@@ -102,7 +97,6 @@ pub(crate) struct ExtractCtx<'a> {
     pub(crate) nodes: Vec<ExtractedNode>,
     pub(crate) refs: Vec<ExtractedRef>,
 }
-
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -206,7 +200,11 @@ export type StringOrNumber = string | number;
 
         // Async detection
         let fetch_fn = result.nodes.iter().find(|n| n.name == "fetchData").unwrap();
-        let is_async = fetch_fn.properties.iter().find(|(k, _)| k == "is_async").unwrap();
+        let is_async = fetch_fn
+            .properties
+            .iter()
+            .find(|(k, _)| k == "is_async")
+            .unwrap();
         assert_eq!(is_async.1, "true");
 
         // Export = pub visibility
@@ -214,7 +212,9 @@ export type StringOrNumber = string | number;
         assert_eq!(greet_fn.visibility, "pub");
 
         // Extends edge for Dog extends Animal
-        let extends = result.refs.iter()
+        let extends = result
+            .refs
+            .iter()
             .any(|r| r.kind == "Extends" && r.from_qualified_name.contains("Dog"));
         assert!(extends, "missing Extends edge for Dog");
     }
@@ -227,16 +227,27 @@ import * as utils from '../utils';
 import defaultExport from 'package';
 "#;
         let result = parse_typescript_file(src, "test.ts").expect("parse");
-        let imports: Vec<_> = result.nodes.iter()
+        let imports: Vec<_> = result
+            .nodes
+            .iter()
             .filter(|n| n.label == "Import")
             .collect();
 
-        assert!(imports.len() >= 3, "expected at least 3 imports, got {}", imports.len());
+        assert!(
+            imports.len() >= 3,
+            "expected at least 3 imports, got {}",
+            imports.len()
+        );
 
         // Check path normalization (/ -> ::)
-        let has_normalized = imports.iter().any(|n|
-            n.properties.iter().any(|(k, v)| k == "path" && v.contains("::"))
+        let has_normalized = imports.iter().any(|n| {
+            n.properties
+                .iter()
+                .any(|(k, v)| k == "path" && v.contains("::"))
+        });
+        assert!(
+            has_normalized,
+            "import paths should be normalized to :: separator"
         );
-        assert!(has_normalized, "import paths should be normalized to :: separator");
     }
 }

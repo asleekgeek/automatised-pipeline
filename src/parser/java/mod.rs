@@ -8,12 +8,9 @@
 
 use tree_sitter::Parser;
 
-use super::{
-    ExtractedNode, ExtractedRef, ParseResult,
-};
+use super::{ExtractedNode, ExtractedRef, ParseResult};
 
 mod extract;
-
 
 // Tree-sitter node type constants — from
 // https://github.com/tree-sitter/tree-sitter-java/blob/master/src/node-types.json
@@ -32,7 +29,6 @@ pub(crate) const TS_IMPORT: &str = "import_declaration";
 pub(crate) const TS_PACKAGE: &str = "package_declaration";
 pub(crate) const TS_CALL: &str = "method_invocation";
 pub(crate) const TS_OBJECT_CREATION: &str = "object_creation_expression";
-
 
 pub fn parse_java_file(source: &str, file_path: &str) -> Result<ParseResult, String> {
     let lang: tree_sitter::Language = tree_sitter_java::LANGUAGE.into();
@@ -62,7 +58,6 @@ pub fn parse_java_file(source: &str, file_path: &str) -> Result<ParseResult, Str
         parse_errors: super::count_parse_errors(tree.root_node()),
     })
 }
-
 
 pub(crate) struct Ctx<'a> {
     pub(crate) source: &'a str,

@@ -1,10 +1,9 @@
 // parser::cpp::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn find_identifier(source: &str, node: Node) -> String {
     let mut stack = vec![node];
@@ -21,16 +20,20 @@ pub(super) fn find_identifier(source: &str, node: Node) -> String {
     String::new()
 }
 
-
-pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(crate) fn extract_children(
+    ctx: &mut Ctx,
+    parent: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+) {
     let mut cursor = parent.walk();
     for child in parent.children(&mut cursor) {
         match child.kind() {
             TS_NAMESPACE => extract_namespace(ctx, child, scope),
-            TS_CLASS => extract_class_like(ctx, child, scope, LABEL_STRUCT, /*is_class=*/ true),
-            TS_STRUCT | TS_UNION => {
-                extract_class_like(ctx, child, scope, LABEL_STRUCT, false)
+            TS_CLASS => {
+                extract_class_like(ctx, child, scope, LABEL_STRUCT, /*is_class=*/ true)
             }
+            TS_STRUCT | TS_UNION => extract_class_like(ctx, child, scope, LABEL_STRUCT, false),
             TS_ENUM => extract_enum(ctx, child, scope),
             TS_TEMPLATE => {
                 // Templates wrap a class/function; descend.
@@ -60,7 +63,6 @@ pub(crate) fn extract_children(ctx: &mut Ctx, parent: Node, scope: &str, enclosi
     }
 }
 
-
 pub(super) fn has_function_declarator(node: Node) -> bool {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
@@ -74,7 +76,6 @@ pub(super) fn has_function_declarator(node: Node) -> bool {
     }
     false
 }
-
 
 pub(super) fn extract_namespace(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
@@ -110,8 +111,13 @@ pub(super) fn extract_namespace(ctx: &mut Ctx, node: Node, scope: &str) {
     }
 }
 
-
-pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: &str, is_class: bool) {
+pub(super) fn extract_class_like(
+    ctx: &mut Ctx,
+    node: Node,
+    scope: &str,
+    label: &str,
+    is_class: bool,
+) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
         find_identifier(ctx.source, node)
@@ -173,7 +179,6 @@ pub(super) fn extract_class_like(ctx: &mut Ctx, node: Node, scope: &str, label: 
     }
 }
 
-
 pub(super) fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
     let name = node_field_text(ctx.source, node, "name");
     let name = if name.is_empty() {
@@ -201,8 +206,12 @@ pub(super) fn extract_enum(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
-pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing_type: Option<&str>) {
+pub(super) fn extract_function(
+    ctx: &mut Ctx,
+    node: Node,
+    scope: &str,
+    enclosing_type: Option<&str>,
+) {
     let declarator = node.child_by_field_name("declarator");
     let name = declarator
         .map(|d| find_identifier(ctx.source, d))

@@ -1,10 +1,9 @@
 // parser::typescript::extract::g3 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 pub(super) fn extract_import_clause(
     ctx: &mut ExtractCtx,
@@ -42,7 +41,6 @@ pub(super) fn extract_import_clause(
     }
 }
 
-
 pub(super) fn extract_named_imports(
     ctx: &mut ExtractCtx,
     node: Node,
@@ -55,14 +53,17 @@ pub(super) fn extract_named_imports(
         if child.kind() == "import_specifier" {
             let name_node = child.child_by_field_name("name");
             let alias_node = child.child_by_field_name("alias");
-            let name = name_node.map(|n| node_text(ctx.source, n)).unwrap_or_default();
-            let alias = alias_node.map(|n| node_text(ctx.source, n)).unwrap_or_default();
+            let name = name_node
+                .map(|n| node_text(ctx.source, n))
+                .unwrap_or_default();
+            let alias = alias_node
+                .map(|n| node_text(ctx.source, n))
+                .unwrap_or_default();
             let full_path = format!("{module_path}::{name}");
             emit_ts_import(ctx, scope, &full_path, &alias, false, import_node);
         }
     }
 }
-
 
 pub(super) fn emit_ts_import(
     ctx: &mut ExtractCtx,
@@ -103,7 +104,6 @@ pub(super) fn emit_ts_import(
     });
 }
 
-
 // ---------------------------------------------------------------------------
 // Export statement extraction
 // ---------------------------------------------------------------------------
@@ -124,12 +124,16 @@ pub(super) fn extract_export(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Lexical declaration extraction (const/let)
 // ---------------------------------------------------------------------------
 
-pub(super) fn extract_lexical_decl(ctx: &mut ExtractCtx, node: Node, scope: &str, is_exported: bool) {
+pub(super) fn extract_lexical_decl(
+    ctx: &mut ExtractCtx,
+    node: Node,
+    scope: &str,
+    is_exported: bool,
+) {
     let is_const = is_const_declaration(ctx.source, node);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -138,7 +142,6 @@ pub(super) fn extract_lexical_decl(ctx: &mut ExtractCtx, node: Node, scope: &str
         }
     }
 }
-
 
 pub(super) fn extract_variable_declarator(
     ctx: &mut ExtractCtx,
@@ -159,7 +162,11 @@ pub(super) fn extract_variable_declarator(
         // const foo = () => {} — extract as Function
         let arrow = value.unwrap();
         let qn = qual(scope, &name);
-        let vis = if is_exported { "pub".to_string() } else { String::new() };
+        let vis = if is_exported {
+            "pub".to_string()
+        } else {
+            String::new()
+        };
         let is_async = has_async_keyword(ctx.source, arrow);
         ctx.nodes.push(ExtractedNode {
             label: LABEL_FUNCTION.to_string(),
@@ -181,8 +188,13 @@ pub(super) fn extract_variable_declarator(
     } else if is_const {
         // const FOO = ... — extract as Constant
         let qn = qual(scope, &name);
-        let vis = if is_exported { "pub".to_string() } else { String::new() };
-        let type_ann = node.child_by_field_name("type")
+        let vis = if is_exported {
+            "pub".to_string()
+        } else {
+            String::new()
+        };
+        let type_ann = node
+            .child_by_field_name("type")
             .map(|n| node_text(ctx.source, n))
             .unwrap_or_default();
         ctx.nodes.push(ExtractedNode {
@@ -201,7 +213,6 @@ pub(super) fn extract_variable_declarator(
         });
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Call-site extraction

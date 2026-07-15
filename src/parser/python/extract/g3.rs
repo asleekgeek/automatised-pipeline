@@ -1,10 +1,9 @@
 // parser::python::extract::g3 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-              // sibling extract fns (glob re-export)
-
+use super::super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // parent module: Ctx, TS_* consts, kept helpers
+                       // sibling extract fns (glob re-export)
 
 pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     let func_node = match node.child_by_field_name("function") {
@@ -51,7 +50,6 @@ pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_
         to_qualified_name: cs_id,
     });
 }
-
 
 /// Detects async def by checking if "async" keyword precedes "def".
 pub(super) fn is_async_function(source: &str, node: Node) -> bool {

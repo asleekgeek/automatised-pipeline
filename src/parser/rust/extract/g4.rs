@@ -1,10 +1,9 @@
 // parser::rust::extract::g4 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // ---------------------------------------------------------------------------
 // Module extraction
@@ -37,7 +36,6 @@ pub(super) fn extract_mod(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Call-site extraction
 // ---------------------------------------------------------------------------
@@ -56,7 +54,6 @@ pub(super) fn extract_call_sites(ctx: &mut ExtractCtx, body: Node, caller_qn: &s
         }
     }
 }
-
 
 /// Emit a CallSite node for a `name!(...)` macro invocation. The callee_name
 /// is stored with a trailing `!` so the resolver's Layer 4 pass can cheaply
@@ -99,7 +96,6 @@ pub(super) fn extract_macro_call_site(ctx: &mut ExtractCtx, node: Node, caller_q
     });
 }
 
-
 pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_qn: &str) {
     let func_node = match node.child_by_field_name("function") {
         Some(f) => f,
@@ -137,7 +133,6 @@ pub(super) fn extract_single_call_site(ctx: &mut ExtractCtx, node: Node, caller_
     });
 }
 
-
 // ---------------------------------------------------------------------------
 // Supertrait extraction
 // ---------------------------------------------------------------------------
@@ -160,7 +155,6 @@ pub(super) fn extract_supertraits(source: &str, trait_node: Node) -> Vec<String>
     supers
 }
 
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -174,7 +168,6 @@ pub(super) fn extract_visibility(source: &str, node: Node) -> String {
     }
     String::new()
 }
-
 
 pub(super) fn has_async_modifier(node: Node) -> bool {
     let mut cursor = node.walk();

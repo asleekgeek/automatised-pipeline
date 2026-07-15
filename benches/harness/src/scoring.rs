@@ -70,10 +70,7 @@ pub fn score_adjusted_rand(labels_a: &[i64], labels_b: &[i64]) -> f64 {
     let contingency = contingency_table(labels_a, labels_b);
     let row_sums = row_sums(&contingency);
     let col_sums = col_sums(&contingency);
-    let sum_comb_cells: f64 = contingency
-        .values()
-        .map(|&c| n_choose_2(c as f64))
-        .sum();
+    let sum_comb_cells: f64 = contingency.values().map(|&c| n_choose_2(c as f64)).sum();
     let sum_comb_rows: f64 = row_sums.values().map(|&c| n_choose_2(c as f64)).sum();
     let sum_comb_cols: f64 = col_sums.values().map(|&c| n_choose_2(c as f64)).sum();
     let total_pairs = n_choose_2(n);

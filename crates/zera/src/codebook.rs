@@ -225,10 +225,8 @@ fn extract_common_prefixes(nodes: &[crate::NodeRef]) -> Vec<String> {
         }
     }
     let threshold = nodes.len().max(1) / 50; // 2 % of nodes; small bar
-    let mut prefixes: Vec<(String, usize)> = counts
-        .into_iter()
-        .filter(|(_, c)| *c > threshold)
-        .collect();
+    let mut prefixes: Vec<(String, usize)> =
+        counts.into_iter().filter(|(_, c)| *c > threshold).collect();
     prefixes.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
     prefixes.into_iter().map(|(p, _)| p).collect()
 }
@@ -244,13 +242,30 @@ mod tests {
 
     fn sample() -> GraphState {
         let nodes = vec![
-            NodeRef { id: "memory:1".into(), label: "Memory".into() },
-            NodeRef { id: "memory:2".into(), label: "Memory".into() },
-            NodeRef { id: "entity:1".into(), label: "Entity".into() },
+            NodeRef {
+                id: "memory:1".into(),
+                label: "Memory".into(),
+            },
+            NodeRef {
+                id: "memory:2".into(),
+                label: "Memory".into(),
+            },
+            NodeRef {
+                id: "entity:1".into(),
+                label: "Entity".into(),
+            },
         ];
         let edges = vec![
-            EdgeRef { from: "memory:1".into(), to: "entity:1".into(), kind: "mentions".into() },
-            EdgeRef { from: "memory:2".into(), to: "entity:1".into(), kind: "mentions".into() },
+            EdgeRef {
+                from: "memory:1".into(),
+                to: "entity:1".into(),
+                kind: "mentions".into(),
+            },
+            EdgeRef {
+                from: "memory:2".into(),
+                to: "entity:1".into(),
+                kind: "mentions".into(),
+            },
         ];
         GraphState::new(nodes, edges)
     }

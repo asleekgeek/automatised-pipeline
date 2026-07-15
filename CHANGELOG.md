@@ -8,6 +8,46 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Production `GraphStore` opens no longer reserve lbug's unbounded 8 TiB
+  default per instance (issue #25).** PR #24 (issue #21) bounded
+  `max_db_size` for `cargo test` only, via `AP_LBUG_TEST_MAX_DB_SIZE` in
+  `.cargo/config.toml`; production code paths still resolved through
+  `SystemConfig::default()`'s sentinel, which lbug's C++ core substitutes
+  with `DEFAULT_VM_REGION_MAX_SIZE = 1 << 43` (8 TiB) per `Database::new`.
+  With `graph_cache::MAX_CACHED_GRAPHS = 8` entries live in the read-path
+  cache at once, that was a 64 TiB worst-case virtual-address reservation.
+  Fix: `graph_store::system_config()` now resolves a new
+  `AP_LBUG_MAX_DB_SIZE` production override (falling back to a measured 8
+  GiB default — see the README's "Configuration — `max_db_size`" section
+  for the full measurement table and sizing derivation) when the test-only
+  var is absent, validating either var (power of two, ≥ 8 MiB per lbug's
+  `BufferManager::verifySizeParams`) with an actionable error rather than a
+  silent fallback. Worst case at the cache cap: 8 × 8 GiB = 64 GiB — a
+  1024x reduction from the pre-fix 64 TiB. Regression guard:
+  `graph_cache::tests::prod_default_bound_opens_max_cached_graphs_simultaneously`
+  opens `MAX_CACHED_GRAPHS` real `GraphStore`s under the production default
+  bound, keeps every handle simultaneously live, and exercises the cache's
+  fingerprint/eviction path at that exact byte count.
+
+- **Isolation-site audit (issue #25 follow-up): 46 test fixture/output
+  directories derived their path from `std::env::temp_dir().join(format!(
+  "{prefix}_{}", std::process::id()))`, an issue-#21-class defect the
+  original #21/#24 sweep missed.** Found via a soak run that hit
+  `tests/multilang_integration.rs`'s `test_multilang_auto_index` and
+  `test_language_filter_rust_only` both failing with "Found duplicated
+  primary key value sample.rs / sample.py". Root cause: `std::process::id()`
+  is identical for every `#[test]` in one binary (all run as threads of one
+  process, so it disambiguates nothing beyond a differing literal prefix)
+  and, more importantly, can repeat across separate process invocations
+  under OS PID reuse — a real risk under a tight back-to-back soak, where a
+  leftover DB from a prior run's process can collide with a new run that
+  gets the same recycled PID. Fix: every site now derives its directory via
+  `tempfile::Builder::new().prefix(tag).tempdir().expect(..).keep()` — a
+  cryptographically-random suffix that depends on neither the thread nor
+  the OS PID; `.keep()` hands the already-created directory to each test's
+  existing manual cleanup instead of auto-deleting it on drop. Full audit
+  table (file:line, prior derivation, verdict) is in the issue #25 PR body.
+
 - **`prepare_prd_input` now uses the hybrid BM25/vector search index when one
   exists, instead of always running the substring-only fallback scorer
   (issue #18).** `search_and_classify` (`src/prd_input/matching.rs`)

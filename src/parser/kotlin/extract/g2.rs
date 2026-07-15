@@ -1,10 +1,9 @@
 // parser::kotlin::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-              // sibling extract fns (glob re-export)
-
+use super::super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // parent module: Ctx, TS_* consts, kept helpers
+                       // sibling extract fns (glob re-export)
 
 pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     let text = node_text(ctx.source, node);
@@ -41,7 +40,6 @@ pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
-
 pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
@@ -71,7 +69,12 @@ pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
                 .unwrap_or("")
                 .trim_end_matches('(')
                 .to_string();
-            if !callee_tail.is_empty() && callee_tail.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+            if !callee_tail.is_empty()
+                && callee_tail
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_alphabetic() || c == '_')
+            {
                 let seq = {
                     ctx.next_seq += 1;
                     ctx.next_seq

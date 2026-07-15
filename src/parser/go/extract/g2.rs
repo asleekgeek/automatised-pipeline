@@ -1,10 +1,9 @@
 // parser::go::extract::g2 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-              // sibling extract fns (glob re-export)
-
+use super::super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // parent module: Ctx, TS_* consts, kept helpers
+                       // sibling extract fns (glob re-export)
 
 pub(super) fn extract_value_decl(ctx: &mut Ctx, node: Node, scope: &str) {
     let mut stack = vec![node];
@@ -41,7 +40,6 @@ pub(super) fn extract_value_decl(ctx: &mut Ctx, node: Node, scope: &str) {
         }
     }
 }
-
 
 pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];

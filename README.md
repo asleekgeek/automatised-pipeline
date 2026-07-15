@@ -220,6 +220,33 @@ Deliberately **not** included: async runtime (we're stdio-blocking), HTTP client
 
 Graphs are per-finding by design (Lamport's isolation invariant): each finding gets its own LadybugDB instance at `<output_dir>/runs/<run_id>/findings/<finding_id>/graph/`. Zero-coordination concurrency, trivial cleanup, no cross-finding state leakage. Redundant indexing for shared codebases is acknowledged and mitigated in a later optional cache layer — not shoehorned into the core.
 
+### Configuration — `max_db_size`
+
+Every LadybugDB `Database` this crate opens reserves virtual address space up front, sized by `max_db_size`. lbug's own default (`SystemConfig::default()`) is `1 << 43` = 8 TiB per instance; with `graph_cache`'s `MAX_CACHED_GRAPHS = 8` entries live in the read-path cache at once, that is a 64 TiB worst case (issue #25). `src/graph_store.rs::system_config()` is the single choke point every `GraphStore::open_or_create` call resolves through, in this precedence order:
+
+1. **`AP_LBUG_TEST_MAX_DB_SIZE`** — test-only, set for every `cargo test` process via `.cargo/config.toml`'s `[env]` table (512 MiB / `2^29`, issue #21). Always wins when present, so `cargo test` behavior is independent of the production knob below.
+2. **`AP_LBUG_MAX_DB_SIZE`** — production override, unset by default. Bytes, must be a power of two and at least 8 MiB (lbug's own `BufferManager::verifySizeParams` floor). An invalid value is rejected with an actionable error at `GraphStore::open_or_create` time — never a silent fallback.
+3. **Default: 8 GiB (`1 << 33` bytes)** when neither var is set. Derivation: measured every lbug graph-DB file reachable on the machine that produced this fix (75 distinct graphs — see the table below); the largest was 495,849,472 bytes (~473 MiB, a cortex-viz index run including `node_modules`). Sizing rule: next power of two ≥ (largest measured × 16), floor 8 GiB. `473 MiB × 16` ≈ 7.39 GiB is below the floor, so the floor (already a power of two) applies.
+
+Re-measure and raise `AP_LBUG_MAX_DB_SIZE` (or the compiled-in default) if a materially larger workload is observed in production — e.g. indexing a monorepo with `node_modules` included.
+
+**Measured graph sizes (2026-07-15, `du -k` on every `graph` file found under `~/.cache/cortex/code-graphs/*/graph`, `~/.cortex/ap_graph/graph`, and `**/.prd-gen/graphs/*/graph`), top 10 of 75:**
+
+| Graph | Size |
+|---|---|
+| `repro-cortex-viz-deps` (cortex-viz + `node_modules`) | 473 MiB |
+| `bench-c2-viz-deps` (cortex-viz + deps) | 472 MiB |
+| `bench-c3-viz-pubapi` (cortex-viz, public API surface) | 460 MiB |
+| `wt-windows-launcher-96-97-*` (Cortex worktree) | 147 MiB |
+| `wt-homeostatic-*` (Cortex worktree) | 144 MiB |
+| `wt-tools-drift-*` (Cortex worktree) | 143 MiB |
+| `Cortex-wt-wiki-titles-*` | 142 MiB |
+| `wt-findings-provenance-*` | 126 MiB |
+| `anthropic-partnership-Cortex` | 126 MiB |
+| `wt-ingest-provenance-*` | 124 MiB |
+
+Total across all 75 measured graphs: ~4.87 GiB. Every graph other than the top 3 (which include `node_modules`) is under 150 MiB — the `node_modules`-inclusive runs are the actual worst case driving the sizing rule above.
+
 ---
 
 ## The zetetic standard

@@ -1,10 +1,9 @@
 // parser::rust::extract::g3 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 /// Emits a `macro_rules!` definition. AP has no dedicated Macro label, so it is
 /// recorded as a Constant carrying `is_macro=true` (queryable, and consistent
@@ -32,7 +31,6 @@ pub(super) fn extract_macro_definition(ctx: &mut ExtractCtx, node: Node, scope: 
     });
 }
 
-
 /// Emits an `extern crate foo;` declaration as an Import (it brings an external
 /// crate into scope, the same role as a `use`). The imported name is the `name`
 /// field. source: tree-sitter-rust v0.23.3 extern_crate_declaration.
@@ -57,7 +55,6 @@ pub(super) fn extract_extern_crate(ctx: &mut ExtractCtx, node: Node, scope: &str
         to_qualified_name: name,
     });
 }
-
 
 // ---------------------------------------------------------------------------
 // Type alias extraction
@@ -86,7 +83,6 @@ pub(super) fn extract_type_alias(ctx: &mut ExtractCtx, node: Node, scope: &str) 
     });
 }
 
-
 // ---------------------------------------------------------------------------
 // Use declaration extraction
 // ---------------------------------------------------------------------------
@@ -105,10 +101,18 @@ pub(super) fn extract_use(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     let end_line = node.end_position().row as u64 + 1;
     let visibility = extract_visibility(ctx.source, node);
     for (path, alias, is_glob) in leaves {
-        emit_import(ctx, scope, path, alias, is_glob, start_line, end_line, &visibility);
+        emit_import(
+            ctx,
+            scope,
+            path,
+            alias,
+            is_glob,
+            start_line,
+            end_line,
+            &visibility,
+        );
     }
 }
-
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_import(
@@ -152,12 +156,15 @@ pub(super) fn emit_import(
     });
 }
 
-
 /// Walks a `use_declaration` argument subtree and returns one tuple per leaf
 /// import in canonical `(path, alias, is_glob)` form. `prefix` is prepended
 /// (with `::`) to each path string — this is what carries the scope across
 /// nested brace lists like `use a::{b, c::{d, e}};`.
-pub(super) fn collect_use_leaves(source: &str, node: Node, prefix: &str) -> Vec<(String, String, bool)> {
+pub(super) fn collect_use_leaves(
+    source: &str,
+    node: Node,
+    prefix: &str,
+) -> Vec<(String, String, bool)> {
     match node.kind() {
         "use_list" => walk_use_list_children(source, node, prefix),
         "scoped_use_list" => leaf_from_scoped_use_list(source, node, prefix),
@@ -166,7 +173,6 @@ pub(super) fn collect_use_leaves(source: &str, node: Node, prefix: &str) -> Vec<
         _ => vec![leaf_from_identifier(source, node, prefix)],
     }
 }
-
 
 pub(super) fn leaf_from_scoped_use_list(
     source: &str,
@@ -184,8 +190,11 @@ pub(super) fn leaf_from_scoped_use_list(
     }
 }
 
-
-pub(super) fn leaf_from_use_as_clause(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
+pub(super) fn leaf_from_use_as_clause(
+    source: &str,
+    node: Node,
+    prefix: &str,
+) -> (String, String, bool) {
     let path = node
         .child_by_field_name("path")
         .map(|n| node_text(source, n))
@@ -197,8 +206,11 @@ pub(super) fn leaf_from_use_as_clause(source: &str, node: Node, prefix: &str) ->
     (join_use_path(prefix, &path), alias, false)
 }
 
-
-pub(super) fn leaf_from_use_wildcard(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
+pub(super) fn leaf_from_use_wildcard(
+    source: &str,
+    node: Node,
+    prefix: &str,
+) -> (String, String, bool) {
     // use_wildcard text is `<path>::*` (or just `*` when nested in
     // a brace list with an outer prefix). Strip the trailing `::*`
     // if present, otherwise treat the wildcard as attaching to the
@@ -209,8 +221,11 @@ pub(super) fn leaf_from_use_wildcard(source: &str, node: Node, prefix: &str) -> 
     (join_use_path(prefix, stripped), String::new(), true)
 }
 
-
-pub(super) fn leaf_from_identifier(source: &str, node: Node, prefix: &str) -> (String, String, bool) {
+pub(super) fn leaf_from_identifier(
+    source: &str,
+    node: Node,
+    prefix: &str,
+) -> (String, String, bool) {
     // identifier, scoped_identifier, crate, self, super, etc.
     // Inside a brace list, `self` refers to the brace-list prefix itself
     // (`use std::io::{self, BufRead}` → import `std::io` and `std::io::BufRead`).
@@ -223,8 +238,11 @@ pub(super) fn leaf_from_identifier(source: &str, node: Node, prefix: &str) -> (S
     (path, String::new(), false)
 }
 
-
-pub(super) fn walk_use_list_children(source: &str, list: Node, prefix: &str) -> Vec<(String, String, bool)> {
+pub(super) fn walk_use_list_children(
+    source: &str,
+    list: Node,
+    prefix: &str,
+) -> Vec<(String, String, bool)> {
     let mut cursor = list.walk();
     let mut out: Vec<(String, String, bool)> = Vec::new();
     for child in list.children(&mut cursor) {
@@ -236,7 +254,6 @@ pub(super) fn walk_use_list_children(source: &str, list: Node, prefix: &str) -> 
     }
     out
 }
-
 
 pub(super) fn join_use_path(prefix: &str, tail: &str) -> String {
     if prefix.is_empty() {

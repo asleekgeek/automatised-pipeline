@@ -178,9 +178,7 @@ fn parse_hunk_header(line: &str) -> Option<u64> {
 // Symbol mapping — lines to graph nodes
 // ---------------------------------------------------------------------------
 
-const SYMBOL_LABELS_WITH_LINES: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait",
-];
+const SYMBOL_LABELS_WITH_LINES: &[&str] = &["Function", "Method", "Struct", "Enum", "Trait"];
 
 fn map_lines_to_symbols(
     store: &GraphStore,
@@ -207,9 +205,13 @@ fn map_lines_to_symbols(
         };
 
         for row in &qr.rows {
-            if row.len() < 5 { continue; }
+            if row.len() < 5 {
+                continue;
+            }
             let id = &row[0];
-            if seen.contains(id) { continue; }
+            if seen.contains(id) {
+                continue;
+            }
 
             let start: u64 = row[3].parse().unwrap_or(0);
             let end: u64 = row[4].parse().unwrap_or(0);
@@ -236,10 +238,7 @@ fn map_lines_to_symbols(
 
             let impact = clustering::get_impact(store, &row[2]);
             let (community_id, processes) = match impact {
-                Ok(imp) => (
-                    imp.communities.into_iter().next(),
-                    imp.processes,
-                ),
+                Ok(imp) => (imp.communities.into_iter().next(), imp.processes),
                 Err(_) => (None, Vec::new()),
             };
 
@@ -276,10 +275,7 @@ fn map_lines_to_symbols(
 /// Rationale: symbols in more processes have higher blast radius (0.6 weight).
 /// Changes spanning more communities indicate broader architectural impact
 /// (0.4 weight). The weights are arbitrary engineering judgment.
-fn compute_risk_score(
-    symbols: &[ChangedSymbol],
-    total_communities: u64,
-) -> f64 {
+fn compute_risk_score(symbols: &[ChangedSymbol], total_communities: u64) -> f64 {
     if symbols.is_empty() {
         return 0.0;
     }
@@ -320,10 +316,7 @@ fn count_total_communities(store: &GraphStore) -> u64 {
 // Public entry points
 // ---------------------------------------------------------------------------
 
-pub fn analyze_diff(
-    store: &GraphStore,
-    diff_text: &str,
-) -> Result<DiffAnalysis, String> {
+pub fn analyze_diff(store: &GraphStore, diff_text: &str) -> Result<DiffAnalysis, String> {
     let hunks = parse_unified_diff(diff_text)?;
     build_analysis(store, &hunks)
 }
@@ -358,10 +351,7 @@ pub fn analyze_git_diff(
     analyze_diff(store, &diff_text)
 }
 
-fn build_analysis(
-    store: &GraphStore,
-    hunks: &[FileHunk],
-) -> Result<DiffAnalysis, String> {
+fn build_analysis(store: &GraphStore, hunks: &[FileHunk]) -> Result<DiffAnalysis, String> {
     let files_changed = hunks.len() as u64;
     let mut all_symbols: Vec<ChangedSymbol> = Vec::new();
 
@@ -630,8 +620,8 @@ diff --git a/src/main.rs b/src/main.rs
             .expect_err("must reject dash-prefixed head_ref");
         assert!(err2.contains("invalid_ref"), "got: {err2}");
 
-        let err3 = analyze_git_diff(&store, dir.path(), "", "HEAD")
-            .expect_err("must reject empty ref");
+        let err3 =
+            analyze_git_diff(&store, dir.path(), "", "HEAD").expect_err("must reject empty ref");
         assert!(err3.contains("invalid_ref"), "got: {err3}");
     }
 

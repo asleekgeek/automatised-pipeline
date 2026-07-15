@@ -1,10 +1,9 @@
 // parser::python::extract::g1 — see ../extract/mod.rs.
 
-use tree_sitter::Node;
-use crate::parser::*;      // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
-use super::super::*;       // parent module: Ctx, TS_* consts, kept helpers
-use super::*;              // sibling extract fns (glob re-export)
-
+use super::super::*; // parent module: Ctx, TS_* consts, kept helpers
+use super::*;
+use crate::parser::*; // ExtractedNode, ExtractedRef, node_text, qual, LABEL_*, …
+use tree_sitter::Node; // sibling extract fns (glob re-export)
 
 // ---------------------------------------------------------------------------
 // Top-level extraction
@@ -41,7 +40,6 @@ pub(crate) fn extract_top_level(
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Function / Method extraction
 // ---------------------------------------------------------------------------
@@ -67,9 +65,7 @@ pub(super) fn extract_function_or_method(
     // gets a unique primary key. Resolver name-based lookups still work.
     let qn = ctx.dedup_qn(raw_qn, start_line);
 
-    let mut props = vec![
-        ("is_async".to_string(), is_async.to_string()),
-    ];
+    let mut props = vec![("is_async".to_string(), is_async.to_string())];
     if !decorators.is_empty() {
         props.push(("decorators".to_string(), decorators.join(",")));
     }
@@ -114,7 +110,6 @@ pub(super) fn extract_function_or_method(
         extract_call_sites(ctx, body, &qn);
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Class extraction (maps to Struct label — closest equivalent)
@@ -162,7 +157,6 @@ pub(super) fn extract_class(ctx: &mut ExtractCtx, node: Node, scope: &str) {
     }
 }
 
-
 /// Returns comma-separated base-class names (`identifier` and `attribute`
 /// children of the superclasses field). Attribute access like `typing.NamedTuple`
 /// is preserved verbatim — the resolver looks up by the last segment.
@@ -184,7 +178,6 @@ pub(super) fn collect_base_names(source: &str, class_node: Node) -> String {
     }
     names.join(",")
 }
-
 
 pub(super) fn extract_base_classes(ctx: &mut ExtractCtx, class_node: Node, class_qn: &str) {
     let superclasses = match class_node.child_by_field_name("superclasses") {
@@ -208,7 +201,6 @@ pub(super) fn extract_base_classes(ctx: &mut ExtractCtx, class_node: Node, class
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Decorated definition extraction
