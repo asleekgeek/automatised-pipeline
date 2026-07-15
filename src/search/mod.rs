@@ -1187,8 +1187,13 @@ mod tests {
     use std::path::Path;
 
     fn fresh_store(tag: &str) -> (std::path::PathBuf, GraphStore) {
-        let tmp = std::env::temp_dir()
-            .join(format!("search_test_{}_{}", tag, std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("search_test_{tag}_"))
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&tmp);
         let r = index_codebase(Path::new("src"), &tmp).unwrap();
         let store = GraphStore::open_or_create(&r.graph_path).unwrap();

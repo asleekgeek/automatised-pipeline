@@ -65,10 +65,13 @@ impl Processor for Config {
 
 #[test]
 fn test_resolution_pipeline() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_integration_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_integration_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     // -- Set up fixture project --
@@ -136,10 +139,13 @@ fn test_resolution_pipeline() {
 
 #[test]
 fn test_field_type_uses_resolution() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_uses_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_uses_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture");
@@ -190,10 +196,13 @@ pub struct Outer {
 // analyze_codebase call aborted with status="error".
 #[test]
 fn test_field_type_alias_uses_resolution() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_uses_typealias_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_uses_typealias_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture");
@@ -259,9 +268,13 @@ impl Greet for Robot {
 
 #[test]
 fn test_implements_resolution_declared() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_impl_{}", std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_impl_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
     let src = tmp_root.join("src");
     fs::create_dir_all(&src).unwrap();
@@ -330,9 +343,13 @@ class Dog extends Animal implements Greeter {
 
 #[test]
 fn test_java_implements_and_extends_resolution() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_java_{}", std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_java_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
     let src = tmp_root.join("src");
     fs::create_dir_all(&src).unwrap();

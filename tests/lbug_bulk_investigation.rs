@@ -9,7 +9,11 @@ fn tmpdb(name: &str) -> (tempfile::TempDir, Database) {
     // Bounded via graph_store::system_config() — the single by-construction
     // choke point for lbug's max_db_size (see its doc comment in
     // src/graph_store.rs for the root cause and sourced bound).
-    let db = Database::new(dir.path().join("testdb"), graph_store::system_config()).unwrap();
+    let db = Database::new(
+        dir.path().join("testdb"),
+        graph_store::system_config().unwrap(),
+    )
+    .unwrap();
     (dir, db)
 }
 

@@ -147,7 +147,9 @@ pub struct GraphStore {
 /// Unset in production; set once in `.cargo/config.toml`'s `[env]` table so
 /// every `cargo test` process (unit tests AND every integration-test binary
 /// under `tests/`) picks it up automatically without any test file needing
-/// to opt in.
+/// to opt in. Takes priority over `PROD_MAX_DB_SIZE_ENV` (see
+/// `system_config`'s doc comment for the precedence rule) so this test-only
+/// knob keeps controlling `cargo test` behavior unchanged by issue #25.
 ///
 /// Root cause this bounds: `SystemConfig::default()` leaves `max_db_size`
 /// at its sentinel value `u64::from(u32::MAX)` (lbug-0.15.4/src/database.rs:71).
@@ -163,6 +165,76 @@ pub struct GraphStore {
 /// soak, 2026-07-15).
 pub const TEST_MAX_DB_SIZE_ENV: &str = "AP_LBUG_TEST_MAX_DB_SIZE";
 
+/// Environment variable that bounds lbug's `max_db_size` for production
+/// (non-`cargo test`) processes — bytes, must be a power of two, same
+/// `verifySizeParams` constraint as `TEST_MAX_DB_SIZE_ENV`. Unset by default,
+/// in which case `DEFAULT_PROD_MAX_DB_SIZE_BYTES` applies (issue #25: the
+/// prior behavior left lbug's own 8 TiB sentinel default in place for every
+/// production `GraphStore::open_or_create`/`GraphCache` open — up to
+/// `graph_cache::MAX_CACHED_GRAPHS` (8) concurrently cached stores × 8 TiB =
+/// 64 TiB of virtual address space reserved in the worst case).
+pub const PROD_MAX_DB_SIZE_ENV: &str = "AP_LBUG_MAX_DB_SIZE";
+
+/// Minimum accepted `max_db_size` for either env var, mirroring lbug's own
+/// floor: `BufferManager::verifySizeParams` rejects
+/// `maxDBSize < 2 * LBUG_PAGE_SIZE * PAGE_GROUP_SIZE`
+/// (`lbug-0.15.4/lbug-src/src/storage/buffer_manager/buffer_manager.cpp:99-112`)
+/// where `LBUG_PAGE_SIZE = 4096` (`PAGE_SIZE_LOG2 = 12`, generated
+/// `system_config.h`) and `PAGE_GROUP_SIZE = 1024` (`PAGE_GROUP_SIZE_LOG2 = 10`,
+/// `lbug-src/src/include/common/constants.h:74-75`) — `2 * 4096 * 1024` =
+/// 8 MiB. Rejecting below this in Rust surfaces an actionable AP-level error
+/// message instead of the opaque C++ `BufferManagerException` lbug would
+/// otherwise throw from inside `Database::new`.
+const MIN_MAX_DB_SIZE_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB — see doc comment above.
+
+/// Production default for `max_db_size` when `PROD_MAX_DB_SIZE_ENV` is unset.
+///
+/// Derivation (issue #25): measured every lbug graph-DB file reachable on
+/// the development machine that produced this fix (75 distinct graphs across
+/// `~/.cache/cortex/code-graphs/*/graph`, `~/.cortex/ap_graph/graph`, and
+/// `**/.prd-gen/graphs/*/graph` under active project checkouts — see the
+/// full measurement table in the issue #25 PR description). The largest
+/// observed file was `repro-cortex-viz-deps/graph` at 495,849,472 bytes
+/// (~473 MiB — a cortex-viz index run that included `node_modules`
+/// dependencies, the heaviest workload measured). Sizing rule: next power of
+/// two ≥ (largest measured × 16), floor 8 GiB. `473 MiB × 16` ≈ 7.39 GiB,
+/// which is below the 8 GiB floor, so the floor applies:
+/// `8 GiB = 1 << 33 = 8_589_934_592` bytes, already a power of two.
+/// source: measured 2026-07-15 on this development machine; see PR body for
+/// the `du -k` table. Re-measure and update this constant if a materially
+/// larger workload is observed in production.
+pub const DEFAULT_PROD_MAX_DB_SIZE_BYTES: u64 = 1 << 33; // 8 GiB — see doc comment above.
+
+/// Parses and validates a `max_db_size` env var value: must be a valid
+/// non-negative integer, at least `MIN_MAX_DB_SIZE_BYTES`, and a power of
+/// two. `env_name` is the variable name, used only to make the error message
+/// actionable (which var to fix, not a generic parse failure).
+///
+/// precondition: `raw` is the exact string read from `std::env::var`.
+/// postcondition: `Ok(bytes)` only for a value lbug's own
+/// `BufferManager::verifySizeParams` will accept; `Err` names the specific
+/// violation (not-a-number / too small / not-power-of-two) so a misconfigured
+/// deployment fails loudly at startup instead of silently falling back to a
+/// default the operator did not choose.
+fn parse_and_validate_max_db_size(raw: &str, env_name: &str) -> Result<u64, String> {
+    let bytes: u64 = raw
+        .parse()
+        .map_err(|e| format!("{env_name}={raw:?} is not a valid non-negative byte count: {e}"))?;
+    if bytes < MIN_MAX_DB_SIZE_BYTES {
+        return Err(format!(
+            "{env_name}={bytes} is below lbug's minimum max_db_size of \
+             {MIN_MAX_DB_SIZE_BYTES} bytes (8 MiB; BufferManager::verifySizeParams)"
+        ));
+    }
+    if bytes & (bytes - 1) != 0 {
+        return Err(format!(
+            "{env_name}={bytes} is not a power of two, which lbug's \
+             BufferManager::verifySizeParams requires"
+        ));
+    }
+    Ok(bytes)
+}
+
 /// Builds the `SystemConfig` used by every lbug `Database` this crate opens.
 /// The single by-construction choke point for `max_db_size`: both
 /// `GraphStore::open_or_create` (used by all production code and by every
@@ -171,31 +243,58 @@ pub const TEST_MAX_DB_SIZE_ENV: &str = "AP_LBUG_TEST_MAX_DB_SIZE";
 /// (`tests/lbug_bulk_investigation.rs`) call this function, so no future
 /// call site can reintroduce the unbounded default.
 ///
-/// In production (no `TEST_MAX_DB_SIZE_ENV` in the process environment) this
-/// is identical to `SystemConfig::default()` — production behavior and
-/// capacity are unchanged by this fix.
-pub fn system_config() -> SystemConfig {
+/// Precedence: `TEST_MAX_DB_SIZE_ENV` (`AP_LBUG_TEST_MAX_DB_SIZE`), when set,
+/// always wins — this preserves the issue #21/#24 test-bounding behavior
+/// unchanged. Otherwise `PROD_MAX_DB_SIZE_ENV` (`AP_LBUG_MAX_DB_SIZE`), when
+/// set, is used. Otherwise `DEFAULT_PROD_MAX_DB_SIZE_BYTES` (8 GiB) applies —
+/// this is the issue #25 fix: production no longer falls through to lbug's
+/// own 8 TiB sentinel default. Either env var, if set to a value that fails
+/// validation (not a power of two, or below lbug's 8 MiB floor), is rejected
+/// with an actionable error rather than silently falling back to a default
+/// the operator did not choose.
+pub fn system_config() -> Result<SystemConfig, String> {
     let config = SystemConfig::default();
-    match std::env::var(TEST_MAX_DB_SIZE_ENV) {
-        Ok(raw) => match raw.parse::<u64>() {
-            Ok(bytes) => config.max_db_size(bytes),
-            Err(_) => config,
-        },
-        Err(_) => config,
+    if let Ok(raw) = std::env::var(TEST_MAX_DB_SIZE_ENV) {
+        let bytes = parse_and_validate_max_db_size(&raw, TEST_MAX_DB_SIZE_ENV)?;
+        return Ok(config.max_db_size(bytes));
     }
+    let bytes = match std::env::var(PROD_MAX_DB_SIZE_ENV) {
+        Ok(raw) => parse_and_validate_max_db_size(&raw, PROD_MAX_DB_SIZE_ENV)?,
+        Err(_) => DEFAULT_PROD_MAX_DB_SIZE_BYTES,
+    };
+    Ok(config.max_db_size(bytes))
 }
 
 impl GraphStore {
-    /// Opens (or creates) a LadybugDB database at `path`.
+    /// Opens (or creates) a LadybugDB database at `path`, using the
+    /// by-construction `system_config()` (test bound, prod override, or the
+    /// issue #25 production default — see that function's doc comment for
+    /// the precedence rule).
     pub fn open_or_create(path: &Path) -> Result<Self, String> {
-        let db = Database::new(path, system_config())
-            .map_err(|e| format!("lbug database open failed: {e}"))?;
+        Self::open_or_create_with_config(path, system_config()?)
+    }
+
+    /// Opens (or creates) a LadybugDB database at `path` with an explicit
+    /// `SystemConfig`, bypassing `system_config()`'s env-var resolution.
+    ///
+    /// `pub(crate)` rather than a test-only cfg: exists solely so tests (in
+    /// this module and in `graph_cache`'s test module) can exercise a
+    /// specific `max_db_size` — in particular `DEFAULT_PROD_MAX_DB_SIZE_BYTES`
+    /// — without racing `.cargo/config.toml`'s process-wide
+    /// `AP_LBUG_TEST_MAX_DB_SIZE` override across parallel test threads.
+    /// `open_or_create` is the only production call site; it always resolves
+    /// through `system_config()` first, so production behavior is unchanged.
+    pub(crate) fn open_or_create_with_config(
+        path: &Path,
+        config: SystemConfig,
+    ) -> Result<Self, String> {
+        let db =
+            Database::new(path, config).map_err(|e| format!("lbug database open failed: {e}"))?;
         // Safety: see comment on the struct. The Database is heap-stable and
         // outlives the Connection because struct fields drop in declaration order.
         let conn: Connection<'static> = unsafe {
             std::mem::transmute::<Connection<'_>, Connection<'static>>(
-                Connection::new(&db)
-                    .map_err(|e| format!("lbug connection failed: {e}"))?,
+                Connection::new(&db).map_err(|e| format!("lbug connection failed: {e}"))?,
             )
         };
         Ok(GraphStore {
@@ -1377,5 +1476,102 @@ mod tests {
             .expect("count query");
         let count_val: u64 = cnt.rows[0][0].parse().unwrap_or(0);
         assert_eq!(count_val, 2, "injection attempt must not delete nodes");
+    }
+
+    // -----------------------------------------------------------------
+    // issue #25 — max_db_size validation and the production default.
+    // Pure-function tests: no env var mutation, so these are safe under
+    // cargo test's default parallel (threaded) execution alongside every
+    // other test in this binary.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn max_db_size_rejects_non_numeric() {
+        let err = parse_and_validate_max_db_size("not-a-number", "AP_LBUG_TEST_MAX_DB_SIZE")
+            .expect_err("non-numeric value must be rejected");
+        assert!(
+            err.contains("AP_LBUG_TEST_MAX_DB_SIZE"),
+            "error must name the offending var: {err}"
+        );
+    }
+
+    #[test]
+    fn max_db_size_rejects_below_lbug_floor() {
+        // 4 MiB is below the 8 MiB floor lbug's verifySizeParams enforces.
+        let err = parse_and_validate_max_db_size("4194304", "AP_LBUG_MAX_DB_SIZE")
+            .expect_err("below-floor value must be rejected");
+        assert!(
+            err.contains("minimum"),
+            "error must explain the floor: {err}"
+        );
+    }
+
+    #[test]
+    fn max_db_size_rejects_non_power_of_two() {
+        // 8 MiB + 1 byte: above the floor but not a power of two.
+        let err = parse_and_validate_max_db_size("8388609", "AP_LBUG_MAX_DB_SIZE")
+            .expect_err("non-power-of-two value must be rejected");
+        assert!(
+            err.contains("power of two"),
+            "error must explain the constraint: {err}"
+        );
+    }
+
+    #[test]
+    fn max_db_size_accepts_valid_power_of_two() {
+        // 512 MiB — the existing test bound (.cargo/config.toml).
+        let bytes = parse_and_validate_max_db_size("536870912", "AP_LBUG_TEST_MAX_DB_SIZE")
+            .expect("valid power-of-two above the floor must be accepted");
+        assert_eq!(bytes, 536_870_912);
+    }
+
+    #[test]
+    // clippy::assertions_on_constants: both operands are `const` today, so
+    // clippy can prove this at lint time — but the whole point of this test
+    // is to keep proving it if a future edit changes either constant. A
+    // `const { assert!(..) }` block would only run at compile time (same
+    // blind spot); the ordinary runtime assert here is deliberate, not an
+    // oversight.
+    #[allow(clippy::assertions_on_constants)]
+    fn prod_default_is_valid_per_lbug_constraints() {
+        // The production default itself must satisfy the exact constraints
+        // parse_and_validate_max_db_size enforces for an operator-supplied
+        // override, otherwise system_config()'s fallback would build a
+        // SystemConfig that lbug's own verifySizeParams rejects at open time.
+        assert!(
+            DEFAULT_PROD_MAX_DB_SIZE_BYTES >= MIN_MAX_DB_SIZE_BYTES,
+            "prod default must be at least lbug's 8 MiB floor"
+        );
+        assert_eq!(
+            DEFAULT_PROD_MAX_DB_SIZE_BYTES & (DEFAULT_PROD_MAX_DB_SIZE_BYTES - 1),
+            0,
+            "prod default must be a power of two"
+        );
+        assert_eq!(
+            DEFAULT_PROD_MAX_DB_SIZE_BYTES,
+            8 * 1024 * 1024 * 1024,
+            "prod default must be exactly 8 GiB"
+        );
+    }
+
+    #[test]
+    fn prod_default_config_opens_a_real_database() {
+        // Proves DEFAULT_PROD_MAX_DB_SIZE_BYTES is not just internally
+        // consistent (prod_default_is_valid_per_lbug_constraints, above) but
+        // actually accepted by lbug's C++ BufferManager::verifySizeParams.
+        // Built directly via SystemConfig rather than through
+        // system_config(), because .cargo/config.toml's [env] table sets
+        // AP_LBUG_TEST_MAX_DB_SIZE for every cargo-spawned process (issue
+        // #21/#24) and mutating that process-wide var at runtime here would
+        // race other tests in this binary — see graph_cache.rs's
+        // `prod_default_bound_opens_max_cached_graphs_simultaneously` for the
+        // multi-open concurrency proof at this exact bound.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_prod_default_test")
+            .tempdir()
+            .expect("create temp dir");
+        let cfg = SystemConfig::default().max_db_size(DEFAULT_PROD_MAX_DB_SIZE_BYTES);
+        let _store = GraphStore::open_or_create_with_config(&dir.path().join("testdb"), cfg)
+            .expect("prod default max_db_size must be accepted by lbug");
     }
 }

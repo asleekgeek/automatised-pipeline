@@ -57,7 +57,16 @@ fn b() {
 "#;
 
 fn tmp(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("stage9_{tag}_{}", std::process::id()))
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (tag is kept as a
+    // human-readable prefix for debuggability, not for uniqueness). Callers
+    // immediately `remove_dir_all` + `create_dir_all` this path, so handing
+    // back an already-`tempdir()`-created directory is harmless.
+    tempfile::Builder::new()
+        .prefix(&format!("stage9_{tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep()
 }
 
 fn build_graph(root: &std::path::Path, name: &str, main_src: &str) -> PathBuf {

@@ -70,10 +70,13 @@ impl Config {
 
 #[test]
 fn test_full_pipeline_on_fixture() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3a_integration_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3a_integration_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     // -- Set up fixture project --

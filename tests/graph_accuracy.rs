@@ -679,8 +679,14 @@ fn print_diff(fixture: &Fixture, observed: &Observed) {
 // ---------------------------------------------------------------------------
 
 fn fixture_root_for(test_name: &str) -> PathBuf {
-    let tmp = std::env::temp_dir()
-        .join(format!("graph_accuracy_{}_{}", test_name, std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (test_name is kept as a
+    // human-readable prefix for debuggability, not for uniqueness).
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("graph_accuracy_{test_name}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("create tempdir");
     tmp

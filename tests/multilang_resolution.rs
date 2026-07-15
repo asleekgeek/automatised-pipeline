@@ -23,10 +23,14 @@ use std::fs;
 /// Index a set of (relative_path, source) files into a fresh graph and run
 /// the Stage-3b resolution pass. Returns the resolution result.
 fn index_and_resolve(tag: &str, files: &[(&str, &str)]) -> ResolutionResult {
-    let root = std::env::temp_dir().join(format!(
-        "multilang_{tag}_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (tag is kept as a
+    // human-readable prefix for debuggability, not for uniqueness).
+    let root = tempfile::Builder::new()
+        .prefix(&format!("multilang_{tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&root);
     let src = root.join("src");
     for (rel, body) in files {

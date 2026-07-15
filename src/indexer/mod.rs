@@ -239,8 +239,13 @@ mod tests {
 
     #[test]
     fn test_index_own_project() {
-        let tmp = std::env::temp_dir()
-            .join(format!("indexer_test_graph_{}", std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let tmp = tempfile::Builder::new()
+            .prefix("indexer_test_graph_")
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&tmp);
         // Ensure the directory is fully gone before creating a fresh DB.
         assert!(!tmp.exists(), "failed to clean temp dir: {}", tmp.display());
@@ -297,8 +302,13 @@ mod tests {
     /// coverage vs. light-link edges), not a behavior change.
     fn build_all_file_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, IndexResult) {
         use std::io::Write;
-        let root = std::env::temp_dir()
-            .join(format!("indexer_allfile_test_{tag}_{}", std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let root = tempfile::Builder::new()
+            .prefix(&format!("indexer_allfile_test_{tag}_"))
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("js")).unwrap();
         std::fs::create_dir_all(root.join("docs")).unwrap();
@@ -329,8 +339,13 @@ mod tests {
             .write_all(&[0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0x00, 0x12])
             .unwrap();
 
-        let tmp = std::env::temp_dir()
-            .join(format!("indexer_allfile_graph_{tag}_{}", std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("indexer_allfile_graph_{tag}_"))
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&tmp);
         let result = index_codebase(&root, &tmp).unwrap();
         (root, tmp, result)
@@ -414,10 +429,13 @@ mod tests {
         // collect_source_files must return only the real file.
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!(
-            "indexer_symlink_test_{}",
-            std::process::id()
-        ));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let root = tempfile::Builder::new()
+            .prefix("indexer_symlink_test_")
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
@@ -450,10 +468,13 @@ mod tests {
         // Proves DependencyScope toggles descent into build/dependency dirs
         // while always excluding `.git`.
         // Fixture: root/app.rs, root/node_modules/dep.rs, root/.git/hook.rs.
-        let root = std::env::temp_dir().join(format!(
-            "indexer_include_deps_test_{}",
-            std::process::id()
-        ));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let root = tempfile::Builder::new()
+            .prefix("indexer_include_deps_test_")
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("node_modules")).unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
@@ -494,10 +515,13 @@ mod tests {
         // fn). PublicApi must drop the PRIVATE fn from dep.rs only — the
         // project file's private fn stays, and dep.rs's pub fn stays too.
         // source: ADR-4253701 §Decision 1.
-        let root = std::env::temp_dir().join(format!(
-            "indexer_public_api_test_{}",
-            std::process::id()
-        ));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let root = tempfile::Builder::new()
+            .prefix("indexer_public_api_test_")
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("node_modules")).unwrap();
         std::fs::write(
@@ -509,10 +533,13 @@ mod tests {
             "pub fn dep_pub() {}\nfn dep_private() {}\n",
         ).unwrap();
 
-        let graph_path = std::env::temp_dir().join(format!(
-            "indexer_public_api_graph_{}",
-            std::process::id()
-        ));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let graph_path = tempfile::Builder::new()
+            .prefix("indexer_public_api_graph_")
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&graph_path);
 
         index_codebase_with_language(&root, &graph_path, None, DependencyScope::PublicApi)

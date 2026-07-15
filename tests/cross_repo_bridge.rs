@@ -68,7 +68,13 @@ fn build_graph(root: &Path, name: &str, file: &str, source: &str) -> PathBuf {
 
 #[test]
 fn cross_repo_forward_reverse_and_homonym() {
-    let root = std::env::temp_dir().join(format!("cross_repo_bridge_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let root = tempfile::Builder::new()
+        .prefix("cross_repo_bridge_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&root);
 
     let provider = build_graph(&root, "provider", "lib.rs", PROVIDER_LIB);

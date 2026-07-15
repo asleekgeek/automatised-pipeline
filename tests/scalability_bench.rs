@@ -24,10 +24,13 @@ const MAX_WALL_CLOCK_MS: u128 = 60_000;
 
 #[test]
 fn test_index_500_file_synthetic_fixture() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "scalability_bench_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("scalability_bench_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
     let src_dir = tmp_root.join("src");
     fs::create_dir_all(&src_dir).expect("create src dir");

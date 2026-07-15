@@ -61,10 +61,16 @@ pub fn transform(input: &str) -> String {
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn setup_graph(test_name: &str) -> (PathBuf, GraphStore) {
+    // issue #25 audit: the in-process COUNTER already disambiguates
+    // concurrent calls within one test binary, but process::id() still
+    // collides across separate process invocations under PID reuse.
+    // tempfile's random suffix does not depend on either.
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3d_{}_{n}_{}", test_name, std::process::id()
-    ));
+    let tmp_root = tempfile::Builder::new()
+        .prefix(&format!("stage3d_{test_name}_{n}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture/src");

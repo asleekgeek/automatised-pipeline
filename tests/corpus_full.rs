@@ -192,14 +192,20 @@ fn run_corpus(corpus_path: &str) {
         target_root.display()
     );
 
-    let tmp = std::env::temp_dir().join(format!(
-        "corpus_full_{}_{}",
-        target_root
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "root".to_string()),
-        std::process::id()
-    ));
+    // issue #25 audit: process::id()-based naming collides across processes
+    // under PID reuse (observed under back-to-back soak runs). tempfile's
+    // Builder allocates a cryptographically-random suffix instead, which
+    // does not depend on or repeat across OS PIDs; `.keep()` hands the path
+    // to this test's own manual cleanup below instead of auto-deleting it.
+    let target_tag = target_root
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "root".to_string());
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("corpus_full_{target_tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("mkdir tempdir");
     let graph_path = tmp.join("graph.lbug");

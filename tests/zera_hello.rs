@@ -321,7 +321,13 @@ fn zera_hello_on_cortex_mcp_server() {
     let target = PathBuf::from("/Users/cdeust/Developments/Cortex/mcp_server");
     assert!(target.is_dir(), "Cortex not at {}", target.display());
 
-    let tmp = std::env::temp_dir().join(format!("zera_s1_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("zera_s1_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("mkdir");
     let graph_path = tmp.join("graph.lbug");

@@ -4188,8 +4188,13 @@ mod security_tests {
         // Kuzu db; `remove_dir_all` on a file returns ENOTDIR (os error 20).
         // The helper must delete both shapes and report a missing path as an
         // error rather than panicking.
-        let base = std::env::temp_dir()
-            .join(format!("ap-remove-stale-{}", std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let base = tempfile::Builder::new()
+            .prefix("ap-remove-stale-")
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let graph = base.join("graph");
@@ -4219,7 +4224,13 @@ mod security_tests {
         // rebuild absolute paths from AP's relative ones (cortex-viz wiki->file
         // join + tool-file keying). It is written NEXT TO the graph, never
         // inside it — the graph itself stays portable.
-        let base = std::env::temp_dir().join(format!("ap-meta-{}", std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let base = tempfile::Builder::new()
+            .prefix("ap-meta-")
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let root = base.join("some/repo/root");
@@ -4277,8 +4288,13 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
 
     /// Builds an indexed + resolved + clustered fixture graph, returns its dir.
     fn build_fixture(tag: &str) -> std::path::PathBuf {
-        let tmp_root = std::env::temp_dir()
-            .join(format!("pagination_{tag}_{}", std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let tmp_root = tempfile::Builder::new()
+            .prefix(&format!("pagination_{tag}_"))
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = fs::remove_dir_all(&tmp_root);
         let src = tmp_root.join("fixture/src");
         fs::create_dir_all(&src).expect("create fixture src");

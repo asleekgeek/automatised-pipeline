@@ -11,8 +11,18 @@ use std::path::Path;
 #[test]
 fn test_multilang_auto_index() {
     let fixture = Path::new("tests/fixtures/multilang");
-    let tmp = std::env::temp_dir()
-        .join(format!("multilang_test_{}", std::process::id()));
+    // issue #25 audit: process::id() is IDENTICAL for every #[test] in this
+    // binary (all run as threads of one process) and can additionally repeat
+    // across process invocations under PID reuse (observed: this test and
+    // test_language_filter_rust_only both hit "duplicated primary key"
+    // errors under a back-to-back soak — a leftover DB from a prior process
+    // that got the same recycled PID). tempfile's random suffix depends on
+    // neither the thread nor the OS PID.
+    let tmp = tempfile::Builder::new()
+        .prefix("multilang_test_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
 
     let result = indexer::index_codebase_with_language(
@@ -85,8 +95,13 @@ fn test_multilang_auto_index() {
 #[test]
 fn test_language_filter_rust_only() {
     let fixture = Path::new("tests/fixtures/multilang");
-    let tmp = std::env::temp_dir()
-        .join(format!("multilang_rust_only_{}", std::process::id()));
+    // issue #25 audit: see test_multilang_auto_index, above, for why
+    // process::id() is unsafe here.
+    let tmp = tempfile::Builder::new()
+        .prefix("multilang_rust_only_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&tmp);
 
     let result = indexer::index_codebase_with_language(

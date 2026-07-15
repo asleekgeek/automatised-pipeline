@@ -34,7 +34,14 @@ pub struct Tool {
 "#;
 
 fn tmp(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("stage4_{tag}_{}", std::process::id()))
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (tag is kept as a
+    // human-readable prefix for debuggability, not for uniqueness).
+    tempfile::Builder::new()
+        .prefix(&format!("stage4_{tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep()
 }
 
 fn build_fixture_graph(fixture_dir: &std::path::Path, graph_dir: &std::path::Path) {

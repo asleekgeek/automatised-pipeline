@@ -60,7 +60,13 @@ pub fn gamma() -> i32 {
 
 #[test]
 fn test_index_history_builds_traversable_version_spine() {
-    let repo = std::env::temp_dir().join(format!("history_it_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let repo = tempfile::Builder::new()
+        .prefix("history_it_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = std::fs::remove_dir_all(&repo);
     let src = repo.join("src");
     std::fs::create_dir_all(&src).unwrap();

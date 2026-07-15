@@ -53,10 +53,16 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Returns (tmp_root, store, index_dir). The index_dir is passed explicitly to
 /// search_graph by each test — no shared env var, so the tests are parallel-safe.
 fn setup_with_search_index(test_name: &str) -> (PathBuf, GraphStore, PathBuf) {
+    // issue #25 audit: the in-process COUNTER already disambiguates
+    // concurrent calls within one test binary, but process::id() still
+    // collides across separate process invocations under PID reuse.
+    // tempfile's random suffix does not depend on either.
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3d_hybrid_{}_{n}_{}", test_name, std::process::id()
-    ));
+    let tmp_root = tempfile::Builder::new()
+        .prefix(&format!("stage3d_hybrid_{test_name}_{n}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture/src");

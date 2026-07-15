@@ -9,7 +9,13 @@ use std::fs;
 
 #[test]
 fn report_tfidf_index_size() {
-    let tmp = std::env::temp_dir().join(format!("tfidf_size_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp = tempfile::Builder::new()
+        .prefix("tfidf_size_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
     let graph_dir = tmp.join("graph");

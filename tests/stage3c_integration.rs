@@ -62,9 +62,13 @@ pub fn unused_helper() -> i32 {
 
 #[test]
 fn test_clustering_and_process_tracing() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3c_integration_{}", std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3c_integration_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     // Set up fixture project
@@ -229,9 +233,13 @@ fn test_cluster_graph_returns_mapping() {
     // community membership mapping, not just counts/modularity. Without
     // this, the harness Q12 scorer (adjusted Rand index) has nothing to
     // compare against and collapses to 0.
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3c_mapping_{}", std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3c_mapping_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture/src");
@@ -304,9 +312,13 @@ fn test_cluster_graph_is_idempotent() {
     // Process nodes were never purged. The harness clusters once at setup
     // and once per q12 label, so the label call always hit the error path
     // and the ARI scorer compared against an empty mapping.
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3c_idempotent_{}", std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3c_idempotent_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture/src");
