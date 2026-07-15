@@ -1,5 +1,5 @@
 use crate::epistemic::{self, Boundary};
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 
 /// A reverse-dependency edge endpoint, carried as a re-queryable handle
 /// (id + qualified_name + label) rather than a flattened name string, so a
@@ -43,7 +43,7 @@ pub struct ImpactResult {
 // ---------------------------------------------------------------------------
 
 pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResult, String> {
-    let esc = qualified_name.replace('\'', "\\'");
+    let esc = cypher_str(qualified_name);
 
     // Find communities this symbol belongs to
     let mut communities = Vec::new();
@@ -51,7 +51,7 @@ pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResu
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
-             WHERE n.id = '{esc}' OR n.qualified_name = '{esc}' \
+             WHERE n.id = {esc} OR n.qualified_name = {esc} \
              RETURN c.id"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -69,7 +69,7 @@ pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResu
         let rel = format!("ParticipatesIn_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(p:Process) \
-             WHERE n.id = '{esc}' OR n.qualified_name = '{esc}' \
+             WHERE n.id = {esc} OR n.qualified_name = {esc} \
              RETURN p.name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -147,13 +147,13 @@ pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResu
 
 /// Looks up the symbol label of the impact target by qualified_name or id.
 /// Returns the first matching `SYMBOL_LABELS` label, or `None` when the target
-/// is not a resolvable symbol node (e.g. a File). `esc` must already be
-/// single-quote-escaped (see `get_impact`).
+/// is not a resolvable symbol node (e.g. a File). `esc` must already be a
+/// `cypher_str`-quoted literal (see `get_impact`).
 fn lookup_target_label(store: &GraphStore, esc: &str) -> Option<String> {
     for label in super::SYMBOL_LABELS {
         let cypher = format!(
             "MATCH (n:{label}) \
-             WHERE n.id = '{esc}' OR n.qualified_name = '{esc}' \
+             WHERE n.id = {esc} OR n.qualified_name = {esc} \
              RETURN n.id LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -170,7 +170,7 @@ fn lookup_target_label(store: &GraphStore, esc: &str) -> Option<String> {
 /// `from` endpoints as re-queryable handles. This is the inverse of the
 /// forward "what does X reference?" walk: "what references X?".
 ///
-/// `esc` must already be single-quote-escaped (see `get_impact`).
+/// `esc` must already be a `cypher_str`-quoted literal (see `get_impact`).
 /// CallSite sources are skipped: they carry no `qualified_name`, so they
 /// would contribute null-name noise — the function-level caller is the
 /// meaningful dependent and is captured by the direct `Calls_Function_*` /
@@ -193,7 +193,7 @@ fn reverse_dependents(store: &GraphStore, esc: &str, prefix: &str) -> Vec<Impact
         // `r.confidence` is empty and we fall back to the relation floor).
         let cypher = format!(
             "MATCH (a:{from_label})-[r:{rel}]->(b:{to_label}) \
-             WHERE b.id = '{esc}' OR b.qualified_name = '{esc}' \
+             WHERE b.id = {esc} OR b.qualified_name = {esc} \
              RETURN a.id, a.qualified_name, r.confidence"
         );
         if let Ok(qr) = store.execute_query(&cypher) {

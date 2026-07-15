@@ -34,7 +34,7 @@
 // source: stage-4 brief (token-per-word search cap); issue #14 root-cause
 // discussion (this file's header); RRF citation retained in `crate::search`.
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use crate::search;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -333,9 +333,9 @@ fn enrich(store: &GraphStore, hit: search::SearchResult, match_mode: MatchMode) 
 }
 
 fn lookup_community_size(store: &GraphStore, community_id: &str) -> Option<u64> {
-    let escaped = community_id.replace('\'', "\\'");
+    let escaped = cypher_str(community_id);
     let cypher =
-        format!("MATCH (c:Community) WHERE c.id = '{escaped}' RETURN c.member_count LIMIT 1");
+        format!("MATCH (c:Community) WHERE c.id = {escaped} RETURN c.member_count LIMIT 1");
     let qr = store.execute_query(&cypher).ok()?;
     let row = qr.rows.first()?;
     row.first().and_then(|s| s.parse::<u64>().ok())

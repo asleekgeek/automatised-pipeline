@@ -17,7 +17,7 @@
 // source: stages/stage-8.md §4 (gate definitions), §6 (severity ladder),
 //         §7 (tool schema).
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use crate::search;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -231,7 +231,7 @@ fn run_s1(
 fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
     // Mirrors search/mod.rs::lookup_community — per-label iteration for
     // lbug dialect compatibility (no rel-type alternation).
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     for label in [
         "Function",
         "Method",
@@ -245,7 +245,7 @@ fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
-             WHERE n.qualified_name = '{escaped}' \
+             WHERE n.qualified_name = {escaped} \
              RETURN c.id LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -324,7 +324,7 @@ struct SymbolMeta {
 }
 
 fn symbol_visibility_and_parent(store: &GraphStore, qualified_name: &str) -> Option<SymbolMeta> {
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     // 1) pull the symbol's visibility (labels that carry it).
     let vis = fetch_visibility(store, &escaped)?;
     // 2) Is the symbol defined directly by a File (not via a Module)?
@@ -347,7 +347,7 @@ fn fetch_visibility(store: &GraphStore, escaped_qn: &str) -> Option<Option<Strin
     // Struct, Enum, Trait, Field. Method receiver_type is irrelevant here.
     for label in ["Function", "Method", "Struct", "Enum", "Trait"] {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped_qn}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped_qn} \
              RETURN n.visibility LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -378,7 +378,7 @@ fn has_file_parent(store: &GraphStore, escaped_qn: &str) -> bool {
         "Defines_File_TypeAlias",
     ] {
         let cypher = format!(
-            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = '{escaped_qn}' \
+            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = {escaped_qn} \
              RETURN f.path LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -400,7 +400,7 @@ fn lookup_file_path(store: &GraphStore, escaped_qn: &str) -> Option<String> {
         "Defines_File_TypeAlias",
     ] {
         let cypher = format!(
-            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = '{escaped_qn}' \
+            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = {escaped_qn} \
              RETURN f.path LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -427,7 +427,7 @@ fn run_s4(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
     // Since the schema has no File->Import edge, we scope by qualified_name
     // prefix: Import nodes live under the file's scope (parser/rust.rs §
     // handle_use_declaration — qualified_name = qual(scope, display_name)).
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     let file_path = match lookup_file_path(store, &escaped) {
         Some(p) => p,
         None => return,
@@ -436,9 +436,9 @@ fn run_s4(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
     // any leading path component the resolver removes (search::strip_leading
     // mirrors this), then match qualified_name prefix.
     let scope = file_scope_from_path(&file_path);
-    let escaped_scope = scope.replace('\'', "\\'");
+    let escaped_scope_prefix = cypher_str(&format!("{scope}::"));
     let cypher = format!(
-        "MATCH (i:Import) WHERE i.qualified_name STARTS WITH '{escaped_scope}::' \
+        "MATCH (i:Import) WHERE i.qualified_name STARTS WITH {escaped_scope_prefix} \
          RETURN count(i)"
     );
     let count: u64 = match store.execute_query(&cypher) {
@@ -480,13 +480,13 @@ fn file_scope_from_path(file_path: &str) -> String {
 // ---------------------------------------------------------------------------
 
 fn run_s5(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag>) {
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     let mut reached = 0u64;
     for label in ["Function", "Method"] {
         let rel = format!("ParticipatesIn_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(p:Process) \
-             WHERE n.qualified_name = '{escaped}' AND p.entry_kind = 'test' \
+             WHERE n.qualified_name = {escaped} AND p.entry_kind = 'test' \
              RETURN count(p)"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -565,6 +565,84 @@ pub fn write_security(path: &Path, value: &Value) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph_store::{NODE_COMMUNITY, NODE_FUNCTION};
+
+    // source: issue #16 — the naive single-quote-only `String::replace`
+    // escape (the exact pattern this file used before this fix, and the
+    // SECOND reintroduction of the vulnerability git_diff.rs's "M1 fix"
+    // comment already documented) is defeated by a `\'` payload: the escape turns
+    // `\'` into `\\'` — an escaped backslash followed by an UNescaped
+    // closing quote — which closes the Cypher string literal early and lets
+    // the attacker-controlled remainder execute as live Cypher (e.g.
+    // `DETACH DELETE n`). `qualified_name` reaching `community_of` /
+    // `run_s1` originates from the changed-symbol list the security gates
+    // are handed for a diff — untrusted content in the same sense as the
+    // LLM-generated PRD claims covered by
+    // prd_validator::verdict_tests::test_file_has_graph_node_escapes_adversarial_path
+    // and graph_store::tests::test_cypher_injection_rejected. This test
+    // proves S1 (`community_of`) round-trips the adversarial qualified_name
+    // as ordinary string data instead of executing the injected Cypher.
+    #[test]
+    fn test_community_of_escapes_adversarial_qualified_name() {
+        let dir = tempfile::Builder::new()
+            .prefix("security_gates_cypher_inject_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
+        store.create_schema().expect("create_schema");
+
+        let evil_qn = r"evil\'::fn() -> () DETACH DELETE n //";
+        let safe_qn = "safe::fn";
+        let community_id = "community::0";
+
+        store
+            .insert_node(
+                NODE_COMMUNITY,
+                &[
+                    ("id", &cypher_str(community_id)),
+                    ("name", &cypher_str("community_0")),
+                    ("algorithm", &cypher_str("louvain+c2")),
+                    ("resolution_param", "1.0"),
+                    ("member_count", "2"),
+                    ("modularity_contribution", "0.0"),
+                ],
+            )
+            .expect("insert community node");
+        for qn in [evil_qn, safe_qn] {
+            store
+                .insert_node(
+                    NODE_FUNCTION,
+                    &[
+                        ("id", &cypher_str(qn)),
+                        ("name", &cypher_str(qn)),
+                        ("qualified_name", &cypher_str(qn)),
+                        ("start_line", "1"),
+                        ("end_line", "1"),
+                        ("visibility", &cypher_str("pub")),
+                        ("is_async", "false"),
+                        ("language", &cypher_str("rust")),
+                    ],
+                )
+                .expect("insert function node");
+            store
+                .insert_edge("MemberOf_Function_Community", qn, community_id, &[])
+                .expect("insert MemberOf edge");
+        }
+
+        assert_eq!(
+            community_of(&store, evil_qn),
+            Some(community_id.to_string()),
+            "the adversarial qualified_name must round-trip as ordinary string data \
+             and still resolve to its own community"
+        );
+        assert_eq!(
+            community_of(&store, safe_qn),
+            Some(community_id.to_string()),
+            "the benign function node must survive — the adversarial qualified_name \
+             must not have executed DETACH DELETE"
+        );
+    }
 
     #[test]
     fn test_auth_patterns_lowercase() {

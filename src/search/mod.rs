@@ -14,7 +14,7 @@ pub mod bm25;
 pub mod rrf;
 pub mod vector;
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -403,7 +403,7 @@ fn enrich_from_graph(
     process_counts: &HashMap<String, usize>,
     options: &SearchOptions,
 ) -> Option<SearchResult> {
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
 
     for &label in SEARCHABLE_LABELS {
         if let Some(ref filter) = options.label_filter {
@@ -418,9 +418,8 @@ fn enrich_from_graph(
         } else {
             "n.qualified_name, n.name, n.id"
         };
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' RETURN {return_clause}"
-        );
+        let cypher =
+            format!("MATCH (n:{label}) WHERE n.qualified_name = {escaped} RETURN {return_clause}");
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
                 if row.len() < 3 {
@@ -573,7 +572,7 @@ pub fn get_context(
     let resolved =
         resolve_qualified_name(store, qualified_name).map_err(GetContextError::NotFound)?;
 
-    let escaped = resolved.replace('\'', "\\'");
+    let escaped = cypher_str(&resolved);
     let (label, name, file_path, start_line, end_line, visibility) =
         find_node_details(store, &escaped)?;
 
@@ -653,7 +652,7 @@ pub(crate) fn strip_leading_path_component(input: &str) -> Option<String> {
 }
 
 fn exact_match_qn(store: &GraphStore, input: &str) -> Option<String> {
-    let escaped = input.replace('\'', "\\'");
+    let escaped = cypher_str(input);
     let labels = [
         "Function",
         "Method",
@@ -666,7 +665,7 @@ fn exact_match_qn(store: &GraphStore, input: &str) -> Option<String> {
     ];
     for label in labels {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN n.qualified_name LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -681,7 +680,7 @@ fn exact_match_qn(store: &GraphStore, input: &str) -> Option<String> {
 }
 
 fn find_name_candidates(store: &GraphStore, name: &str, limit: usize) -> Vec<String> {
-    let escaped = name.replace('\'', "\\'");
+    let escaped = cypher_str(name);
     let labels = [
         "Function",
         "Method",
@@ -698,7 +697,7 @@ fn find_name_candidates(store: &GraphStore, name: &str, limit: usize) -> Vec<Str
             break;
         }
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.name = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.name = {escaped} \
              RETURN n.qualified_name LIMIT {limit}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -949,7 +948,7 @@ fn find_node_details(
     let labels_with_lines = ["Function", "Method", "Struct", "Enum", "Trait"];
     for label in labels_with_lines {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN n.name, n.qualified_name, n.start_line, n.end_line, n.visibility"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -970,7 +969,7 @@ fn find_node_details(
     let labels_no_lines = ["Module", "Constant", "TypeAlias"];
     for label in labels_no_lines {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN n.name, n.qualified_name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -1013,7 +1012,7 @@ fn find_related_out(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<Rela
         // flood the accumulated Vec or the downstream MCP response.
         let cypher = format!(
             "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) \
-             WHERE a.qualified_name = '{escaped}' OR a.id = '{escaped}' \
+             WHERE a.qualified_name = {escaped} OR a.id = {escaped} \
              RETURN b.name, b.qualified_name LIMIT {MAX_RELATED_PER_DIRECTION}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -1050,7 +1049,7 @@ fn find_related_in(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<Relat
         // LIMIT bounds the per-relation result; see find_related_out.
         let cypher = format!(
             "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) \
-             WHERE b.qualified_name = '{escaped}' OR b.id = '{escaped}' \
+             WHERE b.qualified_name = {escaped} OR b.id = {escaped} \
              RETURN a.name, a.qualified_name LIMIT {MAX_RELATED_PER_DIRECTION}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -1086,7 +1085,7 @@ fn find_community(store: &GraphStore, escaped: &str) -> Option<CommunityInfo> {
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
-             WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+             WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN c.id, c.name, c.member_count LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -1110,7 +1109,7 @@ fn find_processes(store: &GraphStore, escaped: &str) -> Vec<ProcessRef> {
         let ep_rel = format!("EntryPointOf_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{ep_rel}]->(p:Process) \
-             WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+             WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN p.name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -1126,7 +1125,7 @@ fn find_processes(store: &GraphStore, escaped: &str) -> Vec<ProcessRef> {
         let part_rel = format!("ParticipatesIn_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{part_rel}]->(p:Process) \
-             WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+             WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN p.name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {

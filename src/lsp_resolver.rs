@@ -6,7 +6,7 @@
 //
 // source: stages/stage-3b.md §7 — "method calls on inferred types" deferred to LSP
 
-use crate::graph_store::{is_known_rel_table, GraphStore};
+use crate::graph_store::{cypher_str, is_known_rel_table, GraphStore};
 use crate::lsp_client::{self, LspClient, LspResolutionResult};
 use std::collections::HashMap;
 use std::path::Path;
@@ -203,10 +203,10 @@ fn has_calls_edge(store: &GraphStore, callsite_id: &str) -> bool {
         }
         let from_label = parts[1];
         let to_label = parts[2];
-        let esc = caller_qn.replace('\'', "\\'");
+        let esc = cypher_str(&caller_qn);
         let cypher = format!(
             "MATCH (a:{from_label})-[r:{prefix}]->(b:{to_label}) \
-             WHERE a.id = '{esc}' RETURN count(r)"
+             WHERE a.id = {esc} RETURN count(r)"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             if !qr.rows.is_empty() {
@@ -244,9 +244,9 @@ fn extract_file_from_qn(qn: &str) -> String {
 }
 
 fn determine_caller_label(store: &GraphStore, caller_qn: &str) -> String {
-    let esc = caller_qn.replace('\'', "\\'");
+    let esc = cypher_str(caller_qn);
     for label in &["Function", "Method"] {
-        let cypher = format!("MATCH (n:{label}) WHERE n.qualified_name = '{esc}' RETURN n.id");
+        let cypher = format!("MATCH (n:{label}) WHERE n.qualified_name = {esc} RETURN n.id");
         if let Ok(qr) = store.execute_query(&cypher) {
             if !qr.rows.is_empty() {
                 return label.to_string();

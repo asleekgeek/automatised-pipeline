@@ -6,7 +6,7 @@
 // verdict.rs's header for the full split rationale).
 
 use super::{ResolvedClaim, ScopeClaim, ValidationFinding};
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use serde_json::json;
 use std::collections::BTreeSet;
 
@@ -29,7 +29,7 @@ pub(super) fn communities_for_resolved(
 fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
     // Iterate per-label rather than using rel-type alternation — mirrors
     // search/mod.rs::lookup_community for lbug dialect compatibility.
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     for label in [
         "Function",
         "Method",
@@ -43,7 +43,7 @@ fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
-             WHERE n.qualified_name = '{escaped}' \
+             WHERE n.qualified_name = {escaped} \
              RETURN c.id LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
