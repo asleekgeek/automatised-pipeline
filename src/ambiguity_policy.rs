@@ -34,20 +34,13 @@ pub enum Evidence {
     /// Exactly one candidate's qualified name shares the caller's
     /// package/module prefix.
     PackageProximity,
-    /// No evidence tier above discriminated the candidates. A deterministic
-    /// tiebreak (sort by qualified name, take first) was applied to
-    /// preserve recall instead of dropping the edge; see `resolve_deterministic`.
-    DeterministicTiebreak,
 }
 
 /// Heuristic ordinal trust tiers — NOT measured probabilities. These are
 /// policy constants, documented and reviewed as part of issue #30's fix;
 /// they are deliberately monotone in evidence strength so that a consumer
 /// filtering on `confidence >= threshold` never keeps a weaker-evidence
-/// match over a stronger one. `DeterministicTiebreak` is capped at 0.5 —
-/// below every real-evidence tier — so a multi-candidate guess can never
-/// look as trustworthy as a principled match (the exact inversion issue
-/// #30 reported: 1.0 for `candidates[0]`, 0.9 for a real same-file match).
+/// match over a stronger one.
 /// source: issue #30 policy proposal (ordinals accepted in the fix PR).
 pub fn confidence_for(evidence: Evidence) -> f64 {
     match evidence {
@@ -55,7 +48,6 @@ pub fn confidence_for(evidence: Evidence) -> f64 {
         Evidence::ImportMatch => 0.9,
         Evidence::SameFileUnique => 0.85,
         Evidence::PackageProximity => 0.7,
-        Evidence::DeterministicTiebreak => 0.5,
     }
 }
 
@@ -135,38 +127,6 @@ pub fn resolve<T: Candidate>(candidates: &[T], ctx: &Context) -> Resolution<T> {
     }
 }
 
-/// Same contract as `resolve`, plus: when `resolve` would return
-/// `Ambiguous`, applies a deterministic tiebreak (sort candidates by
-/// qualified name, take the first) instead of refusing the match. This
-/// kills the indexing-order dependence of the old `candidates[0]` bug
-/// (issue #30) while preserving recall, at the cost of precision when the
-/// tiebroken candidate is wrong.
-///
-/// NOT currently called by resolver.rs's production paths (both
-/// `resolve_single_call` and `resolve_single_import` use plain `resolve`
-/// and drop genuinely ambiguous references instead). Measured on
-/// `tests/graph_accuracy.rs`'s `infrastructure_pg_store_py` fixture: using
-/// this function there introduced 2 false-positive Calls edges (a
-/// name-ambiguous bare call whose correct target follows Python scoping
-/// rules neither evidence tier models), dropping Calls F1 from 1.0 to 0.5.
-/// Kept public and tested for a future caller (e.g. issue #29/#32) that
-/// wants recall-preserving tiebreak for its own ambiguity class.
-///
-/// postcondition: the returned target, when `Ambiguous` was the
-/// pre-tiebreak outcome, is the lexicographically-first candidate by
-/// qualified name — identical regardless of candidate insertion order or
-/// callee spelling — with `evidence = DeterministicTiebreak` and
-/// `confidence = confidence_for(DeterministicTiebreak)` (never 1.0).
-pub fn resolve_deterministic<T: Candidate>(candidates: &[T], ctx: &Context) -> Resolution<T> {
-    match resolve(candidates, ctx) {
-        Resolution::Ambiguous { mut candidates } => {
-            candidates.sort_by(|a, b| a.qualified_name().cmp(b.qualified_name()));
-            resolved(candidates.remove(0), Evidence::DeterministicTiebreak)
-        }
-        other => other,
-    }
-}
-
 /// The `resolution_method` label recorded on an edge produced by this
 /// policy, for downstream observability (distinct from the pre-issue-#30
 /// single "import-scope-lookup" label that hid which evidence tier fired).
@@ -176,7 +136,6 @@ pub fn resolution_label(evidence: Evidence) -> &'static str {
         Evidence::ImportMatch => "import-scope-lookup",
         Evidence::SameFileUnique => "same-file-unique",
         Evidence::PackageProximity => "package-proximity",
-        Evidence::DeterministicTiebreak => "ambiguous-deterministic-tiebreak",
     }
 }
 
@@ -272,8 +231,8 @@ mod tests {
             caller_file: "irrelevant.rs",
             caller_package: None,
         };
-        let r1 = resolve_deterministic(&candidates, &qualified_ctx);
-        let r2 = resolve_deterministic(&candidates, &unqualified_ctx);
+        let r1 = resolve(&candidates, &qualified_ctx);
+        let r2 = resolve(&candidates, &unqualified_ctx);
         assert_eq!(r1, r2);
         match r1 {
             Resolution::Resolved {
@@ -293,27 +252,18 @@ mod tests {
     fn spelling_invariance_genuine_ambiguity() {
         // No evidence distinguishes a::helper from b::helper regardless of
         // how the caller phrased the lookup (qualified or unqualified) —
-        // both must land on the identical deterministic tiebreak.
+        // both must land on the identical Ambiguous outcome (no tiebreak:
+        // resolve_single_call/resolve_single_import drop the edge rather
+        // than guess, per resolver.rs's resolve_single_call doc comment).
         let candidates = vec![sym("b::helper"), sym("a::helper")];
         let ctx_a = empty_ctx();
         let ctx_b = empty_ctx();
-        let r1 = resolve_deterministic(&candidates, &ctx_a);
-        let r2 = resolve_deterministic(&candidates, &ctx_b);
+        let r1 = resolve(&candidates, &ctx_a);
+        let r2 = resolve(&candidates, &ctx_b);
         assert_eq!(r1, r2);
         match r1 {
-            Resolution::Resolved {
-                target,
-                evidence,
-                confidence,
-            } => {
-                assert_eq!(
-                    target.qn, "a::helper",
-                    "deterministic tiebreak picks lexicographically first"
-                );
-                assert_eq!(evidence, Evidence::DeterministicTiebreak);
-                assert_eq!(confidence, 0.5);
-            }
-            other => panic!("expected Resolved via tiebreak, got {other:?}"),
+            Resolution::Ambiguous { candidates } => assert_eq!(candidates.len(), 2),
+            other => panic!("expected Ambiguous, got {other:?}"),
         }
     }
 
@@ -326,17 +276,12 @@ mod tests {
             vec![sym("b::helper"), sym("c::helper"), sym("a::helper")],
         ];
         let ctx = empty_ctx();
-        let mut resolved_targets = Vec::new();
         for candidates in &orders {
-            match resolve_deterministic(candidates, &ctx) {
-                Resolution::Resolved { target, .. } => resolved_targets.push(target.qn),
-                other => panic!("expected Resolved, got {other:?}"),
+            match resolve(candidates, &ctx) {
+                Resolution::Ambiguous { candidates: c } => assert_eq!(c.len(), 3),
+                other => panic!("expected Ambiguous regardless of candidate order, got {other:?}"),
             }
         }
-        assert!(
-            resolved_targets.iter().all(|t| *t == "a::helper"),
-            "resolved target must be order-invariant, got {resolved_targets:?}"
-        );
     }
 
     // --- Test 3: confidence monotonicity --------------------------------
@@ -347,7 +292,6 @@ mod tests {
             Evidence::ImportMatch,
             Evidence::SameFileUnique,
             Evidence::PackageProximity,
-            Evidence::DeterministicTiebreak,
         ];
         for pair in tiers.windows(2) {
             let (stronger, weaker) = (pair[0], pair[1]);
@@ -357,27 +301,6 @@ mod tests {
                 confidence_for(stronger),
                 confidence_for(weaker)
             );
-        }
-    }
-
-    #[test]
-    fn multi_candidate_tiebreak_never_reaches_full_confidence() {
-        let candidates = vec![sym("a::helper"), sym("b::helper")];
-        let ctx = empty_ctx();
-        match resolve_deterministic(&candidates, &ctx) {
-            Resolution::Resolved {
-                confidence,
-                evidence,
-                ..
-            } => {
-                assert_eq!(evidence, Evidence::DeterministicTiebreak);
-                assert!(
-                    confidence < 1.0,
-                    "tiebreak confidence {confidence} must be < 1.0"
-                );
-                assert!(confidence < confidence_for(Evidence::ImportMatch));
-            }
-            other => panic!("expected Resolved, got {other:?}"),
         }
     }
 
@@ -416,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn same_file_unique_outranks_tiebreak() {
+    fn same_file_unique_resolves() {
         let candidates = vec![sym("src/foo.rs::helper"), sym("src/bar.rs::helper")];
         let ctx = Context {
             imports_in_scope: &[],
