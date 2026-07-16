@@ -15,7 +15,18 @@ use super::{
 };
 
 const TS_PACKAGE_HEADER: &str = "package_header";
-const TS_IMPORT_HEADER: &str = "import_header";
+// tree-sitter-kotlin-ng v1.1.0 (pinned, Cargo.lock) names the top-level
+// import-statement node "import", not "import_header" — verified against
+// the crate's vendored src/node-types.json (no "import_header" type exists
+// in this grammar version). The stale constant name is kept (matches the
+// language's "import header" terminology in kotlinlang.org's grammar docs)
+// but the matched kind string must track the actual grammar. Root-cause
+// fix for issue #31: with the wrong kind string, `extract_children` never
+// dispatched to `extract_import`, so NO Kotlin import ever became a graph
+// `Import` node — the external-prefix classification added below was
+// unreachable dead code for every Kotlin import, not just the JVM/Android
+// ecosystem ones.
+const TS_IMPORT_HEADER: &str = "import";
 const TS_CLASS_DECL: &str = "class_declaration";
 const TS_OBJECT_DECL: &str = "object_declaration";
 const TS_FUNCTION_DECL: &str = "function_declaration";
