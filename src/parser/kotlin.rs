@@ -15,7 +15,7 @@ use super::{
 };
 
 const TS_PACKAGE_HEADER: &str = "package_header";
-const TS_IMPORT_HEADER: &str = "import_header";
+const TS_IMPORT_HEADER: &str = "import"; // pinned tree-sitter-kotlin-ng v1.1.0 node kind (not "import_header" — see node-types.json)
 const TS_CLASS_DECL: &str = "class_declaration";
 const TS_OBJECT_DECL: &str = "object_declaration";
 const TS_FUNCTION_DECL: &str = "function_declaration";
