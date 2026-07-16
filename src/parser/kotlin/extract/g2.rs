@@ -40,6 +40,48 @@ pub(super) fn extract_import(ctx: &mut Ctx, node: Node, scope: &str) {
     });
 }
 
+/// Decides whether a call's receiver/qualifier text is safe disambiguating
+/// evidence to preserve, or must be discarded down to the bare tail name.
+///
+/// source: issue #29 — the resolver previously received ONLY `callee_tail`
+/// (`rsplit('.').next()`), throwing away every receiver/qualifier and
+/// making same-named in-repo calls unresolvable. Preserving it blindly
+/// re-introduces a DIFFERENT bug: `viewModel.load()` is a VALUE receiver
+/// (a local val/property; this parser has no type information for it), and
+/// feeding "viewModel.load" into the resolver's qualified-callee evidence
+/// path risks a false string-match against an unrelated `load` symbol that
+/// happens to live in a package/file whose name coincides with the local
+/// variable (see call_evidence.rs / resolver.rs::resolve_single_call).
+///
+/// Kotlin coding conventions (kotlinlang.org/docs/coding-conventions.html):
+/// package names are lowercase, class/object names are UpperCamelCase,
+/// local vals/vars/properties are lowerCamelCase. A single-dot receiver
+/// whose first segment starts lowercase (`viewModel.load`) is therefore
+/// always a value/property access, never a package or object qualifier —
+/// discard it back to the tail. Two or more dots (`com.foo.bar.process`,
+/// a package-qualified call) or an uppercase-first single dot
+/// (`Utils.process`, an object/class qualifier) are real disambiguating
+/// evidence — preserved as-is.
+/// postcondition: returns `tail` (the bare identifier) for a value
+/// receiver; returns `raw` (the full dotted text) otherwise.
+pub(super) fn qualifier_or_tail(raw: &str, tail: &str) -> String {
+    let dot_count = raw.matches('.').count();
+    if dot_count == 0 {
+        return tail.to_string();
+    }
+    let first_seg_uppercase = raw
+        .split('.')
+        .next()
+        .and_then(|s| s.chars().next())
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false);
+    if dot_count == 1 && !first_seg_uppercase {
+        tail.to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
 pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
@@ -61,14 +103,9 @@ pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
                 })
                 .map(|c| node_text(ctx.source, c))
                 .unwrap_or_default();
-            // Keep only the tail identifier to match the file::name convention
-            // used by the rest of the graph.
-            let callee_tail = callee
-                .rsplit('.')
-                .next()
-                .unwrap_or("")
-                .trim_end_matches('(')
-                .to_string();
+            let raw_callee = callee.trim_end_matches('(').to_string();
+            let callee_tail = raw_callee.rsplit('.').next().unwrap_or("").to_string();
+            let callee_repr = qualifier_or_tail(&raw_callee, &callee_tail);
             if !callee_tail.is_empty()
                 && callee_tail
                     .chars()
@@ -93,12 +130,12 @@ pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
                     start_line: n.start_position().row as u64 + 1,
                     end_line: n.end_position().row as u64 + 1,
                     visibility: "public".to_string(),
-                    properties: vec![("callee_name".to_string(), callee_tail.clone())],
+                    properties: vec![("callee_name".to_string(), callee_repr.clone())],
                 });
                 ctx.refs.push(ExtractedRef {
                     kind: "Calls".to_string(),
                     from_qualified_name: caller_qn.to_string(),
-                    to_qualified_name: callee_tail,
+                    to_qualified_name: callee_repr,
                 });
             }
         }

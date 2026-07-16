@@ -737,12 +737,13 @@ fn stage_call_edge(
 }
 
 /// Resolves one callee reference via the shared ambiguity policy (issue
-/// #30). Both the qualified/import-matched path and the unqualified path
-/// build a `Context` from the evidence available at the call site and
-/// delegate to `ambiguity_policy::resolve` — this is the ONLY place that
-/// decides ambiguity/confidence for call resolution.
+/// #30), through `call_evidence::resolve_two_pass` (issue #29). Both the
+/// qualified/import-matched path and the unqualified path build the
+/// evidence available at the call site and delegate — `ambiguity_policy`
+/// remains the ONLY place that decides ambiguity/confidence; this function
+/// (and call_evidence.rs) only gather and represent evidence for it.
 ///
-/// Deliberately uses `resolve`, not `resolve_deterministic`: a genuinely
+/// Deliberately never reaches `resolve_deterministic`: a genuinely
 /// ambiguous reference (no evidence tier discriminates the candidates) is
 /// left unresolved (`Ambiguous`) rather than guessed. This is stricter than
 /// the issue's suggested "deterministic tiebreak to preserve recall" —
@@ -761,8 +762,11 @@ fn stage_call_edge(
 /// ambiguity_policy for a future caller that prefers recall over
 /// precision for its own ambiguity class.
 ///
-/// precondition: `callee` is the raw callee spelling as parsed; `file_id`
-/// is the caller's file path.
+/// precondition: `callee` is the raw callee spelling as parsed (for Kotlin,
+/// per issue #29, this preserves a package/object qualifier — see
+/// parser/kotlin/extract/g2.rs::qualifier_or_tail — but never a value-receiver, which the parser strips
+/// back to a bare name before it reaches here); `file_id` is the caller's
+/// file path.
 /// postcondition: the returned `Resolution` depends only on the candidate
 /// set and the evidence context — never directly on whether `callee` was
 /// spelled qualified or unqualified.
@@ -774,35 +778,34 @@ fn resolve_single_call(
     file_id: &str,
 ) -> PolicyResolution<SymbolEntry> {
     // Fully qualified: the callee's own spelling is the import-match
-    // evidence (its qualified-name suffix should identify at most one
-    // candidate uniquely).
-    if callee.contains("::") || callee.contains(provider.import_separator()) {
-        let last = provider.import_last_segment(callee);
-        let candidates = match idx.by_name.get(last) {
-            Some(c) => c,
-            None => return PolicyResolution::NotFound,
+    // evidence. Unqualified: evidence is the file's own import list.
+    let (last, imports_hint): (&str, Vec<String>) =
+        if callee.contains("::") || callee.contains(provider.import_separator()) {
+            (
+                provider.import_last_segment(callee),
+                vec![callee.to_string()],
+            )
+        } else {
+            (
+                callee,
+                file_imports.get(file_id).cloned().unwrap_or_default(),
+            )
         };
-        let import_hint = [callee.to_string()];
-        let ctx = PolicyContext {
-            imports_in_scope: &import_hint,
-            caller_file: file_id,
-            caller_package: None,
-        };
-        return ambiguity_policy::resolve(candidates, &ctx);
-    }
-    // Unqualified: evidence is the file's own import list plus same-file
-    // definitions, both handled by the shared policy's evidence tiers.
-    let candidates = match idx.by_name.get(callee) {
+    let candidates = match idx.by_name.get(last) {
         Some(c) => c,
         None => return PolicyResolution::NotFound,
     };
-    let imports = file_imports.get(file_id).cloned().unwrap_or_default();
-    let ctx = PolicyContext {
-        imports_in_scope: &imports,
+    let ev = crate::call_evidence::CallEvidence {
+        imports_hint: &imports_hint,
         caller_file: file_id,
-        caller_package: None,
     };
-    ambiguity_policy::resolve(candidates, &ctx)
+    crate::call_evidence::resolve_two_pass(
+        candidates,
+        |e: &SymbolEntry| e.qualified_name.clone(),
+        |e: &SymbolEntry| extract_file_from_qn(&e.qualified_name),
+        provider,
+        &ev,
+    )
 }
 
 // ---------------------------------------------------------------------------

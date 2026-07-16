@@ -75,6 +75,15 @@ pub trait LanguageProvider: Send + Sync {
         None
     }
 
+    /// Package/module grouping for a file id (PackageProximity evidence +
+    /// package-keyed ImportMatch, issue #29). `None` is the honest default —
+    /// returning `None` for a language is what preserves its pre-issue-#29
+    /// resolution behavior unchanged (see call_evidence.rs). Override only
+    /// when the directory is a reliable package/module proxy.
+    fn package_of(&self, _file_id: &str) -> Option<String> {
+        None
+    }
+
     /// Last segment of an import path or callee, after normalization and
     /// separator split. Provided; do not override.
     fn import_last_segment<'a>(&self, path: &'a str) -> &'a str {
@@ -313,7 +322,7 @@ impl LanguageProvider for KotlinProvider {
         "kotlin"
     }
     fn import_separator(&self) -> &'static str {
-        "." // `kotlin.collections.List` — parser/kotlin.rs rsplit('.')
+        "." // `kotlin.collections.List` — parser/kotlin/extract/g2.rs rsplit('.')
     }
     fn external_prefixes(&self) -> &'static [&'static str] {
         // source: kotlinlang.org stdlib + JVM interop (Java roots).
@@ -325,6 +334,22 @@ impl LanguageProvider for KotlinProvider {
             "Int", "Long", "Double", "Float", "Boolean", "Char", "Byte", "Short", "String", "Unit",
             "Any", "Nothing", "Array",
         ]
+    }
+    /// Kotlin/Android convention: source directories mirror the package
+    /// hierarchy (kotlinlang.org coding conventions, "Directory structure";
+    /// developer.android.com project-structure guide). Embedding the real
+    /// `package` declaration into a symbol's qualified_name would break
+    /// File-node linkage (indexer/persist.rs keys top-level Defines/Imports
+    /// edges on the exact file path — issue #29 investigation), so the
+    /// directory is the best zero-schema-change proxy; used only as
+    /// heuristic evidence, never to override a stronger tier.
+    fn package_of(&self, file_id: &str) -> Option<String> {
+        let dir = file_id.rsplit_once('/')?.0;
+        if dir.is_empty() {
+            None
+        } else {
+            Some(dir.to_string())
+        }
     }
 }
 
