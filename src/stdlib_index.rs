@@ -50,11 +50,16 @@ pub fn get_stdlib_table(language: &str) -> Option<&'static dyn StdlibTable> {
 /// Lookup: (language, receiver_type, method_name) -> canonical_path.
 /// O(n) scan of the per-language table; fine at ~200 entries each.
 #[allow(dead_code)] // public API for future Layer 5 narrowing.
-pub fn lookup(language: &str, receiver_type: &str, method_name: &str) -> Option<&'static StdlibSymbol> {
+pub fn lookup(
+    language: &str,
+    receiver_type: &str,
+    method_name: &str,
+) -> Option<&'static StdlibSymbol> {
     let table = get_stdlib_table(language)?;
-    table.symbols().iter().find(|s| {
-        s.receiver_type == receiver_type && s.method_name == method_name
-    })
+    table
+        .symbols()
+        .iter()
+        .find(|s| s.receiver_type == receiver_type && s.method_name == method_name)
 }
 
 #[cfg(test)]
@@ -66,19 +71,28 @@ mod tests {
         // Target: at least 150 curated entries covering Vec/HashMap/String/
         // Option/Result/Iterator/Box/Rc/Arc and the other heavy hitters.
         let n = rust::RustStdlib.symbols().len();
-        assert!(n >= 150, "rust stdlib table should have >=150 entries, got {n}");
+        assert!(
+            n >= 150,
+            "rust stdlib table should have >=150 entries, got {n}"
+        );
     }
 
     #[test]
     fn test_stdlib_table_size_python() {
         let n = python::PythonStdlib.symbols().len();
-        assert!(n >= 80, "python stdlib table should have >=80 entries, got {n}");
+        assert!(
+            n >= 80,
+            "python stdlib table should have >=80 entries, got {n}"
+        );
     }
 
     #[test]
     fn test_stdlib_table_size_typescript() {
         let n = typescript::TypeScriptStdlib.symbols().len();
-        assert!(n >= 60, "typescript stdlib table should have >=60 entries, got {n}");
+        assert!(
+            n >= 60,
+            "typescript stdlib table should have >=60 entries, got {n}"
+        );
     }
 
     #[test]

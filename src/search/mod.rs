@@ -14,10 +14,36 @@ pub mod bm25;
 pub mod rrf;
 pub mod vector;
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+// ---------------------------------------------------------------------------
+// Search-index path resolution — single source of truth
+// ---------------------------------------------------------------------------
+
+/// Resolves the search-index directory for a persisted graph, if one was
+/// built. The index lives in a sibling `search_index/` of the graph
+/// directory (built by `build_search_index` after clustering, in the
+/// `analyze_codebase` flow — see this module's header comment).
+///
+/// Every caller of [`search_graph`] against a persisted `graph_path` MUST
+/// resolve the index directory through this function rather than
+/// reimplementing the sibling-path logic inline — `do_search_codebase`
+/// (Stage 3d, `src/main.rs`) and `prd_input::matching::search_and_classify`
+/// (Stage 4) both depend on this returning the SAME answer for the same
+/// graph, otherwise one stage silently gets hybrid BM25/vector ranking
+/// while the other silently falls back to substring search on identical
+/// input (issue #18: Stage 4 never called this at all and always passed
+/// `index_dir: None`, so it ran the substring-fallback scorer even when a
+/// hybrid index existed next to the graph it was searching).
+pub fn resolve_search_index_dir(graph_path: &Path) -> Option<PathBuf> {
+    graph_path
+        .parent()
+        .map(|p| p.join("search_index"))
+        .filter(|p| p.exists())
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -111,13 +137,13 @@ pub fn group_hits_by_process(hits: &[(String, Vec<String>)]) -> Vec<(String, Vec
         }
     }
 
-    seen_order.sort_by(|a, b| {
-        match (a == NO_PROCESS_GROUP, b == NO_PROCESS_GROUP) {
+    seen_order.sort_by(
+        |a, b| match (a == NO_PROCESS_GROUP, b == NO_PROCESS_GROUP) {
             (true, false) => std::cmp::Ordering::Greater,
             (false, true) => std::cmp::Ordering::Less,
             _ => groups[b].len().cmp(&groups[a].len()).then_with(|| a.cmp(b)),
-        }
-    });
+        },
+    );
 
     seen_order
         .into_iter()
@@ -220,8 +246,14 @@ pub fn build_search_index(
 // ---------------------------------------------------------------------------
 
 const SEARCHABLE_LABELS: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait",
-    "Module", "Constant", "TypeAlias",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Module",
+    "Constant",
+    "TypeAlias",
 ];
 
 /// Searches the graph using hybrid BM25 + vector search with RRF fusion.
@@ -249,15 +281,24 @@ pub fn search_graph(
     // root-cause audit of the stage3d_hybrid_search flake.
     let index_dir = index_dir.map(|p| p.to_path_buf());
 
-    let has_bm25 = index_dir.as_ref()
+    let has_bm25 = index_dir
+        .as_ref()
         .map(|d| d.join("bm25").exists())
         .unwrap_or(false);
-    let has_vector = index_dir.as_ref()
+    let has_vector = index_dir
+        .as_ref()
         .map(|d| d.join("vector_index.bin").exists())
         .unwrap_or(false);
 
     if has_bm25 || has_vector {
-        search_hybrid(store, query, options, index_dir.as_deref(), has_bm25, has_vector)
+        search_hybrid(
+            store,
+            query,
+            options,
+            index_dir.as_deref(),
+            has_bm25,
+            has_vector,
+        )
     } else {
         // Fallback: graph-only substring search (v1 behavior)
         search_substring(store, &terms, options)
@@ -278,9 +319,14 @@ fn search_hybrid(
     let bm25_ranked: Vec<rrf::RankedEntry> = if has_bm25 {
         let bm25_dir = index_dir.unwrap().join("bm25");
         let results = bm25::query_index(&bm25_dir, query, fetch_limit)?;
-        results.iter().enumerate().map(|(i, r)| {
-            rrf::RankedEntry { key: r.qualified_name.clone(), rank: i + 1 }
-        }).collect()
+        results
+            .iter()
+            .enumerate()
+            .map(|(i, r)| rrf::RankedEntry {
+                key: r.qualified_name.clone(),
+                rank: i + 1,
+            })
+            .collect()
     } else {
         Vec::new()
     };
@@ -288,17 +334,26 @@ fn search_hybrid(
     // Run vector search
     let vector_ranked: Vec<rrf::RankedEntry> = if has_vector {
         let results = vector::query_index(index_dir.unwrap(), query, fetch_limit)?;
-        results.iter().enumerate().map(|(i, r)| {
-            rrf::RankedEntry { key: r.qualified_name.clone(), rank: i + 1 }
-        }).collect()
+        results
+            .iter()
+            .enumerate()
+            .map(|(i, r)| rrf::RankedEntry {
+                key: r.qualified_name.clone(),
+                rank: i + 1,
+            })
+            .collect()
     } else {
         Vec::new()
     };
 
     // Fuse with RRF (Cormack et al. 2009, k=60)
     let mut ranking_lists: Vec<&[rrf::RankedEntry]> = Vec::new();
-    if !bm25_ranked.is_empty() { ranking_lists.push(&bm25_ranked); }
-    if !vector_ranked.is_empty() { ranking_lists.push(&vector_ranked); }
+    if !bm25_ranked.is_empty() {
+        ranking_lists.push(&bm25_ranked);
+    }
+    if !vector_ranked.is_empty() {
+        ranking_lists.push(&vector_ranked);
+    }
 
     if ranking_lists.is_empty() {
         return Ok(Vec::new());
@@ -313,8 +368,12 @@ fn search_hybrid(
     let mut results: Vec<SearchResult> = Vec::new();
     for rrf_result in &fused {
         if let Some(enriched) = enrich_from_graph(
-            store, &rrf_result.key, rrf_result.score,
-            &community_sizes, &process_counts, options,
+            store,
+            &rrf_result.key,
+            rrf_result.score,
+            &community_sizes,
+            &process_counts,
+            options,
         ) {
             results.push(enriched);
         }
@@ -344,7 +403,7 @@ fn enrich_from_graph(
     process_counts: &HashMap<String, usize>,
     options: &SearchOptions,
 ) -> Option<SearchResult> {
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
 
     for &label in SEARCHABLE_LABELS {
         if let Some(ref filter) = options.label_filter {
@@ -359,12 +418,13 @@ fn enrich_from_graph(
         } else {
             "n.qualified_name, n.name, n.id"
         };
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' RETURN {return_clause}"
-        );
+        let cypher =
+            format!("MATCH (n:{label}) WHERE n.qualified_name = {escaped} RETURN {return_clause}");
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
-                if row.len() < 3 { continue; }
+                if row.len() < 3 {
+                    continue;
+                }
                 let qn = &row[0];
                 let name = &row[1];
                 let id = &row[2];
@@ -383,7 +443,11 @@ fn enrich_from_graph(
                 let community_boost = match &community_id {
                     Some(cid) => {
                         let size = community_sizes.get(cid).copied().unwrap_or(100);
-                        if size < 20 { 0.002 } else { 0.0 }
+                        if size < 20 {
+                            0.002
+                        } else {
+                            0.0
+                        }
                     }
                     None => 0.0,
                 };
@@ -493,7 +557,9 @@ pub enum GetContextError {
 }
 
 impl From<String> for GetContextError {
-    fn from(s: String) -> Self { GetContextError::Other(s) }
+    fn from(s: String) -> Self {
+        GetContextError::Other(s)
+    }
 }
 
 pub fn get_context(
@@ -503,10 +569,10 @@ pub fn get_context(
     // Layer 1: exact match (qualified_name OR id).
     // Layer 2: strip first path component and retry (src/foo::X → foo::X).
     // Layer 3: name-only fuzzy match — return top candidates.
-    let resolved = resolve_qualified_name(store, qualified_name)
-        .map_err(GetContextError::NotFound)?;
+    let resolved =
+        resolve_qualified_name(store, qualified_name).map_err(GetContextError::NotFound)?;
 
-    let escaped = resolved.replace('\'', "\\'");
+    let escaped = cypher_str(&resolved);
     let (label, name, file_path, start_line, end_line, visibility) =
         find_node_details(store, &escaped)?;
 
@@ -548,10 +614,7 @@ pub fn get_context(
 ///
 /// Used by both `get_context` and `get_symbol` so both tools share the
 /// same forgiving input surface.
-pub fn resolve_qualified_name(
-    store: &GraphStore,
-    input: &str,
-) -> Result<String, SymbolNotFound> {
+pub fn resolve_qualified_name(store: &GraphStore, input: &str) -> Result<String, SymbolNotFound> {
     // Layer 1 — exact.
     if let Some(qn) = exact_match_qn(store, input) {
         return Ok(qn);
@@ -575,7 +638,10 @@ pub fn resolve_qualified_name(
     })
 }
 
-fn strip_leading_path_component(input: &str) -> Option<String> {
+// pub(crate): reused by prd_validator's unverifiable-file classification,
+// which must apply the same src/-stripping retry this layer-2 lookup does
+// before concluding a claimed file is outside the indexed graph.
+pub(crate) fn strip_leading_path_component(input: &str) -> Option<String> {
     // Only act if the path portion (before `::`) has a `/`.
     let (path_part, rest) = match input.find("::") {
         Some(i) => (&input[..i], &input[i..]),
@@ -586,14 +652,20 @@ fn strip_leading_path_component(input: &str) -> Option<String> {
 }
 
 fn exact_match_qn(store: &GraphStore, input: &str) -> Option<String> {
-    let escaped = input.replace('\'', "\\'");
+    let escaped = cypher_str(input);
     let labels = [
-        "Function", "Method", "Struct", "Enum", "Trait",
-        "Module", "Constant", "TypeAlias",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Module",
+        "Constant",
+        "TypeAlias",
     ];
     for label in labels {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN n.qualified_name LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -608,21 +680,31 @@ fn exact_match_qn(store: &GraphStore, input: &str) -> Option<String> {
 }
 
 fn find_name_candidates(store: &GraphStore, name: &str, limit: usize) -> Vec<String> {
-    let escaped = name.replace('\'', "\\'");
+    let escaped = cypher_str(name);
     let labels = [
-        "Function", "Method", "Struct", "Enum", "Trait",
-        "Module", "Constant", "TypeAlias",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Module",
+        "Constant",
+        "TypeAlias",
     ];
     let mut out = Vec::new();
     for label in labels {
-        if out.len() >= limit { break; }
+        if out.len() >= limit {
+            break;
+        }
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.name = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.name = {escaped} \
              RETURN n.qualified_name LIMIT {limit}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
-                if out.len() >= limit { break; }
+                if out.len() >= limit {
+                    break;
+                }
                 if !row.is_empty() && !out.contains(&row[0]) {
                     out.push(row[0].clone());
                 }
@@ -662,7 +744,9 @@ fn fetch_candidates(store: &GraphStore, label: &str) -> Result<Vec<Candidate>, S
 
     let mut candidates = Vec::new();
     for row in &qr.rows {
-        if row.len() < 3 { continue; }
+        if row.len() < 3 {
+            continue;
+        }
         let qn = &row[0];
         let name = &row[1];
         let id = &row[2];
@@ -718,20 +802,32 @@ fn score_candidate(
     let mut best_term_score: f64 = 0.0;
     for &term in terms {
         let ts = term_score(term, &name_lower, &qn_lower);
-        if ts > best_term_score { best_term_score = ts; }
+        if ts > best_term_score {
+            best_term_score = ts;
+        }
     }
 
     if best_term_score == 0.0 {
         return 0.0;
     }
 
-    let all_match = terms.iter().all(|t| qn_lower.contains(t) || name_lower.contains(t));
-    let multi_bonus = if all_match && terms.len() > 1 { 0.1 } else { 0.0 };
+    let all_match = terms
+        .iter()
+        .all(|t| qn_lower.contains(t) || name_lower.contains(t));
+    let multi_bonus = if all_match && terms.len() > 1 {
+        0.1
+    } else {
+        0.0
+    };
 
     let community_boost = match &c.community_id {
         Some(cid) => {
             let size = community_sizes.get(cid).copied().unwrap_or(100);
-            if size < 20 { 0.1 } else { 0.0 }
+            if size < 20 {
+                0.1
+            } else {
+                0.0
+            }
         }
         None => 0.0,
     };
@@ -838,13 +934,21 @@ fn lookup_processes(store: &GraphStore, label: &str, node_id: &str) -> Vec<Strin
 fn find_node_details(
     store: &GraphStore,
     escaped: &str,
-) -> Result<(String, String, String, Option<u64>, Option<u64>, Option<String>), String> {
-    let labels_with_lines = [
-        "Function", "Method", "Struct", "Enum", "Trait",
-    ];
+) -> Result<
+    (
+        String,
+        String,
+        String,
+        Option<u64>,
+        Option<u64>,
+        Option<String>,
+    ),
+    String,
+> {
+    let labels_with_lines = ["Function", "Method", "Struct", "Enum", "Trait"];
     for label in labels_with_lines {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN n.name, n.qualified_name, n.start_line, n.end_line, n.visibility"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -865,7 +969,7 @@ fn find_node_details(
     let labels_no_lines = ["Module", "Constant", "TypeAlias"];
     for label in labels_no_lines {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN n.name, n.qualified_name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -889,25 +993,33 @@ fn find_node_details(
 fn find_related_out(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<RelatedSymbol> {
     let mut related = Vec::new();
     for &(rel, from_label, to_label) in crate::graph_store::REL_TABLES {
-        if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
-        if !rel.starts_with(prefix) { continue; }
+        if related.len() >= MAX_RELATED_PER_DIRECTION {
+            break;
+        }
+        if !rel.starts_with(prefix) {
+            continue;
+        }
         // source: stages/stage-3b-v2.md §5 — StdlibSymbol targets are
         // infrastructure-only (used for analysis + query_graph precision
         // metrics) and explicitly excluded from the flat get_context
         // calls/called_by result. Agents asking "what does X call?" expect
         // user-code callees, not every framework/std method implicitly
         // invoked.
-        if to_label == crate::graph_store::NODE_STDLIB_SYMBOL { continue; }
+        if to_label == crate::graph_store::NODE_STDLIB_SYMBOL {
+            continue;
+        }
         // LIMIT bounds the per-relation result so an unbounded fan-out cannot
         // flood the accumulated Vec or the downstream MCP response.
         let cypher = format!(
             "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) \
-             WHERE a.qualified_name = '{escaped}' OR a.id = '{escaped}' \
+             WHERE a.qualified_name = {escaped} OR a.id = {escaped} \
              RETURN b.name, b.qualified_name LIMIT {MAX_RELATED_PER_DIRECTION}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
-                if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
+                if related.len() >= MAX_RELATED_PER_DIRECTION {
+                    break;
+                }
                 if row.len() >= 2 {
                     related.push(RelatedSymbol {
                         name: row[0].clone(),
@@ -924,19 +1036,27 @@ fn find_related_out(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<Rela
 fn find_related_in(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<RelatedSymbol> {
     let mut related = Vec::new();
     for &(rel, from_label, to_label) in crate::graph_store::REL_TABLES {
-        if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
-        if !rel.starts_with(prefix) { continue; }
+        if related.len() >= MAX_RELATED_PER_DIRECTION {
+            break;
+        }
+        if !rel.starts_with(prefix) {
+            continue;
+        }
         // source: see find_related_out — symmetric exclusion.
-        if to_label == crate::graph_store::NODE_STDLIB_SYMBOL { continue; }
+        if to_label == crate::graph_store::NODE_STDLIB_SYMBOL {
+            continue;
+        }
         // LIMIT bounds the per-relation result; see find_related_out.
         let cypher = format!(
             "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) \
-             WHERE b.qualified_name = '{escaped}' OR b.id = '{escaped}' \
+             WHERE b.qualified_name = {escaped} OR b.id = {escaped} \
              RETURN a.name, a.qualified_name LIMIT {MAX_RELATED_PER_DIRECTION}"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
-                if related.len() >= MAX_RELATED_PER_DIRECTION { break; }
+                if related.len() >= MAX_RELATED_PER_DIRECTION {
+                    break;
+                }
                 if row.len() >= 2 {
                     related.push(RelatedSymbol {
                         name: row[0].clone(),
@@ -951,13 +1071,21 @@ fn find_related_in(store: &GraphStore, escaped: &str, prefix: &str) -> Vec<Relat
 }
 
 fn find_community(store: &GraphStore, escaped: &str) -> Option<CommunityInfo> {
-    let labels = ["Function", "Method", "Struct", "Enum", "Trait",
-                  "Module", "Constant", "TypeAlias"];
+    let labels = [
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Module",
+        "Constant",
+        "TypeAlias",
+    ];
     for label in labels {
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
-             WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+             WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN c.id, c.name, c.member_count LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -981,7 +1109,7 @@ fn find_processes(store: &GraphStore, escaped: &str) -> Vec<ProcessRef> {
         let ep_rel = format!("EntryPointOf_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{ep_rel}]->(p:Process) \
-             WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+             WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN p.name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -997,7 +1125,7 @@ fn find_processes(store: &GraphStore, escaped: &str) -> Vec<ProcessRef> {
         let part_rel = format!("ParticipatesIn_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{part_rel}]->(p:Process) \
-             WHERE n.qualified_name = '{escaped}' OR n.id = '{escaped}' \
+             WHERE n.qualified_name = {escaped} OR n.id = {escaped} \
              RETURN p.name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -1032,14 +1160,21 @@ mod tests {
 
     #[test]
     fn test_term_score_contains_name() {
-        let s = term_score("handle", "handle_tool_call", "src/main.rs::handle_tool_call");
+        let s = term_score(
+            "handle",
+            "handle_tool_call",
+            "src/main.rs::handle_tool_call",
+        );
         assert!(s > 0.7 && s < 1.0, "expected 0.7..1.0, got {s}");
     }
 
     // -- group_hits_by_process ------------------------------------------------
 
     fn hit(qn: &str, procs: &[&str]) -> (String, Vec<String>) {
-        (qn.to_string(), procs.iter().map(|s| s.to_string()).collect())
+        (
+            qn.to_string(),
+            procs.iter().map(|s| s.to_string()).collect(),
+        )
     }
 
     #[test]
@@ -1089,8 +1224,10 @@ mod tests {
             hit("m::3", &["beta"]),
             hit("m::4", &["alpha"]),
         ];
-        let order: Vec<String> =
-            group_hits_by_process(&hits).into_iter().map(|(p, _)| p).collect();
+        let order: Vec<String> = group_hits_by_process(&hits)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
         assert_eq!(order, vec!["big", "alpha", "beta"]);
     }
 
@@ -1102,7 +1239,11 @@ mod tests {
     #[test]
     fn group_index_only_references_supplied_hits() {
         // Invariant: every qualified_name in the index is present in the input.
-        let hits = [hit("a::one", &["f"]), hit("a::two", &[]), hit("a::three", &["f", "g"])];
+        let hits = [
+            hit("a::one", &["f"]),
+            hit("a::two", &[]),
+            hit("a::three", &["f", "g"]),
+        ];
         let input_qns: std::collections::HashSet<&str> =
             hits.iter().map(|(qn, _)| qn.as_str()).collect();
         for (_, members) in group_hits_by_process(&hits) {
@@ -1114,7 +1255,11 @@ mod tests {
 
     #[test]
     fn test_term_score_contains_qn_only() {
-        let s = term_score("main.rs", "handle_tool_call", "src/main.rs::handle_tool_call");
+        let s = term_score(
+            "main.rs",
+            "handle_tool_call",
+            "src/main.rs::handle_tool_call",
+        );
         assert!(s > 0.5 && s < 1.0, "expected 0.5..1.0, got {s}");
     }
 
@@ -1125,7 +1270,10 @@ mod tests {
 
     #[test]
     fn test_extract_file_path() {
-        assert_eq!(extract_file_path("src/main.rs::handle_tool_call"), "src/main.rs");
+        assert_eq!(
+            extract_file_path("src/main.rs::handle_tool_call"),
+            "src/main.rs"
+        );
         assert_eq!(extract_file_path("src/lib.rs"), "src/lib.rs");
     }
 
@@ -1158,8 +1306,13 @@ mod tests {
     use std::path::Path;
 
     fn fresh_store(tag: &str) -> (std::path::PathBuf, GraphStore) {
-        let tmp = std::env::temp_dir()
-            .join(format!("search_test_{}_{}", tag, std::process::id()));
+        // issue #25 audit: process::id() collides across processes under PID
+        // reuse; tempfile's random suffix does not.
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("search_test_{tag}_"))
+            .tempdir()
+            .expect("create temp dir")
+            .keep();
         let _ = std::fs::remove_dir_all(&tmp);
         let r = index_codebase(Path::new("src"), &tmp).unwrap();
         let store = GraphStore::open_or_create(&r.graph_path).unwrap();
@@ -1203,7 +1356,9 @@ mod tests {
                     "did_you_mean must include candidates by name"
                 );
                 assert!(
-                    nf.did_you_mean.iter().any(|s| s.ends_with("::handle_tool_call")),
+                    nf.did_you_mean
+                        .iter()
+                        .any(|s| s.ends_with("::handle_tool_call")),
                     "expected a `handle_tool_call` candidate, got {:?}",
                     nf.did_you_mean
                 );

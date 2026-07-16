@@ -6,7 +6,7 @@
 //
 // source: stages/stage-3b.md §7 — "method calls on inferred types" deferred to LSP
 
-use crate::graph_store::{is_known_rel_table, GraphStore};
+use crate::graph_store::{cypher_str, is_known_rel_table, GraphStore};
 use crate::lsp_client::{self, LspClient, LspResolutionResult};
 use std::collections::HashMap;
 use std::path::Path;
@@ -155,13 +155,14 @@ struct UnresolvedCallSite {
 
 fn collect_unresolved_callsites(store: &GraphStore) -> Result<Vec<UnresolvedCallSite>, String> {
     // Get all CallSite nodes
-    let qr = store.execute_query(
-        "MATCH (cs:CallSite) RETURN cs.id, cs.callee_name, cs.line, cs.col"
-    )?;
+    let qr =
+        store.execute_query("MATCH (cs:CallSite) RETURN cs.id, cs.callee_name, cs.line, cs.col")?;
 
     let mut sites = Vec::new();
     for row in &qr.rows {
-        if row.len() < 4 { continue; }
+        if row.len() < 4 {
+            continue;
+        }
         let cs_id = &row[0];
         let callee = &row[1];
         let line: u64 = row[2].parse().unwrap_or(0);
@@ -190,21 +191,29 @@ fn collect_unresolved_callsites(store: &GraphStore) -> Result<Vec<UnresolvedCall
 fn has_calls_edge(store: &GraphStore, callsite_id: &str) -> bool {
     let caller_qn = extract_caller_from_callsite_id(callsite_id);
     // Check all Calls edge types
-    for prefix in &["Calls_Function_Function", "Calls_Function_Method",
-                     "Calls_Method_Function", "Calls_Method_Method"] {
+    for prefix in &[
+        "Calls_Function_Function",
+        "Calls_Function_Method",
+        "Calls_Method_Function",
+        "Calls_Method_Method",
+    ] {
         let parts: Vec<&str> = prefix.splitn(3, '_').collect();
-        if parts.len() < 3 { continue; }
+        if parts.len() < 3 {
+            continue;
+        }
         let from_label = parts[1];
         let to_label = parts[2];
-        let esc = caller_qn.replace('\'', "\\'");
+        let esc = cypher_str(&caller_qn);
         let cypher = format!(
             "MATCH (a:{from_label})-[r:{prefix}]->(b:{to_label}) \
-             WHERE a.id = '{esc}' RETURN count(r)"
+             WHERE a.id = {esc} RETURN count(r)"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             if !qr.rows.is_empty() {
                 let count: u64 = qr.rows[0][0].parse().unwrap_or(0);
-                if count > 0 { return true; }
+                if count > 0 {
+                    return true;
+                }
             }
         }
     }
@@ -235,11 +244,9 @@ fn extract_file_from_qn(qn: &str) -> String {
 }
 
 fn determine_caller_label(store: &GraphStore, caller_qn: &str) -> String {
-    let esc = caller_qn.replace('\'', "\\'");
+    let esc = cypher_str(caller_qn);
     for label in &["Function", "Method"] {
-        let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{esc}' RETURN n.id"
-        );
+        let cypher = format!("MATCH (n:{label}) WHERE n.qualified_name = {esc} RETURN n.id");
         if let Ok(qr) = store.execute_query(&cypher) {
             if !qr.rows.is_empty() {
                 return label.to_string();
@@ -284,13 +291,18 @@ fn build_node_position_index(
             "MATCH (n:{label}) RETURN n.id, n.qualified_name, n.start_line"
         ))?;
         for row in &qr.rows {
-            if row.len() < 3 { continue; }
+            if row.len() < 3 {
+                continue;
+            }
             let file = extract_file_from_qn(&row[1]);
             let line: u64 = row[2].parse().unwrap_or(0);
-            index.insert((file, line), NodePosition {
-                id: row[0].clone(),
-                label: label.to_string(),
-            });
+            index.insert(
+                (file, line),
+                NodePosition {
+                    id: row[0].clone(),
+                    label: label.to_string(),
+                },
+            );
         }
     }
     Ok(index)
@@ -349,15 +361,17 @@ fn try_add_lsp_edge(
     }
 
     // Insert edge with LSP-backed confidence (0.9)
-    store.insert_edge(
-        &rel_type,
-        &site.caller_qn,
-        &target.id,
-        &[
-            ("confidence", "0.9"),
-            ("resolution_method", "'lsp-definition'"),
-        ],
-    ).is_ok()
+    store
+        .insert_edge(
+            &rel_type,
+            &site.caller_qn,
+            &target.id,
+            &[
+                ("confidence", "0.9"),
+                ("resolution_method", "'lsp-definition'"),
+            ],
+        )
+        .is_ok()
 }
 
 fn uri_to_relative_path(uri: &str) -> Option<String> {
@@ -421,10 +435,13 @@ mod tests {
     #[test]
     fn test_find_node_at_position_exact() {
         let mut index = HashMap::new();
-        index.insert(("src/main.rs".to_string(), 10), NodePosition {
-            id: "fn1".to_string(),
-            label: "Function".to_string(),
-        });
+        index.insert(
+            ("src/main.rs".to_string(), 10),
+            NodePosition {
+                id: "fn1".to_string(),
+                label: "Function".to_string(),
+            },
+        );
         let result = find_node_at_position(&index, "src/main.rs", 10);
         assert!(result.is_some());
         assert_eq!(result.unwrap().id, "fn1");
@@ -433,10 +450,13 @@ mod tests {
     #[test]
     fn test_find_node_at_position_nearby() {
         let mut index = HashMap::new();
-        index.insert(("src/main.rs".to_string(), 8), NodePosition {
-            id: "fn2".to_string(),
-            label: "Method".to_string(),
-        });
+        index.insert(
+            ("src/main.rs".to_string(), 8),
+            NodePosition {
+                id: "fn2".to_string(),
+                label: "Method".to_string(),
+            },
+        );
         let result = find_node_at_position(&index, "src/main.rs", 10);
         assert!(result.is_some());
         assert_eq!(result.unwrap().id, "fn2");

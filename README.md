@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.cdeust/automatised-pipeline -->
+
 <p align="center">
   <img src="assets/banner.svg" alt="automatised-pipeline — codebase intelligence as an MCP server" width="100%"/>
 </p>
@@ -5,14 +7,14 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Rust-1.94+-dea584.svg" alt="Rust 1.94+">
-  <img src="https://img.shields.io/badge/Tools-23-orange" alt="23 MCP tools">
-  <img src="https://img.shields.io/badge/Tests-220_passing-brightgreen" alt="220 tests">
-  <img src="https://img.shields.io/badge/Languages-Rust_·_Python_·_TypeScript-blueviolet" alt="Languages">
+  <img src="https://img.shields.io/badge/Tools-24-orange" alt="24 MCP tools">
+  <img src="https://img.shields.io/badge/Tests-434_passing-brightgreen" alt="434 tests">
+  <img src="https://img.shields.io/badge/Languages-10-blueviolet" alt="10 languages">
   <img src="https://img.shields.io/badge/Stages-0_through_9-8A2BE2" alt="Stages">
 </p>
 
 <p align="center">
-  <a href="#what-an-agent-can-ask-it">What An Agent Can Ask</a> · <a href="#getting-started">Getting Started</a> · <a href="#the-pipeline">Pipeline</a> · <a href="#23-mcp-tools">Tools</a> · <a href="#architecture">Architecture</a> · <a href="#the-zetetic-standard">Zetetic Standard</a>
+  <a href="#what-an-agent-can-ask-it">What An Agent Can Ask</a> · <a href="#getting-started">Getting Started</a> · <a href="#the-pipeline">Pipeline</a> · <a href="#24-mcp-tools">Tools</a> · <a href="#architecture">Architecture</a> · <a href="#the-zetetic-standard">Zetetic Standard</a>
 </p>
 
 <p align="center">
@@ -26,11 +28,11 @@
 
 Every AI coding assistant hits the same wall: you ask it to change `handle_tool_call`, and it either hallucinates a function that was renamed last week, edits something in the wrong community of the codebase, or silently breaks a call chain three modules away. Agents operate on strings; codebases have structure. The gap is where bugs live.
 
-**automatised-pipeline** is a Rust MCP server that indexes any Rust / Python / TypeScript codebase into a LadybugDB property graph, resolves imports and call chains across files, detects functional communities via Leiden-class community detection, traces execution flows from entry points, builds a hybrid BM25 + sparse TF-IDF + RRF search index, and exposes all of it to AI agents through 23 MCP tools.
+**automatised-pipeline** is a Rust MCP server that indexes any Rust, Python, TypeScript, Java, Kotlin, Swift, Objective-C, C, C++, or Go codebase into a LadybugDB property graph, resolves imports and call chains across files, detects functional communities via Leiden-class community detection, traces execution flows from entry points, builds a hybrid BM25 + sparse TF-IDF + RRF search index, and exposes all of it to AI agents through 24 MCP tools.
 
 It is the **codebase intelligence layer** that sits between a finding ("this bug exists") and a PRD ("here is the fix, here is what it affects, here is what it must never break"). It is **read-only intelligence** — it never writes code, opens PRs, or runs CI. It tells the system what is true about the code so the next stage can reason without guessing.
 
-**One pipeline stage = one MCP tool. 10 stages. 23 tools. 12,000+ lines of Rust. 220 tests. Zero warnings. Every constant sourced.**
+**One pipeline stage = one MCP tool. 10 stages. 24 tools. 12,000+ lines of Rust. 434 tests. Zero warnings. Every constant sourced.**
 
 ---
 
@@ -150,7 +152,7 @@ Every stage is a tool. Stages build on each other but are independently callable
 
 ---
 
-## 23 MCP Tools
+## 24 MCP Tools
 
 Every tool takes structured JSON arguments via the MCP protocol and returns a structured JSON response. No LLM is called from inside any tool — intelligence is the agent's job; the tool's job is safe, fast data movement with invariants.
 
@@ -162,6 +164,7 @@ Stage 3a: index_codebase · query_graph · get_symbol
 Stage 3b: resolve_graph · lsp_resolve
 Stage 3c: cluster_graph · get_processes · get_impact
 Stage 3d: search_codebase · get_context · analyze_codebase · detect_changes
+Stage 3e: index_history
 Stage 4:  prepare_prd_input
 Stage 6:  validate_prd_against_graph
 Stage 8:  check_security_gates
@@ -198,9 +201,9 @@ core modules:
     git_diff           — diff parser + symbol mapping
 ```
 
-### Crates
+### Dependencies
 
-Eight crates. Nothing speculative; everything justified.
+Sixteen crates. Nothing speculative; everything justified.
 
 | Crate | Purpose | License | Why |
 |---|---|---|---|
@@ -208,7 +211,7 @@ Eight crates. Nothing speculative; everything justified.
 | `sha2` | Stage-2 transcript digest | MIT | Tamper detection |
 | `lbug` (LadybugDB) | Embedded property graph + Cypher | MIT | Native Cypher, FTS-ready, the Kùzu successor |
 | `tree-sitter` | Incremental parser runtime | MIT | First-class Rust bindings |
-| `tree-sitter-rust` · `-python` · `-typescript` | Language grammars | MIT | Semantic structure without a compiler |
+| `tree-sitter-rust` · `-python` · `-typescript` · `-java` · `-kotlin-ng` · `-swift` · `-objc` · `-c` · `-cpp` · `-go` | Language grammars (10) | MIT / Apache-2.0 | Semantic structure without a compiler |
 | `tantivy` | Lucene-grade BM25 | MIT | Real ranked text search, <10ms startup |
 
 Deliberately **not** included: async runtime (we're stdio-blocking), HTTP client, LLM SDK, embedding model runtime (sparse TF-IDF replaces it at zero dep cost).
@@ -216,6 +219,33 @@ Deliberately **not** included: async runtime (we're stdio-blocking), HTTP client
 ### Storage
 
 Graphs are per-finding by design (Lamport's isolation invariant): each finding gets its own LadybugDB instance at `<output_dir>/runs/<run_id>/findings/<finding_id>/graph/`. Zero-coordination concurrency, trivial cleanup, no cross-finding state leakage. Redundant indexing for shared codebases is acknowledged and mitigated in a later optional cache layer — not shoehorned into the core.
+
+### Configuration — `max_db_size`
+
+Every LadybugDB `Database` this crate opens reserves virtual address space up front, sized by `max_db_size`. lbug's own default (`SystemConfig::default()`) is `1 << 43` = 8 TiB per instance; with `graph_cache`'s `MAX_CACHED_GRAPHS = 8` entries live in the read-path cache at once, that is a 64 TiB worst case (issue #25). `src/graph_store.rs::system_config()` is the single choke point every `GraphStore::open_or_create` call resolves through, in this precedence order:
+
+1. **`AP_LBUG_TEST_MAX_DB_SIZE`** — test-only, set for every `cargo test` process via `.cargo/config.toml`'s `[env]` table (512 MiB / `2^29`, issue #21). Always wins when present, so `cargo test` behavior is independent of the production knob below.
+2. **`AP_LBUG_MAX_DB_SIZE`** — production override, unset by default. Bytes, must be a power of two and at least 8 MiB (lbug's own `BufferManager::verifySizeParams` floor). An invalid value is rejected with an actionable error at `GraphStore::open_or_create` time — never a silent fallback.
+3. **Default: 8 GiB (`1 << 33` bytes)** when neither var is set. Derivation: measured every lbug graph-DB file reachable on the machine that produced this fix (75 distinct graphs — see the table below); the largest was 495,849,472 bytes (~473 MiB, a cortex-viz index run including `node_modules`). Sizing rule: next power of two ≥ (largest measured × 16), floor 8 GiB. `473 MiB × 16` ≈ 7.39 GiB is below the floor, so the floor (already a power of two) applies.
+
+Re-measure and raise `AP_LBUG_MAX_DB_SIZE` (or the compiled-in default) if a materially larger workload is observed in production — e.g. indexing a monorepo with `node_modules` included.
+
+**Measured graph sizes (2026-07-15, `du -k` on every `graph` file found under `~/.cache/cortex/code-graphs/*/graph`, `~/.cortex/ap_graph/graph`, and `**/.prd-gen/graphs/*/graph`), top 10 of 75:**
+
+| Graph | Size |
+|---|---|
+| `repro-cortex-viz-deps` (cortex-viz + `node_modules`) | 473 MiB |
+| `bench-c2-viz-deps` (cortex-viz + deps) | 472 MiB |
+| `bench-c3-viz-pubapi` (cortex-viz, public API surface) | 460 MiB |
+| `wt-windows-launcher-96-97-*` (Cortex worktree) | 147 MiB |
+| `wt-homeostatic-*` (Cortex worktree) | 144 MiB |
+| `wt-tools-drift-*` (Cortex worktree) | 143 MiB |
+| `Cortex-wt-wiki-titles-*` | 142 MiB |
+| `wt-findings-provenance-*` | 126 MiB |
+| `anthropic-partnership-Cortex` | 126 MiB |
+| `wt-ingest-provenance-*` | 124 MiB |
+
+Total across all 75 measured graphs: ~4.87 GiB. Every graph other than the top 3 (which include `node_modules`) is under 150 MiB — the `node_modules`-inclusive runs are the actual worst case driving the sizing rule above.
 
 ---
 
@@ -255,7 +285,7 @@ Four CRITICAL, four HIGH, three MEDIUM findings were surfaced by a `security-aud
 - LSP `rootUri` → RFC 3986 percent-encoding
 - Diff line overflow → `DIFF_LINE_MAX = u64::MAX / 2` guard
 
-Each fix has a test that asserts the exploit is now rejected. Run `cargo test` to see 220 tests pass including the exploit-regression suite.
+Each fix has a test that asserts the exploit is now rejected. Run `cargo test` to see 434 tests pass including the exploit-regression suite.
 
 ---
 
@@ -286,7 +316,7 @@ The bulk-insert path uses UNWIND with a typed struct schema (the engineer who wr
                               ↓
       ┌──────────────────────────────────────────────────┐
       │             automatised-pipeline                 │  ← this repo
-      │  stage 0 · 1 · 2 · 3a-d · 4 · 6 · 8 · 9          │
+      │  stage 0 · 1 · 2 · 3a-e · 4 · 6 · 8 · 9          │
       │  Rust · LadybugDB · tree-sitter · Tantivy        │
       └──────┬──────────────────┬────────────────────────┘
              │                  │
@@ -319,7 +349,7 @@ The bulk-insert path uses UNWIND with a typed struct schema (the engineer who wr
 ## Testing
 
 ```bash
-cargo test                                          # 220 tests, full suite
+cargo test                                          # 434 tests, full suite
 cargo test --release --test scalability_bench       # 500-file synthetic fixture
 cargo test --release --test lbug_bulk_investigation # dba's 9 UNWIND probes
 cargo test --release --test stage3a_integration     # end-to-end per sub-stage
@@ -337,7 +367,7 @@ Every stage has an integration test with fixture data. The `lbug_bulk_investigat
 ```
 automatised-pipeline/
 ├── src/
-│   ├── main.rs                    ← MCP server, 23 tool handlers
+│   ├── main.rs                    ← MCP server, 24 tool handlers
 │   ├── tool_schemas.rs            ← JSON Schemas for every tool
 │   ├── lib.rs                     ← re-exports for integration tests
 │   ├── graph_store.rs             ← LadybugDB port (UNWIND + prepared + cached)
@@ -403,7 +433,7 @@ Agents are spawned via [zetetic-team-subagents](https://github.com/cdeust/zeteti
 
 Private repo by design. Not ready for public release until the full hardening pass is done — security audit fixes are in, correctness fixes are in, scale fixes are in, stages 4/6/8/9 are live, but every capability marked "live" above has been verified end-to-end on this machine, not yet in a production context.
 
-**What works today**: indexing Rust / Python / TypeScript codebases end-to-end, resolving cross-file relationships, clustering into communities, tracing processes from entry points, hybrid search, PRD input preparation, PRD claim validation, security gate checking, before/after regression detection.
+**What works today**: indexing Rust, Python, TypeScript, Java, Kotlin, Swift, Objective-C, C, C++, and Go codebases end-to-end, resolving cross-file relationships, clustering into communities, tracing processes from entry points, hybrid search, PRD input preparation, PRD claim validation, security gate checking, before/after regression detection.
 
 **What's deferred**:
 - Cross-file indexer batching to unlock the full 38× UNWIND win (currently 1.17× aggregate; per-edge rate is already 0.143 ms)

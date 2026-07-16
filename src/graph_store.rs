@@ -141,17 +141,160 @@ pub struct GraphStore {
     //   (c) struct fields drop in declaration order (conn drops before _db).
 }
 
+/// Environment variable that bounds lbug's `max_db_size` (bytes; must be a
+/// power of two — see `BufferManager::verifySizeParams` in the vendored
+/// `lbug-0.15.4/lbug-src/src/storage/buffer_manager/buffer_manager.cpp`).
+/// Unset in production; set once in `.cargo/config.toml`'s `[env]` table so
+/// every `cargo test` process (unit tests AND every integration-test binary
+/// under `tests/`) picks it up automatically without any test file needing
+/// to opt in. Takes priority over `PROD_MAX_DB_SIZE_ENV` (see
+/// `system_config`'s doc comment for the precedence rule) so this test-only
+/// knob keeps controlling `cargo test` behavior unchanged by issue #25.
+///
+/// Root cause this bounds: `SystemConfig::default()` leaves `max_db_size`
+/// at its sentinel value `u64::from(u32::MAX)` (lbug-0.15.4/src/database.rs:71).
+/// lbug's C++ core treats that exact sentinel as "unset" and substitutes
+/// `DEFAULT_VM_REGION_MAX_SIZE = 1 << 43` (8 TiB) — see
+/// `lbug-0.15.4/lbug-src/src/main/database.cpp:82-83` and the doc comment
+/// on `maxDBSize` in `lbug-0.15.4/lbug-src/src/include/main/database.h:50-54`.
+/// Each `Database::new`/`GraphStore::open_or_create` call therefore reserves
+/// 8 TiB of virtual address space; dozens of concurrent test binaries under
+/// `cargo test --workspace` exhaust the process's address space
+/// probabilistically (observed: `lbug database open failed: Mmap for size
+/// 8796093022208 failed` in `tests/stage6_integration.rs`, run 5 of a 10-run
+/// soak, 2026-07-15).
+pub const TEST_MAX_DB_SIZE_ENV: &str = "AP_LBUG_TEST_MAX_DB_SIZE";
+
+/// Environment variable that bounds lbug's `max_db_size` for production
+/// (non-`cargo test`) processes — bytes, must be a power of two, same
+/// `verifySizeParams` constraint as `TEST_MAX_DB_SIZE_ENV`. Unset by default,
+/// in which case `DEFAULT_PROD_MAX_DB_SIZE_BYTES` applies (issue #25: the
+/// prior behavior left lbug's own 8 TiB sentinel default in place for every
+/// production `GraphStore::open_or_create`/`GraphCache` open — up to
+/// `graph_cache::MAX_CACHED_GRAPHS` (8) concurrently cached stores × 8 TiB =
+/// 64 TiB of virtual address space reserved in the worst case).
+pub const PROD_MAX_DB_SIZE_ENV: &str = "AP_LBUG_MAX_DB_SIZE";
+
+/// Minimum accepted `max_db_size` for either env var, mirroring lbug's own
+/// floor: `BufferManager::verifySizeParams` rejects
+/// `maxDBSize < 2 * LBUG_PAGE_SIZE * PAGE_GROUP_SIZE`
+/// (`lbug-0.15.4/lbug-src/src/storage/buffer_manager/buffer_manager.cpp:99-112`)
+/// where `LBUG_PAGE_SIZE = 4096` (`PAGE_SIZE_LOG2 = 12`, generated
+/// `system_config.h`) and `PAGE_GROUP_SIZE = 1024` (`PAGE_GROUP_SIZE_LOG2 = 10`,
+/// `lbug-src/src/include/common/constants.h:74-75`) — `2 * 4096 * 1024` =
+/// 8 MiB. Rejecting below this in Rust surfaces an actionable AP-level error
+/// message instead of the opaque C++ `BufferManagerException` lbug would
+/// otherwise throw from inside `Database::new`.
+const MIN_MAX_DB_SIZE_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB — see doc comment above.
+
+/// Production default for `max_db_size` when `PROD_MAX_DB_SIZE_ENV` is unset.
+///
+/// Derivation (issue #25): measured every lbug graph-DB file reachable on
+/// the development machine that produced this fix (75 distinct graphs across
+/// `~/.cache/cortex/code-graphs/*/graph`, `~/.cortex/ap_graph/graph`, and
+/// `**/.prd-gen/graphs/*/graph` under active project checkouts — see the
+/// full measurement table in the issue #25 PR description). The largest
+/// observed file was `repro-cortex-viz-deps/graph` at 495,849,472 bytes
+/// (~473 MiB — a cortex-viz index run that included `node_modules`
+/// dependencies, the heaviest workload measured). Sizing rule: next power of
+/// two ≥ (largest measured × 16), floor 8 GiB. `473 MiB × 16` ≈ 7.39 GiB,
+/// which is below the 8 GiB floor, so the floor applies:
+/// `8 GiB = 1 << 33 = 8_589_934_592` bytes, already a power of two.
+/// source: measured 2026-07-15 on this development machine; see PR body for
+/// the `du -k` table. Re-measure and update this constant if a materially
+/// larger workload is observed in production.
+pub const DEFAULT_PROD_MAX_DB_SIZE_BYTES: u64 = 1 << 33; // 8 GiB — see doc comment above.
+
+/// Parses and validates a `max_db_size` env var value: must be a valid
+/// non-negative integer, at least `MIN_MAX_DB_SIZE_BYTES`, and a power of
+/// two. `env_name` is the variable name, used only to make the error message
+/// actionable (which var to fix, not a generic parse failure).
+///
+/// precondition: `raw` is the exact string read from `std::env::var`.
+/// postcondition: `Ok(bytes)` only for a value lbug's own
+/// `BufferManager::verifySizeParams` will accept; `Err` names the specific
+/// violation (not-a-number / too small / not-power-of-two) so a misconfigured
+/// deployment fails loudly at startup instead of silently falling back to a
+/// default the operator did not choose.
+fn parse_and_validate_max_db_size(raw: &str, env_name: &str) -> Result<u64, String> {
+    let bytes: u64 = raw
+        .parse()
+        .map_err(|e| format!("{env_name}={raw:?} is not a valid non-negative byte count: {e}"))?;
+    if bytes < MIN_MAX_DB_SIZE_BYTES {
+        return Err(format!(
+            "{env_name}={bytes} is below lbug's minimum max_db_size of \
+             {MIN_MAX_DB_SIZE_BYTES} bytes (8 MiB; BufferManager::verifySizeParams)"
+        ));
+    }
+    if bytes & (bytes - 1) != 0 {
+        return Err(format!(
+            "{env_name}={bytes} is not a power of two, which lbug's \
+             BufferManager::verifySizeParams requires"
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Builds the `SystemConfig` used by every lbug `Database` this crate opens.
+/// The single by-construction choke point for `max_db_size`: both
+/// `GraphStore::open_or_create` (used by all production code and by every
+/// integration test that goes through `GraphStore`) and the one test file
+/// that opens a raw `lbug::Database` directly
+/// (`tests/lbug_bulk_investigation.rs`) call this function, so no future
+/// call site can reintroduce the unbounded default.
+///
+/// Precedence: `TEST_MAX_DB_SIZE_ENV` (`AP_LBUG_TEST_MAX_DB_SIZE`), when set,
+/// always wins — this preserves the issue #21/#24 test-bounding behavior
+/// unchanged. Otherwise `PROD_MAX_DB_SIZE_ENV` (`AP_LBUG_MAX_DB_SIZE`), when
+/// set, is used. Otherwise `DEFAULT_PROD_MAX_DB_SIZE_BYTES` (8 GiB) applies —
+/// this is the issue #25 fix: production no longer falls through to lbug's
+/// own 8 TiB sentinel default. Either env var, if set to a value that fails
+/// validation (not a power of two, or below lbug's 8 MiB floor), is rejected
+/// with an actionable error rather than silently falling back to a default
+/// the operator did not choose.
+pub fn system_config() -> Result<SystemConfig, String> {
+    let config = SystemConfig::default();
+    if let Ok(raw) = std::env::var(TEST_MAX_DB_SIZE_ENV) {
+        let bytes = parse_and_validate_max_db_size(&raw, TEST_MAX_DB_SIZE_ENV)?;
+        return Ok(config.max_db_size(bytes));
+    }
+    let bytes = match std::env::var(PROD_MAX_DB_SIZE_ENV) {
+        Ok(raw) => parse_and_validate_max_db_size(&raw, PROD_MAX_DB_SIZE_ENV)?,
+        Err(_) => DEFAULT_PROD_MAX_DB_SIZE_BYTES,
+    };
+    Ok(config.max_db_size(bytes))
+}
+
 impl GraphStore {
-    /// Opens (or creates) a LadybugDB database at `path`.
+    /// Opens (or creates) a LadybugDB database at `path`, using the
+    /// by-construction `system_config()` (test bound, prod override, or the
+    /// issue #25 production default — see that function's doc comment for
+    /// the precedence rule).
     pub fn open_or_create(path: &Path) -> Result<Self, String> {
-        let db = Database::new(path, SystemConfig::default())
-            .map_err(|e| format!("lbug database open failed: {e}"))?;
+        Self::open_or_create_with_config(path, system_config()?)
+    }
+
+    /// Opens (or creates) a LadybugDB database at `path` with an explicit
+    /// `SystemConfig`, bypassing `system_config()`'s env-var resolution.
+    ///
+    /// `pub(crate)` rather than a test-only cfg: exists solely so tests (in
+    /// this module and in `graph_cache`'s test module) can exercise a
+    /// specific `max_db_size` — in particular `DEFAULT_PROD_MAX_DB_SIZE_BYTES`
+    /// — without racing `.cargo/config.toml`'s process-wide
+    /// `AP_LBUG_TEST_MAX_DB_SIZE` override across parallel test threads.
+    /// `open_or_create` is the only production call site; it always resolves
+    /// through `system_config()` first, so production behavior is unchanged.
+    pub(crate) fn open_or_create_with_config(
+        path: &Path,
+        config: SystemConfig,
+    ) -> Result<Self, String> {
+        let db =
+            Database::new(path, config).map_err(|e| format!("lbug database open failed: {e}"))?;
         // Safety: see comment on the struct. The Database is heap-stable and
         // outlives the Connection because struct fields drop in declaration order.
         let conn: Connection<'static> = unsafe {
             std::mem::transmute::<Connection<'_>, Connection<'static>>(
-                Connection::new(&db)
-                    .map_err(|e| format!("lbug connection failed: {e}"))?,
+                Connection::new(&db).map_err(|e| format!("lbug connection failed: {e}"))?,
             )
         };
         Ok(GraphStore {
@@ -174,11 +317,7 @@ impl GraphStore {
 
     /// Inserts a single node. `properties` are `(key, cypher_literal)` pairs.
     /// Values are interpolated as-is into Cypher — caller must quote strings.
-    pub fn insert_node(
-        &self,
-        label: &str,
-        properties: &[(&str, &str)],
-    ) -> Result<(), String> {
+    pub fn insert_node(&self, label: &str, properties: &[(&str, &str)]) -> Result<(), String> {
         let props = format_props(properties);
         let cypher = format!("CREATE (:{label} {{{props}}})");
         self.run(&cypher)?;
@@ -248,8 +387,7 @@ impl GraphStore {
         let (from_label, to_label) = parse_rel_endpoints(rel_table)?;
         let prop_schema = edge_column_types(rel_table);
         let prop_order = edge_prop_order(edges, prop_schema);
-        let (cypher, row_type) =
-            build_edge_unwind(rel_table, from_label, to_label, &prop_order);
+        let (cypher, row_type) = build_edge_unwind(rel_table, from_label, to_label, &prop_order);
         let mut inserted: u64 = 0;
         for chunk in edges.chunks(BULK_BATCH_SIZE) {
             let values = build_edge_struct_rows(chunk, &prop_order)?;
@@ -277,9 +415,11 @@ impl GraphStore {
         };
         let from_lit = cypher_str(from_id);
         let to_lit = cypher_str(to_id);
+        // source: Kuzu PK-index scan — inline `{id: ..}` avoids the A×B
+        // CrossProduct the comma+WHERE form plans (see build_edge_unwind).
         let cypher = format!(
-            "MATCH (a:{from_label}), (b:{to_label}) \
-             WHERE a.id = {from_lit} AND b.id = {to_lit} \
+            "MATCH (a:{from_label} {{id: {from_lit}}}) \
+             MATCH (b:{to_label} {{id: {to_lit}}}) \
              CREATE (a)-[:{rel_type}{props_clause}]->(b)"
         );
         self.run(&cypher)?;
@@ -297,6 +437,33 @@ impl GraphStore {
     /// LIMIT injection in `do_query_graph`, the byte-budget caps in
     /// `do_get_impact` / `do_get_processes`, and the per-relation LIMITs in
     /// `search::find_related_out` / `find_related_in`.
+    /// Flips `is_resolved = true` on all nodes of `label` whose id is in `ids`.
+    ///
+    /// Uses the codebase's prepared-UNWIND convention (parameterized `$rows`, no
+    /// Cypher string interpolation of data — mirrors bulk_insert_nodes) so a
+    /// codebase with tens of thousands of resolved imports/calls costs one
+    /// prepared statement per chunk. `label` is a fixed schema constant
+    /// ("Import"/"CallSite"), safe to embed. source: stages/stage-3.md §10.4.
+    pub(crate) fn mark_nodes_resolved(&self, label: &str, ids: &[&str]) -> Result<(), String> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        // source: Kuzu PK-index scan — inline `{id: rid}` seeks the index per
+        // row; the `MATCH (n) WHERE n.id = rid` form scans all N nodes per row
+        // (O(rows·N)) on large graphs. Same fix class as the edge queries.
+        let cypher =
+            format!("UNWIND $rows AS rid MATCH (n:{label} {{id: rid}}) SET n.is_resolved = true");
+        for chunk in ids.chunks(BULK_BATCH_SIZE) {
+            let values: Vec<Value> = chunk
+                .iter()
+                .map(|id| Value::String((*id).to_string()))
+                .collect();
+            let list = Value::List(LogicalType::String, values);
+            self.run_prepared(&cypher, list)?;
+        }
+        Ok(())
+    }
+
     pub fn execute_query(&self, cypher: &str) -> Result<QueryResult, String> {
         let mut result = self.run(cypher)?;
         let columns = result.get_column_names();
@@ -385,11 +552,25 @@ impl GraphStore {
 // ---------------------------------------------------------------------------
 
 const NODE_LABELS: &[&str] = &[
-    NODE_DIRECTORY, NODE_FILE, NODE_MODULE, NODE_FUNCTION, NODE_METHOD,
-    NODE_STRUCT, NODE_ENUM, NODE_VARIANT, NODE_TRAIT, NODE_FIELD,
-    NODE_CONSTANT, NODE_TYPE_ALIAS, NODE_IMPORT, NODE_CALL_SITE,
-    NODE_COMMUNITY, NODE_PROCESS, NODE_STDLIB_SYMBOL,
-    NODE_COMMIT, NODE_VERSION,
+    NODE_DIRECTORY,
+    NODE_FILE,
+    NODE_MODULE,
+    NODE_FUNCTION,
+    NODE_METHOD,
+    NODE_STRUCT,
+    NODE_ENUM,
+    NODE_VARIANT,
+    NODE_TRAIT,
+    NODE_FIELD,
+    NODE_CONSTANT,
+    NODE_TYPE_ALIAS,
+    NODE_IMPORT,
+    NODE_CALL_SITE,
+    NODE_COMMUNITY,
+    NODE_PROCESS,
+    NODE_STDLIB_SYMBOL,
+    NODE_COMMIT,
+    NODE_VERSION,
 ];
 
 /// Single source of truth for all relationship tables: (name, from, to).
@@ -463,7 +644,11 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     // CallSite → callee — emitted by resolver when the callee resolves.
     ("Calls_CallSite_Function", NODE_CALL_SITE, NODE_FUNCTION),
     ("Calls_CallSite_Method", NODE_CALL_SITE, NODE_METHOD),
-    ("Calls_CallSite_StdlibSymbol", NODE_CALL_SITE, NODE_STDLIB_SYMBOL),
+    (
+        "Calls_CallSite_StdlibSymbol",
+        NODE_CALL_SITE,
+        NODE_STDLIB_SYMBOL,
+    ),
     // Implements — source: stages/stage-3b.md §2, §3
     ("Implements_Struct_Trait", NODE_STRUCT, NODE_TRAIT),
     ("Implements_Enum_Trait", NODE_ENUM, NODE_TRAIT),
@@ -492,10 +677,22 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     // 3b-v2 Layer 5 (stdlib index) + Layer 4 (macro expansion) — source:
     // stages/stage-3b-v2.md §5. Stdlib targets carry resolution_method
     // = "stdlib-index" (confidence 0.95) or "macro-expansion" (0.85).
-    ("Calls_Function_StdlibSymbol", NODE_FUNCTION, NODE_STDLIB_SYMBOL),
+    (
+        "Calls_Function_StdlibSymbol",
+        NODE_FUNCTION,
+        NODE_STDLIB_SYMBOL,
+    ),
     ("Calls_Method_StdlibSymbol", NODE_METHOD, NODE_STDLIB_SYMBOL),
-    ("Implements_Struct_StdlibSymbol", NODE_STRUCT, NODE_STDLIB_SYMBOL),
-    ("Implements_Enum_StdlibSymbol", NODE_ENUM, NODE_STDLIB_SYMBOL),
+    (
+        "Implements_Struct_StdlibSymbol",
+        NODE_STRUCT,
+        NODE_STDLIB_SYMBOL,
+    ),
+    (
+        "Implements_Enum_StdlibSymbol",
+        NODE_ENUM,
+        NODE_STDLIB_SYMBOL,
+    ),
     // 3c MemberOf — source: stages/stage-3c.md §4.2
     ("MemberOf_Function_Community", NODE_FUNCTION, NODE_COMMUNITY),
     ("MemberOf_Method_Community", NODE_METHOD, NODE_COMMUNITY),
@@ -503,13 +700,21 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     ("MemberOf_Enum_Community", NODE_ENUM, NODE_COMMUNITY),
     ("MemberOf_Trait_Community", NODE_TRAIT, NODE_COMMUNITY),
     ("MemberOf_Constant_Community", NODE_CONSTANT, NODE_COMMUNITY),
-    ("MemberOf_TypeAlias_Community", NODE_TYPE_ALIAS, NODE_COMMUNITY),
+    (
+        "MemberOf_TypeAlias_Community",
+        NODE_TYPE_ALIAS,
+        NODE_COMMUNITY,
+    ),
     ("MemberOf_Module_Community", NODE_MODULE, NODE_COMMUNITY),
     // 3c EntryPointOf — source: stages/stage-3c.md §4.2
     ("EntryPointOf_Function_Process", NODE_FUNCTION, NODE_PROCESS),
     ("EntryPointOf_Method_Process", NODE_METHOD, NODE_PROCESS),
     // 3c ParticipatesIn — source: stages/stage-3c.md §4.2
-    ("ParticipatesIn_Function_Process", NODE_FUNCTION, NODE_PROCESS),
+    (
+        "ParticipatesIn_Function_Process",
+        NODE_FUNCTION,
+        NODE_PROCESS,
+    ),
     ("ParticipatesIn_Method_Process", NODE_METHOD, NODE_PROCESS),
     // History layer — source: second-brain history requirement.
     // Commit lineage + per-entity version spine. Every edge is read in both
@@ -526,14 +731,23 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
     ("VersionOf_Version_Enum", NODE_VERSION, NODE_ENUM),
     ("VersionOf_Version_Trait", NODE_VERSION, NODE_TRAIT),
     ("ChangedIn_Version_Commit", NODE_VERSION, NODE_COMMIT),
-    ("PreviousVersion_Version_Version", NODE_VERSION, NODE_VERSION),
+    (
+        "PreviousVersion_Version_Version",
+        NODE_VERSION,
+        NODE_VERSION,
+    ),
 ];
 
 fn node_table_ddl() -> Vec<String> {
     vec![
         // source: stages/stage-3.md §schema
         ddl_node(NODE_DIRECTORY, "id STRING, path STRING, name STRING"),
-        ddl_node(NODE_FILE, "id STRING, path STRING, name STRING, extension STRING, size_bytes INT64"),
+        // source: stages/stage-3.md §10.5 — `parse_errors` records the count of
+        // tree-sitter ERROR/MISSING nodes for this file's parse. A file that
+        // parses to few/zero symbols with parse_errors > 0 is a degraded parse
+        // (e.g. wrong grammar dialect), not a genuinely empty file; downstream
+        // tools must be able to tell the two apart.
+        ddl_node(NODE_FILE, "id STRING, path STRING, name STRING, extension STRING, size_bytes INT64, parse_errors INT64"),
         ddl_node(NODE_MODULE, "id STRING, name STRING, qualified_name STRING"),
         // source: Spike B' BUG #5 fix — every symbol-bearing node gets a
         // `language` STRING column populated by the indexer from the file's
@@ -572,25 +786,35 @@ fn node_table_ddl() -> Vec<String> {
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, language STRING, \
              bases STRING, implements STRING"),
+        // source: stages/stage-3.md §10.1 — every symbol carries its source
+        // span. The parser already emits start_line/end_line for these nodes;
+        // the columns were previously missing so the spans were dropped at persist.
         ddl_node(NODE_VARIANT,
-            "id STRING, name STRING, qualified_name STRING, language STRING"),
+            "id STRING, name STRING, qualified_name STRING, \
+             start_line INT64, end_line INT64, language STRING"),
         ddl_node(NODE_TRAIT,
             "id STRING, name STRING, qualified_name STRING, \
              start_line INT64, end_line INT64, visibility STRING, language STRING, \
              bases STRING, implements STRING"),
         ddl_node(NODE_FIELD,
             "id STRING, name STRING, type_annotation STRING, visibility STRING, \
-             language STRING"),
+             start_line INT64, end_line INT64, language STRING"),
         ddl_node(NODE_CONSTANT,
             "id STRING, name STRING, qualified_name STRING, type_annotation STRING, \
-             language STRING"),
+             start_line INT64, end_line INT64, language STRING"),
         ddl_node(NODE_TYPE_ALIAS,
             "id STRING, name STRING, qualified_name STRING, target_type STRING, \
-             language STRING"),
+             start_line INT64, end_line INT64, language STRING"),
+        // source: stages/stage-3.md §10.1 (span) + §10.4 (`is_resolved` on Import
+        // and CallSite — Stage 4 must distinguish "resolved" from "attempted,
+        // failed" from "never attempted"; the indexer writes false, the resolver
+        // flips it to true when it emits the resolved edge).
         ddl_node(NODE_IMPORT,
-            "id STRING, path STRING, alias STRING, is_glob BOOLEAN, language STRING"),
+            "id STRING, path STRING, alias STRING, is_glob BOOLEAN, \
+             start_line INT64, end_line INT64, is_resolved BOOLEAN, language STRING"),
         ddl_node(NODE_CALL_SITE,
-            "id STRING, callee_name STRING, line INT64, col INT64, language STRING"),
+            "id STRING, callee_name STRING, line INT64, col INT64, \
+             is_resolved BOOLEAN, language STRING"),
         // 3c Community + Process — source: stages/stage-3c.md §4.1
         ddl_node(NODE_COMMUNITY,
             "id STRING, name STRING, algorithm STRING, \
@@ -738,89 +962,129 @@ type ColTypes = &'static [(&'static str, LogicalType)];
 
 // Schema tables, grouped by shape. Mirrors node_table_ddl() columns.
 const COLS_DIRECTORY: ColTypes = &[
-    ("id", LogicalType::String), ("path", LogicalType::String),
+    ("id", LogicalType::String),
+    ("path", LogicalType::String),
     ("name", LogicalType::String),
 ];
 const COLS_FILE: ColTypes = &[
-    ("id", LogicalType::String), ("path", LogicalType::String),
-    ("name", LogicalType::String), ("extension", LogicalType::String),
+    ("id", LogicalType::String),
+    ("path", LogicalType::String),
+    ("name", LogicalType::String),
+    ("extension", LogicalType::String),
     ("size_bytes", LogicalType::Int64),
+    // source: stages/stage-3.md §10.5 — must mirror the NODE_FILE DDL.
+    ("parse_errors", LogicalType::Int64),
 ];
 // source: Spike B' BUG #5 + #9 — every symbol-bearing label gets a
 // `language` String column; Struct/Enum/Trait additionally gain `bases`.
 // Module intentionally has no language (it's a logical aggregation, not
 // source); it still uses COLS_MODULE which keeps the pre-Spike-B' shape.
 const COLS_MODULE: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
 ];
 const COLS_VARIANT: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
+    // source: stages/stage-3.md §10.1 — must mirror the NODE_VARIANT DDL.
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_FUNCTION: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
-    ("visibility", LogicalType::String), ("is_async", LogicalType::Bool),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
+    ("visibility", LogicalType::String),
+    ("is_async", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_METHOD: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
-    ("visibility", LogicalType::String), ("is_async", LogicalType::Bool),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
+    ("visibility", LogicalType::String),
+    ("is_async", LogicalType::Bool),
     ("receiver_type", LogicalType::String),
     ("trait_name", LogicalType::String),
     ("language", LogicalType::String),
 ];
 const COLS_TYPEDECL: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("start_line", LogicalType::Int64), ("end_line", LogicalType::Int64),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("visibility", LogicalType::String),
     ("language", LogicalType::String),
     ("bases", LogicalType::String),
     ("implements", LogicalType::String),
 ];
+// source: stages/stage-3.md §10.1 — Field/Constant/TypeAlias/Import gain span
+// columns; §10.4 — Import/CallSite gain is_resolved. Each const MUST mirror the
+// corresponding node DDL exactly (column name + order feed the UNWIND type map).
 const COLS_FIELD: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("type_annotation", LogicalType::String),
     ("visibility", LogicalType::String),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_CONSTANT: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("type_annotation", LogicalType::String),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_TYPE_ALIAS: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("qualified_name", LogicalType::String),
     ("target_type", LogicalType::String),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
     ("language", LogicalType::String),
 ];
 const COLS_IMPORT: ColTypes = &[
-    ("id", LogicalType::String), ("path", LogicalType::String),
-    ("alias", LogicalType::String), ("is_glob", LogicalType::Bool),
+    ("id", LogicalType::String),
+    ("path", LogicalType::String),
+    ("alias", LogicalType::String),
+    ("is_glob", LogicalType::Bool),
+    ("start_line", LogicalType::Int64),
+    ("end_line", LogicalType::Int64),
+    ("is_resolved", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_CALL_SITE: ColTypes = &[
-    ("id", LogicalType::String), ("callee_name", LogicalType::String),
-    ("line", LogicalType::Int64), ("col", LogicalType::Int64),
+    ("id", LogicalType::String),
+    ("callee_name", LogicalType::String),
+    ("line", LogicalType::Int64),
+    ("col", LogicalType::Int64),
+    ("is_resolved", LogicalType::Bool),
     ("language", LogicalType::String),
 ];
 const COLS_COMMUNITY: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("algorithm", LogicalType::String),
     ("resolution_param", LogicalType::Double),
     ("member_count", LogicalType::Int64),
     ("modularity_contribution", LogicalType::Double),
 ];
 const COLS_PROCESS: ColTypes = &[
-    ("id", LogicalType::String), ("name", LogicalType::String),
+    ("id", LogicalType::String),
+    ("name", LogicalType::String),
     ("entry_point_id", LogicalType::String),
     ("entry_kind", LogicalType::String),
     ("entry_confidence", LogicalType::Double),
@@ -829,15 +1093,20 @@ const COLS_PROCESS: ColTypes = &[
 ];
 // History layer — mirrors the NODE_COMMIT / NODE_VERSION DDL exactly.
 const COLS_COMMIT: ColTypes = &[
-    ("id", LogicalType::String), ("sha", LogicalType::String),
-    ("author", LogicalType::String), ("author_email", LogicalType::String),
-    ("committed_at", LogicalType::Int64), ("message", LogicalType::String),
+    ("id", LogicalType::String),
+    ("sha", LogicalType::String),
+    ("author", LogicalType::String),
+    ("author_email", LogicalType::String),
+    ("committed_at", LogicalType::Int64),
+    ("message", LogicalType::String),
 ];
 const COLS_VERSION: ColTypes = &[
-    ("id", LogicalType::String), ("entity_id", LogicalType::String),
+    ("id", LogicalType::String),
+    ("entity_id", LogicalType::String),
     ("entity_kind", LogicalType::String),
     ("qualified_name", LogicalType::String),
-    ("change_type", LogicalType::String), ("commit_sha", LogicalType::String),
+    ("change_type", LogicalType::String),
+    ("commit_sha", LogicalType::String),
     ("committed_at", LogicalType::Int64),
     ("lines_changed", LogicalType::Int64),
 ];
@@ -888,8 +1157,7 @@ fn node_prop_order(
     rows: &[Vec<(String, String)>],
     schema: ColTypes,
 ) -> Vec<(&'static str, LogicalType)> {
-    let mut present: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
+    let mut present: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for row in rows {
         for (k, _) in row {
             present.insert(k.as_str());
@@ -907,8 +1175,7 @@ fn edge_prop_order(
     edges: &[(String, String, Vec<(String, String)>)],
     schema: ColTypes,
 ) -> Vec<(&'static str, LogicalType)> {
-    let mut present: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
+    let mut present: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for e in edges {
         for (k, _) in &e.2 {
             present.insert(k.as_str());
@@ -955,10 +1222,17 @@ fn build_edge_unwind(
             .collect();
         format!(" {{{}}}", assigns.join(", "))
     };
+    // source: Kuzu primary-key index scan. An inline PK predicate
+    // `(n:Label {id: expr})` seeks the PK index (one node); the comma form
+    // `MATCH (a:A), (b:B) WHERE a.id=.. AND b.id=..` plans as a CrossProduct
+    // over ALL A×B nodes filtered by string Equals. On a full-dependency
+    // graph (100k+ nodes) that cross product ran 5h+ at 100% CPU / 10.9G
+    // before this fix (measured 2026-07-04, `sample` of hung pid 41120:
+    // CrossProduct -> Filter selectUnFlatFlat<string_t,Equals> -> memcmp).
     let cypher = format!(
         "UNWIND $rows AS row \
-         MATCH (a:{from_label}), (b:{to_label}) \
-         WHERE a.id = row.from AND b.id = row.to \
+         MATCH (a:{from_label} {{id: row.from}}) \
+         MATCH (b:{to_label} {{id: row.to}}) \
          CREATE (a)-[:{rel_table}{props_clause}]->(b)",
     );
     let mut fields: Vec<(String, LogicalType)> = vec![
@@ -998,7 +1272,10 @@ fn build_edge_struct_rows(
             ("to".to_string(), Value::String(to.clone())),
         ];
         for (col, ty) in prop_order {
-            let lit = props.iter().find(|(k, _)| k == *col).map(|(_, v)| v.as_str());
+            let lit = props
+                .iter()
+                .find(|(k, _)| k == *col)
+                .map(|(_, v)| v.as_str());
             fields.push(((*col).to_string(), literal_to_value(lit, ty, col)?));
         }
         out.push(Value::Struct(fields));
@@ -1014,11 +1291,7 @@ fn build_edge_struct_rows(
 /// typed columns. Parsing preserves the security guarantees of cypher_str
 /// because the string payload is now passed as a typed parameter, not
 /// interpolated into Cypher text.
-fn literal_to_value(
-    lit: Option<&str>,
-    ty: &LogicalType,
-    col: &str,
-) -> Result<Value, String> {
+fn literal_to_value(lit: Option<&str>, ty: &LogicalType, col: &str) -> Result<Value, String> {
     let Some(raw) = lit else {
         return Ok(Value::Null(ty.clone()));
     };
@@ -1063,7 +1336,10 @@ fn unwrap_cypher_string(s: &str) -> String {
                 match chars.next() {
                     Some('\\') => out.push('\\'),
                     Some('\'') => out.push('\''),
-                    Some(other) => { out.push('\\'); out.push(other); }
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
                     None => out.push('\\'),
                 }
             } else {
@@ -1109,17 +1385,21 @@ fn value_to_u64(v: &Value) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_create_and_query() {
-        let dir = std::env::temp_dir().join("graph_store_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — a fixed `temp_dir().join("graph_store_test")`
+        // path collides under default parallel `cargo test` execution (the
+        // embedded DB's file lock races across test threads). tempfile::
+        // TempDir allocates a unique-per-call directory (mirrors the #13-fix
+        // pattern in tests/lbug_bulk_investigation.rs).
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
-        let store =
-            GraphStore::open_or_create(&db_path).expect("open_or_create");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
         store.create_schema().expect("create_schema");
 
         store
@@ -1138,9 +1418,7 @@ mod tests {
             .expect("insert Function node");
 
         let qr = store
-            .execute_query(
-                "MATCH (f:Function) WHERE f.name = 'main' RETURN f.name",
-            )
+            .execute_query("MATCH (f:Function) WHERE f.name = 'main' RETURN f.name")
             .expect("query");
         assert_eq!(qr.columns, vec!["f.name"]);
         assert!(!qr.rows.is_empty(), "expected at least one row");
@@ -1148,16 +1426,16 @@ mod tests {
 
         let count = store.node_count().expect("node_count");
         assert!(count >= 1, "expected node_count >= 1, got {count}");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_bulk_insert_nodes_and_edges() {
-        let dir = std::env::temp_dir().join("graph_store_bulk_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — unique-per-call TempDir; see test_create_and_query.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_bulk_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
         let store = GraphStore::open_or_create(&db_path).expect("open");
         store.create_schema().expect("schema");
@@ -1190,8 +1468,6 @@ mod tests {
             .expect("count");
         let c: u64 = qr.rows[0][0].parse().unwrap_or(0);
         assert_eq!(c, 7);
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1215,13 +1491,14 @@ mod tests {
         // to inject arbitrary Cypher (including DETACH DELETE). After the
         // C1 fix, the injection attempt becomes an ordinary string literal
         // that round-trips through the DB safely.
-        let dir = std::env::temp_dir().join("graph_store_inject_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let db_path = dir.join("testdb");
+        // source: issue #21 — unique-per-call TempDir; see test_create_and_query.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_inject_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
 
-        let store =
-            GraphStore::open_or_create(&db_path).expect("open_or_create");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
         store.create_schema().expect("create_schema");
 
         // Insert two File nodes so insert_edge has something to MATCH.
@@ -1265,7 +1542,102 @@ mod tests {
             .expect("count query");
         let count_val: u64 = cnt.rows[0][0].parse().unwrap_or(0);
         assert_eq!(count_val, 2, "injection attempt must not delete nodes");
+    }
 
-        let _ = fs::remove_dir_all(&dir);
+    // -----------------------------------------------------------------
+    // issue #25 — max_db_size validation and the production default.
+    // Pure-function tests: no env var mutation, so these are safe under
+    // cargo test's default parallel (threaded) execution alongside every
+    // other test in this binary.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn max_db_size_rejects_non_numeric() {
+        let err = parse_and_validate_max_db_size("not-a-number", "AP_LBUG_TEST_MAX_DB_SIZE")
+            .expect_err("non-numeric value must be rejected");
+        assert!(
+            err.contains("AP_LBUG_TEST_MAX_DB_SIZE"),
+            "error must name the offending var: {err}"
+        );
+    }
+
+    #[test]
+    fn max_db_size_rejects_below_lbug_floor() {
+        // 4 MiB is below the 8 MiB floor lbug's verifySizeParams enforces.
+        let err = parse_and_validate_max_db_size("4194304", "AP_LBUG_MAX_DB_SIZE")
+            .expect_err("below-floor value must be rejected");
+        assert!(
+            err.contains("minimum"),
+            "error must explain the floor: {err}"
+        );
+    }
+
+    #[test]
+    fn max_db_size_rejects_non_power_of_two() {
+        // 8 MiB + 1 byte: above the floor but not a power of two.
+        let err = parse_and_validate_max_db_size("8388609", "AP_LBUG_MAX_DB_SIZE")
+            .expect_err("non-power-of-two value must be rejected");
+        assert!(
+            err.contains("power of two"),
+            "error must explain the constraint: {err}"
+        );
+    }
+
+    #[test]
+    fn max_db_size_accepts_valid_power_of_two() {
+        // 512 MiB — the existing test bound (.cargo/config.toml).
+        let bytes = parse_and_validate_max_db_size("536870912", "AP_LBUG_TEST_MAX_DB_SIZE")
+            .expect("valid power-of-two above the floor must be accepted");
+        assert_eq!(bytes, 536_870_912);
+    }
+
+    #[test]
+    // clippy::assertions_on_constants: both operands are `const` today, so
+    // clippy can prove this at lint time — but the whole point of this test
+    // is to keep proving it if a future edit changes either constant. A
+    // `const { assert!(..) }` block would only run at compile time (same
+    // blind spot); the ordinary runtime assert here is deliberate, not an
+    // oversight.
+    #[allow(clippy::assertions_on_constants)]
+    fn prod_default_is_valid_per_lbug_constraints() {
+        // The production default itself must satisfy the exact constraints
+        // parse_and_validate_max_db_size enforces for an operator-supplied
+        // override, otherwise system_config()'s fallback would build a
+        // SystemConfig that lbug's own verifySizeParams rejects at open time.
+        assert!(
+            DEFAULT_PROD_MAX_DB_SIZE_BYTES >= MIN_MAX_DB_SIZE_BYTES,
+            "prod default must be at least lbug's 8 MiB floor"
+        );
+        assert_eq!(
+            DEFAULT_PROD_MAX_DB_SIZE_BYTES & (DEFAULT_PROD_MAX_DB_SIZE_BYTES - 1),
+            0,
+            "prod default must be a power of two"
+        );
+        assert_eq!(
+            DEFAULT_PROD_MAX_DB_SIZE_BYTES,
+            8 * 1024 * 1024 * 1024,
+            "prod default must be exactly 8 GiB"
+        );
+    }
+
+    #[test]
+    fn prod_default_config_opens_a_real_database() {
+        // Proves DEFAULT_PROD_MAX_DB_SIZE_BYTES is not just internally
+        // consistent (prod_default_is_valid_per_lbug_constraints, above) but
+        // actually accepted by lbug's C++ BufferManager::verifySizeParams.
+        // Built directly via SystemConfig rather than through
+        // system_config(), because .cargo/config.toml's [env] table sets
+        // AP_LBUG_TEST_MAX_DB_SIZE for every cargo-spawned process (issue
+        // #21/#24) and mutating that process-wide var at runtime here would
+        // race other tests in this binary — see graph_cache.rs's
+        // `prod_default_bound_opens_max_cached_graphs_simultaneously` for the
+        // multi-open concurrency proof at this exact bound.
+        let dir = tempfile::Builder::new()
+            .prefix("graph_store_prod_default_test")
+            .tempdir()
+            .expect("create temp dir");
+        let cfg = SystemConfig::default().max_db_size(DEFAULT_PROD_MAX_DB_SIZE_BYTES);
+        let _store = GraphStore::open_or_create_with_config(&dir.path().join("testdb"), cfg)
+            .expect("prod default max_db_size must be accepted by lbug");
     }
 }

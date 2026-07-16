@@ -22,7 +22,10 @@ use ai_architect_mcp::indexer;
 use ai_architect_mcp::resolver;
 use std::fs;
 
-fn index_and_resolve(tag: &str, files: &[(&str, &str)]) -> (GraphStore, resolver::ResolutionResult) {
+fn index_and_resolve(
+    tag: &str,
+    files: &[(&str, &str)],
+) -> (GraphStore, resolver::ResolutionResult) {
     let root = std::env::temp_dir().join(format!("kotlin_ambiguous_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let src = root.join("src");
@@ -65,7 +68,11 @@ fn kotlin_bare_import_resolves_the_imported_candidate() {
     let caller = "package pkg.c\n\nimport pkg.b.process\n\nfun run() {\n    process()\n}\n";
     let (store, res) = index_and_resolve(
         "repro",
-        &[("pkg/a/A.kt", a), ("pkg/b/B.kt", b), ("pkg/c/Caller.kt", caller)],
+        &[
+            ("pkg/a/A.kt", a),
+            ("pkg/b/B.kt", b),
+            ("pkg/c/Caller.kt", caller),
+        ],
     );
 
     let edges = calls_edge(&store, "pkg/b/B.kt");
@@ -89,7 +96,11 @@ fn kotlin_cross_package_import_resolves_with_import_match_confidence() {
     let caller = "package pkg.gamma\n\nimport pkg.beta.handle\n\nfun run() {\n    handle()\n}\n";
     let (store, res) = index_and_resolve(
         "severe",
-        &[("pkg/alpha/A.kt", a), ("pkg/beta/B.kt", b), ("pkg/gamma/Caller.kt", caller)],
+        &[
+            ("pkg/alpha/A.kt", a),
+            ("pkg/beta/B.kt", b),
+            ("pkg/gamma/Caller.kt", caller),
+        ],
     );
 
     let edges = calls_edge(&store, "pkg/beta/B.kt");
@@ -135,7 +146,10 @@ fn kotlin_same_package_proximity_resolves_without_import() {
     );
     assert_eq!(edges[0][3], "package-proximity");
     let unwanted = calls_edge(&store, "pkg/other/Unrelated.kt");
-    assert!(unwanted.is_empty(), "must not resolve to the unrelated-package candidate");
+    assert!(
+        unwanted.is_empty(),
+        "must not resolve to the unrelated-package candidate"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +165,18 @@ fn kotlin_genuine_ambiguity_is_labeled_not_dropped_or_guessed() {
     let caller = "package pkg.z\n\nfun run() {\n    compute()\n}\n";
     let (store, res) = index_and_resolve(
         "ambiguous",
-        &[("pkg/x/X.kt", a), ("pkg/y/Y.kt", b), ("pkg/z/Caller.kt", caller)],
+        &[
+            ("pkg/x/X.kt", a),
+            ("pkg/y/Y.kt", b),
+            ("pkg/z/Caller.kt", caller),
+        ],
     );
 
     let edges = calls_edge(&store, "compute");
-    assert!(edges.is_empty(), "a genuinely ambiguous call must not produce ANY Calls edge");
+    assert!(
+        edges.is_empty(),
+        "a genuinely ambiguous call must not produce ANY Calls edge"
+    );
 
     let ambiguous = res
         .unresolved
@@ -164,7 +185,10 @@ fn kotlin_genuine_ambiguity_is_labeled_not_dropped_or_guessed() {
     assert!(
         ambiguous.is_some(),
         "expected an unresolved Calls ref for 'compute', got: {:?}",
-        res.unresolved.iter().map(|u| (&u.kind, &u.target_text, &u.reason)).collect::<Vec<_>>()
+        res.unresolved
+            .iter()
+            .map(|u| (&u.kind, &u.target_text, &u.reason))
+            .collect::<Vec<_>>()
     );
     let reason = &ambiguous.unwrap().reason;
     assert!(
@@ -216,7 +240,10 @@ fun run() {
         "value receiver 'viewModel.load()' must never string-match the unrelated decoy load(): {decoy_edges:?}"
     );
     let unrelated_edges = calls_edge(&store, "pkg/other/Other.kt");
-    assert!(unrelated_edges.is_empty(), "must not resolve to the unrelated load() either");
+    assert!(
+        unrelated_edges.is_empty(),
+        "must not resolve to the unrelated load() either"
+    );
 
     eprintln!(
         "value_receiver: calls={} unresolved={:?}",

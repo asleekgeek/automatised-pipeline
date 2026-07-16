@@ -126,18 +126,31 @@ fn try_package_pass<T: Clone>(
                 Some(pkg) => format!("{pkg}::{name}"),
                 None => name,
             };
-            KeyedCandidate { target: c.clone(), key }
+            KeyedCandidate {
+                target: c.clone(),
+                key,
+            }
         })
         .collect();
     // caller_file/-package deliberately suppressed: this pass tests ONLY
     // import/callee-spelling evidence (ImportMatch / UniqueGlobal), never
     // SameFileUnique or PackageProximity — Pass 2 owns those, using the
     // real file-based representation.
-    let ctx = PolicyContext { imports_in_scope: ev.imports_hint, caller_file: "", caller_package: None };
+    let ctx = PolicyContext {
+        imports_in_scope: ev.imports_hint,
+        caller_file: "",
+        caller_package: None,
+    };
     match ambiguity_policy::resolve(&keyed, &ctx) {
-        Resolution::Resolved { target, evidence, confidence } => {
-            Some(Resolution::Resolved { target: target.target, evidence, confidence })
-        }
+        Resolution::Resolved {
+            target,
+            evidence,
+            confidence,
+        } => Some(Resolution::Resolved {
+            target: target.target,
+            evidence,
+            confidence,
+        }),
         _ => None,
     }
 }
@@ -150,7 +163,10 @@ fn file_pass<T: Clone>(
 ) -> Resolution<T> {
     let keyed: Vec<KeyedCandidate<T>> = candidates
         .iter()
-        .map(|c| KeyedCandidate { target: c.clone(), key: strip_seq_suffix(&qn_of(c)).to_string() })
+        .map(|c| KeyedCandidate {
+            target: c.clone(),
+            key: strip_seq_suffix(&qn_of(c)).to_string(),
+        })
         .collect();
     let pkg = provider.package_of(ev.caller_file);
     let ctx = PolicyContext {
@@ -159,12 +175,18 @@ fn file_pass<T: Clone>(
         caller_package: pkg.as_deref(),
     };
     match ambiguity_policy::resolve(&keyed, &ctx) {
-        Resolution::Resolved { target, evidence, confidence } => {
-            Resolution::Resolved { target: target.target, evidence, confidence }
-        }
-        Resolution::Ambiguous { candidates } => {
-            Resolution::Ambiguous { candidates: candidates.into_iter().map(|k| k.target).collect() }
-        }
+        Resolution::Resolved {
+            target,
+            evidence,
+            confidence,
+        } => Resolution::Resolved {
+            target: target.target,
+            evidence,
+            confidence,
+        },
+        Resolution::Ambiguous { candidates } => Resolution::Ambiguous {
+            candidates: candidates.into_iter().map(|k| k.target).collect(),
+        },
         Resolution::NotFound => Resolution::NotFound,
     }
 }
@@ -185,24 +207,50 @@ mod tests {
     }
 
     fn sym(file: &str, qn: &str) -> Sym {
-        Sym { qn: qn.to_string(), file: file.to_string() }
+        Sym {
+            qn: qn.to_string(),
+            file: file.to_string(),
+        }
     }
 
-    fn run(candidates: &[Sym], imports_hint: &[String], caller_file: &str, lang: &str) -> Resolution<Sym> {
+    fn run(
+        candidates: &[Sym],
+        imports_hint: &[String],
+        caller_file: &str,
+        lang: &str,
+    ) -> Resolution<Sym> {
         let provider = provider_for(lang);
-        let ev = CallEvidence { imports_hint, caller_file };
-        resolve_two_pass(candidates, |s| s.qn.clone(), |s| s.file.clone(), provider, &ev)
+        let ev = CallEvidence {
+            imports_hint,
+            caller_file,
+        };
+        resolve_two_pass(
+            candidates,
+            |s| s.qn.clone(),
+            |s| s.file.clone(),
+            provider,
+            &ev,
+        )
     }
 
     #[test]
     fn strip_seq_suffix_removes_trailing_numeric_disambiguator() {
-        assert_eq!(strip_seq_suffix("src/File.kt::process#7"), "src/File.kt::process");
-        assert_eq!(strip_seq_suffix("src/File.kt::Utils::process#12"), "src/File.kt::Utils::process");
+        assert_eq!(
+            strip_seq_suffix("src/File.kt::process#7"),
+            "src/File.kt::process"
+        );
+        assert_eq!(
+            strip_seq_suffix("src/File.kt::Utils::process#12"),
+            "src/File.kt::Utils::process"
+        );
     }
 
     #[test]
     fn strip_seq_suffix_is_noop_without_numeric_tail() {
-        assert_eq!(strip_seq_suffix("src/models.rs::Config::new"), "src/models.rs::Config::new");
+        assert_eq!(
+            strip_seq_suffix("src/models.rs::Config::new"),
+            "src/models.rs::Config::new"
+        );
         assert_eq!(strip_seq_suffix("weird#not-a-number"), "weird#not-a-number");
     }
 
@@ -217,7 +265,9 @@ mod tests {
         let imports = ["pkg.b.process".to_string()];
         let r = run(&candidates, &imports, "pkg/c/Caller.kt", "kotlin");
         match r {
-            Resolution::Resolved { target, evidence, .. } => {
+            Resolution::Resolved {
+                target, evidence, ..
+            } => {
                 assert_eq!(target.file, "pkg/b/File.kt");
                 assert_eq!(evidence, ambiguity_policy::Evidence::ImportMatch);
             }
@@ -233,7 +283,9 @@ mod tests {
         ];
         let r = run(&candidates, &[], "pkg/a/Caller.kt", "kotlin");
         match r {
-            Resolution::Resolved { target, evidence, .. } => {
+            Resolution::Resolved {
+                target, evidence, ..
+            } => {
                 assert_eq!(target.file, "pkg/a/Caller.kt");
                 assert_eq!(evidence, ambiguity_policy::Evidence::PackageProximity);
             }
@@ -267,7 +319,9 @@ mod tests {
         let imports = ["Config::new".to_string()];
         let r = run(&candidates, &imports, "src/main.rs", "rust");
         match r {
-            Resolution::Resolved { target, evidence, .. } => {
+            Resolution::Resolved {
+                target, evidence, ..
+            } => {
                 assert_eq!(target.file, "src/models.rs");
                 assert_eq!(evidence, ambiguity_policy::Evidence::ImportMatch);
             }

@@ -1,0 +1,131 @@
+{
+  "manifest_version": "0.4",
+  "name": "automatised-pipeline",
+  "display_name": "automatised-pipeline — Codebase Intelligence",
+  "version": "0.5.0",
+  "license": "MIT",
+  "author": {
+    "name": "Clement Deust",
+    "email": "admin@ai-architect.tools",
+    "url": "https://ai-architect.tools"
+  },
+  "description": "Codebase intelligence MCP server — index any repo into a property graph; 24 tools for agents.",
+  "long_description": "automatised-pipeline is a Rust MCP server that indexes any Rust / Python / TypeScript codebase into a LadybugDB property graph, resolves imports and call chains across files, detects functional communities via Leiden-class community detection, traces execution flows from entry points, builds a hybrid BM25 + sparse TF-IDF + RRF search index, and exposes all of it to AI agents through 24 MCP tools. It is the codebase intelligence layer that sits between a finding and a PRD — read-only intelligence that tells the system what is true about the code so the next stage can reason without guessing.",
+  "homepage": "https://github.com/cdeust/automatised-pipeline",
+  "documentation": "https://github.com/cdeust/automatised-pipeline#readme",
+  "support": "https://github.com/cdeust/automatised-pipeline/issues",
+  "icon": "icon.png",
+  "privacy_policies": [
+    "https://github.com/cdeust/automatised-pipeline/blob/main/PRIVACY.md"
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "linux"]
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "launch.sh",
+    "mcp_config": {
+      "command": "${__dirname}/launch.sh",
+      "args": []
+    }
+  },
+  "tools": [
+    {
+      "name": "health_check",
+      "description": "Stage 0 — Healthcheck + handshake verification. Returns server identity, protocol version, and the registered stage count. Use this before calling any other stage tool to confirm the MCP is live."
+    },
+    {
+      "name": "extract_finding",
+      "description": "Stage 1a — Deterministic extraction. Normalizes one incoming finding (inline object or absolute path to a .json file) to the canonical schema, writes stage-1.source.json + stage-1.extracted.json atomically under <output_dir>/runs/<run_id>/findings/<finding_id>/, and creates or updates an index.json entry. Does NOT call an LLM."
+    },
+    {
+      "name": "refine_finding",
+      "description": "Stage 1b — Orchestrator-aware persistence. Reads an existing stage-1.extracted.json, composes stage-1.refined.json with the agent-produced refined_prompt + refinement payload, and updates index.json atomically. Pure persistence — no LLM call, no network."
+    },
+    {
+      "name": "start_verification",
+      "description": "Stage 2a — Create a clarification session for a refined finding. Verifies stage-1.refined.json exists and parses (schema_ok), then atomically writes stage-2.session.json with state 'open'. No LLM call."
+    },
+    {
+      "name": "append_clarification",
+      "description": "Stage 2b — Append one turn (agent_question or user_answer) to stage-2.session.json. Enforces the alternation invariant (two consecutive same-kind turns rejected) and the §3 state machine. Whole-file atomic rewrite per spec §12.3. No LLM call."
+    },
+    {
+      "name": "finalize_verification",
+      "description": "Stage 2c — Consume the user-ready signal. Computes sha256 over the canonical transcript bytes, writes stage-2.verified.json atomically, flips the session to 'finalized', and updates index.json with verified+stage2_path. No LLM call."
+    },
+    {
+      "name": "abort_verification",
+      "description": "Stage 2d — Kill a non-terminal session. Atomically rewrites stage-2.session.json with state 'aborted', aborted_at, and optional abort_reason. A fresh start_verification after abort overwrites the session."
+    },
+    {
+      "name": "index_codebase",
+      "description": "Stage 3a — Index a codebase. Walks the directory, parses source files with tree-sitter (Rust, Python, TypeScript), and persists a code-intelligence graph into a LadybugDB database at <output_dir>/graph/. Returns node/edge counts and elapsed time."
+    },
+    {
+      "name": "query_graph",
+      "description": "Stage 3a — Execute a Cypher query against an indexed code graph. The graph must have been created by a prior index_codebase call. Returns column names and rows."
+    },
+    {
+      "name": "get_symbol",
+      "description": "Stage 3a — Look up a symbol by qualified name in the code graph. Returns the node properties plus all incoming and outgoing edges. Qualified names follow the pattern 'file_path::symbol_name' (e.g., 'src/main.rs::handle_tool_call')."
+    },
+    {
+      "name": "resolve_graph",
+      "description": "Stage 3b — Resolve cross-file edges in the code graph. Runs AFTER index_codebase. Adds Imports, Calls, Implements, Extends, and Uses edges by matching string references to concrete target nodes. Returns resolution statistics including edge counts and resolution rate."
+    },
+    {
+      "name": "lsp_resolve",
+      "description": "Stage 3b-v2 — LSP-enhanced resolution. Queries a Language Server Protocol server (rust-analyzer, pyright, typescript-language-server) to resolve method calls on inferred types that the static resolver cannot handle. Runs AFTER resolve_graph."
+    },
+    {
+      "name": "cluster_graph",
+      "description": "Stage 3c — Run community detection and process tracing on an indexed+resolved graph. Groups symbols into functional communities via Louvain+C2 repair, detects entry points, and traces BFS call chains to create Process nodes. Requires resolve_graph to have been called first."
+    },
+    {
+      "name": "get_processes",
+      "description": "Stage 3c — List all detected processes (execution flows from entry points). Each process has an entry point, entry kind (main/test/handler/lib_entry), BFS depth, and symbol count. Requires cluster_graph to have been called first."
+    },
+    {
+      "name": "get_impact",
+      "description": "Stage 3c — Blast radius analysis for a symbol. Returns the symbol's reverse dependencies — callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements) — each as a re-queryable handle you can traverse further via get_symbol/get_context/query_graph."
+    },
+    {
+      "name": "search_codebase",
+      "description": "Stage 3d — Search the code graph by keyword. Returns ranked symbols with name, kind, file path, community, process participation, and relevance score. Use this to find symbols without knowing their exact qualified names."
+    },
+    {
+      "name": "get_context",
+      "description": "Stage 3d — 360° symbol view. Returns the symbol plus ALL its relationships grouped by kind: what it imports, what imports it, what it calls, what calls it, what it implements, what implements it, community membership, and process participation."
+    },
+    {
+      "name": "analyze_codebase",
+      "description": "Stage 3 — All-in-one codebase analysis. Runs index_codebase + resolve_graph + cluster_graph in sequence, producing a fully searchable code graph in one call. Supports Rust, Python, and TypeScript (auto-detected by extension)."
+    },
+    {
+      "name": "detect_changes",
+      "description": "Stage 3e — Git diff impact analysis. Maps changed lines to affected symbols, communities, and processes in the code graph. Accepts either raw unified diff text OR base_ref/head_ref to run git diff internally. Returns affected symbols with a heuristic risk score (0.0-1.0)."
+    },
+    {
+      "name": "index_history",
+      "description": "History layer — ingests git commit history into an already-indexed graph as a traversable version spine. Creates Commit nodes with author/timestamp/message and Version nodes per (entity, commit) for every File and symbol a commit changed."
+    },
+    {
+      "name": "prepare_prd_input",
+      "description": "Stage 4 — Bundle graph intel (matched symbols, impacted communities, impacted processes, graph stats) into stage-4.prd_input.json for the PRD generator. TWO modes: FINDING mode (pass finding_id) or FEATURE mode (pass feature_description)."
+    },
+    {
+      "name": "validate_prd_against_graph",
+      "description": "Stage 6 — Validate a PRD against the resolved+clustered graph. Three axes: symbol hallucination, community-consistency, and process-impact contradiction. LLM-free. Read-only."
+    },
+    {
+      "name": "check_security_gates",
+      "description": "Stage 8 — Graph-aware security gates. Runs five checks on the changed_symbols list: S1 auth-critical community touch, S2 unsafe-symbol touch, S3 public-API surface change, S4 unresolved-import introduction, S5 test-coverage structural gap. LLM-free. Read-only."
+    },
+    {
+      "name": "verify_semantic_diff",
+      "description": "Stage 9 — Compare a post-implementation graph against a pre-implementation graph to flag regressions: nodes added/removed, edges added/removed, dangling references, new unresolved imports, and new strongly-connected cycles. Returns a heuristic regression_score."
+    }
+  ],
+  "tools_generated": true
+}

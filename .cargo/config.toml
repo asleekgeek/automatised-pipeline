@@ -1,0 +1,28 @@
+# Bounds lbug's virtual-address-space reservation during `cargo test`.
+#
+# Root cause (issue #21 extension): `lbug::SystemConfig::default()` leaves
+# `max_db_size` at a sentinel value that lbug's C++ core resolves to
+# `DEFAULT_VM_REGION_MAX_SIZE = 1 << 43` (8 TiB) per Database instance — see
+# the doc comment on `graph_store::system_config()` in src/graph_store.rs for
+# the full trace into the vendored lbug-0.15.4 source. Running
+# `cargo test --workspace` opens dozens of embedded databases concurrently
+# (one process per integration-test binary, default test parallelism within
+# each); each reserving 8 TiB of address space exhausts the process's virtual
+# address space probabilistically, producing intermittent
+# `Mmap for size 8796093022208 failed` failures.
+#
+# [env] applies to every process cargo spawns for this workspace — build
+# scripts, `cargo run`, and every `cargo test` binary (verified empirically
+# 2026-07-15: a probe test read this table's value at runtime without any
+# code change). It does NOT apply to a compiled binary invoked directly
+# (e.g. a deployed release binary run outside cargo), so production capacity
+# is unaffected by this bound.
+[env]
+# 512 MiB (2^29 bytes — must be a power of two per lbug's
+# BufferManager::verifySizeParams). source: measured 2026-07-15 — the
+# largest test fixture in this workspace (tests/scalability_bench.rs, a
+# 500-file synthetic Rust fixture: 6000 nodes / 5500 edges) produces a 34 MB
+# on-disk lbug database (`du -sh` on the graph dir during a debug test run).
+# 512 MiB gives ~15x headroom over that measured ceiling while reserving a
+# small fraction of the 8 TiB lbug reserves by default.
+AP_LBUG_TEST_MAX_DB_SIZE = "536870912"

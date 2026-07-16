@@ -10,16 +10,22 @@
 // source: stages/stage-3c.md §2, §3
 
 mod community;
-mod process;
 mod impact;
+mod process;
 
 // ---------------------------------------------------------------------------
 // Symbol labels eligible for clustering — source: stage-3c.md §2.4
 // ---------------------------------------------------------------------------
 
 pub(super) const SYMBOL_LABELS: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait",
-    "Constant", "TypeAlias", "Module",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Constant",
+    "TypeAlias",
+    "Module",
 ];
 
 // The binary crate (src/main.rs `mod clustering`) consumes only part of this
@@ -30,10 +36,10 @@ pub(super) const SYMBOL_LABELS: &[&str] = &[
 // touch every item.
 #[allow(unused_imports)]
 pub use community::{
-    cluster_graph, collect_cluster_memberships, cluster_id_from_community_id,
-    ClusteringResult, ClusterMembership, ClusterMemberships,
+    cluster_graph, cluster_id_from_community_id, collect_cluster_memberships, ClusterMembership,
+    ClusterMemberships, ClusteringResult,
 };
 #[allow(unused_imports)]
-pub use process::{trace_processes, get_processes, ProcessInfo};
+pub use impact::{get_impact, ImpactNode, ImpactResult};
 #[allow(unused_imports)]
-pub use impact::{get_impact, ImpactResult, ImpactNode};
+pub use process::{get_processes, trace_processes, ProcessInfo};

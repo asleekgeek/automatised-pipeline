@@ -56,7 +56,12 @@ pub struct HistoryResult {
 
 impl HistoryResult {
     fn empty() -> Self {
-        HistoryResult { commits: 0, versions: 0, commit_edges: 0, version_edges: 0 }
+        HistoryResult {
+            commits: 0,
+            versions: 0,
+            commit_edges: 0,
+            version_edges: 0,
+        }
     }
 }
 
@@ -101,9 +106,9 @@ struct VersionRow {
 #[derive(Default)]
 struct Collected {
     versions: Vec<VersionRow>,
-    changed_in: Vec<(String, String)>,                  // (version_id, commit_sha)
+    changed_in: Vec<(String, String)>, // (version_id, commit_sha)
     version_of: HashMap<String, Vec<(String, String)>>, // label -> (version_id, entity_id)
-    prev_version: Vec<(String, String)>,                // (version_id, prev_version_id)
+    prev_version: Vec<(String, String)>, // (version_id, prev_version_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +135,7 @@ pub fn index_history(
     let n_commits = persist_commits(store, &commits)?;
     let commit_edges = persist_commit_lineage(store, &commits)?;
 
-    let collected =
-        collect_versions(store, codebase_path, &commits, &prefix, &known_files)?;
+    let collected = collect_versions(store, codebase_path, &commits, &prefix, &known_files)?;
     let n_versions = persist_versions(store, &collected.versions)?;
     let mut version_edges = persist_changed_in(store, &collected.changed_in)?;
     version_edges += persist_version_of(store, &collected.version_of)?;
@@ -152,14 +156,14 @@ pub fn index_history(
 fn read_git_log(codebase_path: &Path, limit: usize) -> Result<Vec<CommitMeta>, String> {
     // %H sha, %an author, %ae email, %at author-date unix, %P parents, %s subject.
     // %x1f is the field separator; %s is single-line so each commit is one line.
-    let fmt = format!(
-        "--pretty=format:%H{s}%an{s}%ae{s}%at{s}%P{s}%s",
-        s = "%x1f"
-    );
+    let fmt = format!("--pretty=format:%H{s}%an{s}%ae{s}%at{s}%P{s}%s", s = "%x1f");
     let output = Command::new("git")
-        .arg("-C").arg(codebase_path)
-        .arg("log").arg("--no-color")
-        .arg("-n").arg(limit.to_string())
+        .arg("-C")
+        .arg(codebase_path)
+        .arg("log")
+        .arg("--no-color")
+        .arg("-n")
+        .arg(limit.to_string())
         .arg(fmt)
         .output()
         .map_err(|e| format!("failed to run git log: {e}"))?;
@@ -184,10 +188,20 @@ fn parse_log_line(line: &str) -> Option<CommitMeta> {
     let author = f.next()?.to_string();
     let email = f.next()?.to_string();
     let committed_at = f.next()?.trim().parse::<i64>().ok()?;
-    let parents: Vec<String> =
-        f.next()?.split_whitespace().map(|s| s.to_string()).collect();
+    let parents: Vec<String> = f
+        .next()?
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
     let message = f.next().unwrap_or("").to_string();
-    Some(CommitMeta { sha, author, email, committed_at, parents, message })
+    Some(CommitMeta {
+        sha,
+        author,
+        email,
+        committed_at,
+        parents,
+        message,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -197,8 +211,10 @@ fn parse_log_line(line: &str) -> Option<CommitMeta> {
 
 fn repo_root_prefix(codebase_path: &Path) -> Result<String, String> {
     let output = Command::new("git")
-        .arg("-C").arg(codebase_path)
-        .arg("rev-parse").arg("--show-toplevel")
+        .arg("-C")
+        .arg(codebase_path)
+        .arg("rev-parse")
+        .arg("--show-toplevel")
         .output()
         .map_err(|e| format!("failed to run git rev-parse: {e}"))?;
     if !output.status.success() {
@@ -252,8 +268,14 @@ fn collect_versions(
         if commit.parents.len() > 1 {
             continue;
         }
-        let entities =
-            changed_entities(store, codebase_path, commit, prefix, known_files, &mut cache)?;
+        let entities = changed_entities(
+            store,
+            codebase_path,
+            commit,
+            prefix,
+            known_files,
+            &mut cache,
+        )?;
         for e in entities {
             let vid = format!("{}@{}", e.entity_id, commit.sha);
             if let Some(prev) = last_version.get(&e.entity_id) {
@@ -308,7 +330,11 @@ fn changed_entities(
             .entry(file_id.clone())
             .or_insert_with(|| file_symbol_ranges(store, &file_id));
         entities.extend(overlapping(
-            ranges, &hunk.changed_lines, hunk.is_new, hunk.is_deleted, ct,
+            ranges,
+            &hunk.changed_lines,
+            hunk.is_new,
+            hunk.is_deleted,
+            ct,
         ));
     }
     Ok(entities)
@@ -381,7 +407,10 @@ fn overlapping(
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for r in ranges {
-        let overlap = changed.iter().filter(|&&l| l >= r.start && l <= r.end).count() as u64;
+        let overlap = changed
+            .iter()
+            .filter(|&&l| l >= r.start && l <= r.end)
+            .count() as u64;
         if overlap == 0 && !is_new && !is_deleted {
             continue;
         }
@@ -407,9 +436,13 @@ fn overlapping(
 fn git_show_diff(codebase_path: &Path, sha: &str) -> Result<String, String> {
     validate_sha(sha)?;
     let output = Command::new("git")
-        .arg("-C").arg(codebase_path)
-        .arg("show").arg(sha)
-        .arg("--no-color").arg("--format=").arg("--unified=3")
+        .arg("-C")
+        .arg(codebase_path)
+        .arg("show")
+        .arg(sha)
+        .arg("--no-color")
+        .arg("--format=")
+        .arg("--unified=3")
         .output()
         .map_err(|e| format!("failed to run git show: {e}"))?;
     if !output.status.success() {
@@ -464,8 +497,14 @@ mod tests {
 
     #[test]
     fn test_strip_prefix() {
-        assert_eq!(strip_prefix("src/main.rs", ""), Some("src/main.rs".to_string()));
-        assert_eq!(strip_prefix("sub/src/a.rs", "sub"), Some("src/a.rs".to_string()));
+        assert_eq!(
+            strip_prefix("src/main.rs", ""),
+            Some("src/main.rs".to_string())
+        );
+        assert_eq!(
+            strip_prefix("sub/src/a.rs", "sub"),
+            Some("src/a.rs".to_string())
+        );
         assert_eq!(strip_prefix("other/a.rs", "sub"), None);
     }
 
@@ -473,7 +512,7 @@ mod tests {
     fn test_validate_sha() {
         assert!(validate_sha("abc123").is_ok());
         assert!(validate_sha("deadbeef").is_ok());
-        assert!(validate_sha("xyz").is_err());           // too short
-        assert!(validate_sha("not-a-sha-zz").is_err());  // non-hex
+        assert!(validate_sha("xyz").is_err()); // too short
+        assert!(validate_sha("not-a-sha-zz").is_err()); // non-hex
     }
 }

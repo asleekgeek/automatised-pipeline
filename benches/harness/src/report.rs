@@ -48,14 +48,17 @@ pub fn build_summary(runs: &[CorpusRun]) -> Summary {
         .filter(|r| r.labels_run > 0 && r.setup_error.is_none())
         .collect();
 
-    let per_language = group_mean_by(&scoring_runs, |r| r.language.clone(), |r| r.end_result_score);
+    let per_language = group_mean_by(
+        &scoring_runs,
+        |r| r.language.clone(),
+        |r| r.end_result_score,
+    );
     let per_query = aggregate_per_query(&scoring_runs);
 
     let end_result_score = if scoring_runs.is_empty() {
         0.0
     } else {
-        scoring_runs.iter().map(|r| r.end_result_score).sum::<f64>()
-            / scoring_runs.len() as f64
+        scoring_runs.iter().map(|r| r.end_result_score).sum::<f64>() / scoring_runs.len() as f64
     };
 
     let (min_language_name, min_language_score) = per_language
@@ -179,11 +182,13 @@ pub fn to_human(summary: &Summary) -> String {
         if let Some(e) = err {
             out.push_str(&format!("  {name:24} ({lang}): SETUP_ERROR — {e}\n"));
         } else if labels == 0 {
-            out.push_str(&format!(
-                "  {name:24} ({lang}): TODO — no labels yet\n"
-            ));
+            out.push_str(&format!("  {name:24} ({lang}): TODO — no labels yet\n"));
         } else {
-            let flag = if score >= LANGUAGE_FLOOR { "OK" } else { "BELOW FLOOR" };
+            let flag = if score >= LANGUAGE_FLOOR {
+                "OK"
+            } else {
+                "BELOW FLOOR"
+            };
             out.push_str(&format!(
                 "  {name:24} ({lang}): {score:.3}  [{labels} labels, floor {:.2}] {flag}\n",
                 LANGUAGE_FLOOR
