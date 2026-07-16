@@ -19,6 +19,7 @@
 
 mod ambiguity_policy;
 mod bridge;
+mod call_evidence;
 mod clustering;
 mod epistemic;
 mod git_diff;
