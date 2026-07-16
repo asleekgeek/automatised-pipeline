@@ -123,17 +123,13 @@ pub fn discover_all(corpora_root: &Path) -> Result<Vec<CorpusConfig>, String> {
 }
 
 fn read_manifest(path: &Path) -> Result<CorpusManifest, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("read {:?}: {e}", path))?;
-    toml::from_str::<CorpusManifest>(&raw)
-        .map_err(|e| format!("parse {:?}: {e}", path))
+    let raw = fs::read_to_string(path).map_err(|e| format!("read {:?}: {e}", path))?;
+    toml::from_str::<CorpusManifest>(&raw).map_err(|e| format!("parse {:?}: {e}", path))
 }
 
 fn read_truth(path: &Path) -> Result<GroundTruthDoc, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("read {:?}: {e}", path))?;
-    serde_json::from_str::<GroundTruthDoc>(&raw)
-        .map_err(|e| format!("parse {:?}: {e}", path))
+    let raw = fs::read_to_string(path).map_err(|e| format!("read {:?}: {e}", path))?;
+    serde_json::from_str::<GroundTruthDoc>(&raw).map_err(|e| format!("parse {:?}: {e}", path))
 }
 
 fn resolve_source_path(corpus_dir: &Path, raw: &str) -> Result<PathBuf, String> {

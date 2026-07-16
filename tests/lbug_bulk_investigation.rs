@@ -1,11 +1,19 @@
 // Investigation: what bulk-insert patterns does lbug 0.15.3 actually support?
 // Each test is a compile-and-run probe, not a product test.
 
-use lbug::{Connection, Database, LogicalType, SystemConfig, Value};
+use ai_architect_mcp::graph_store;
+use lbug::{Connection, Database, LogicalType, Value};
 
 fn tmpdb(name: &str) -> (tempfile::TempDir, Database) {
     let dir = tempfile::Builder::new().prefix(name).tempdir().unwrap();
-    let db = Database::new(dir.path().join("testdb"), SystemConfig::default()).unwrap();
+    // Bounded via graph_store::system_config() — the single by-construction
+    // choke point for lbug's max_db_size (see its doc comment in
+    // src/graph_store.rs for the root cause and sourced bound).
+    let db = Database::new(
+        dir.path().join("testdb"),
+        graph_store::system_config().unwrap(),
+    )
+    .unwrap();
     (dir, db)
 }
 
@@ -14,7 +22,8 @@ fn probe_1_prepared_statement_with_single_params() {
     // Baseline: prepare + execute with scalar params. Expected to work.
     let (_dir, db) = tmpdb("probe1");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, age INT64, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, age INT64, PRIMARY KEY(id));")
+        .unwrap();
     let mut stmt = conn
         .prepare("CREATE (:P {id: $id, age: $age});")
         .expect("prepare must succeed");
@@ -39,11 +48,11 @@ fn probe_2_unwind_list_of_structs_to_create_nodes() {
     // to create many nodes in one execute() call?
     let (_dir, db) = tmpdb("probe2");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, age INT64, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, age INT64, PRIMARY KEY(id));")
+        .unwrap();
 
-    let mut stmt = match conn.prepare(
-        "UNWIND $rows AS row CREATE (:P {id: row.id, age: row.age});",
-    ) {
+    let mut stmt = match conn.prepare("UNWIND $rows AS row CREATE (:P {id: row.id, age: row.age});")
+    {
         Ok(s) => s,
         Err(e) => panic!("UNWIND $rows AS row ... prepare FAILED: {e}"),
     };
@@ -80,7 +89,8 @@ fn probe_3_unwind_parallel_lists_for_edges() {
     // If struct lists don't work, try parallel primitive lists.
     let (_dir, db) = tmpdb("probe3");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));")
+        .unwrap();
     conn.query("CREATE REL TABLE R(FROM P TO P);").unwrap();
     for i in 0..10 {
         conn.query(&format!("CREATE (:P {{id: 'n{i}'}});")).unwrap();
@@ -93,9 +103,13 @@ fn probe_3_unwind_parallel_lists_for_edges() {
 
     let ids: Vec<Value> = (0..10).map(|i| Value::String(format!("n{i}"))).collect();
     let list = Value::List(LogicalType::String, ids);
-    let mut r = conn.execute(&mut stmt, vec![("ids", list)]).expect("execute");
+    let mut r = conn
+        .execute(&mut stmt, vec![("ids", list)])
+        .expect("execute");
     let mut count = 0;
-    while let Some(_) = r.next() { count += 1; }
+    while let Some(_) = r.next() {
+        count += 1;
+    }
     assert_eq!(count, 10, "UNWIND primitive list WORKED");
 }
 
@@ -105,7 +119,8 @@ fn probe_4_unwind_for_edges_with_match_and_create() {
     // engineer claimed failed. Let's verify exactly what syntax.
     let (_dir, db) = tmpdb("probe4");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));")
+        .unwrap();
     conn.query("CREATE REL TABLE R(FROM P TO P);").unwrap();
     for i in 0..20 {
         conn.query(&format!("CREATE (:P {{id: 'n{i}'}});")).unwrap();
@@ -151,7 +166,8 @@ fn probe_5_begin_transaction() {
     // Does an explicit transaction statement work?
     let (_dir, db) = tmpdb("probe5");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));")
+        .unwrap();
 
     match conn.query("BEGIN TRANSACTION;") {
         Ok(_) => println!("BEGIN TRANSACTION: OK"),
@@ -173,7 +189,8 @@ fn probe_6_multi_statement_single_call() {
     // multi-statement works. Verify here with 500 CREATEs in one query string.
     let (_dir, db) = tmpdb("probe6");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));")
+        .unwrap();
     let mut big = String::new();
     for i in 0..500 {
         big.push_str(&format!("CREATE (:P {{id: 'm{i}'}});\n"));
@@ -192,7 +209,8 @@ fn probe_7_prepared_edge_loop_vs_unprepared() {
     // raw-string CREATE+MATCH by amortizing planning.
     let (_dir, db) = tmpdb("probe7");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));")
+        .unwrap();
     conn.query("CREATE REL TABLE R(FROM P TO P);").unwrap();
     for i in 0..200 {
         conn.query(&format!("CREATE (:P {{id: 'e{i}'}});")).unwrap();
@@ -213,21 +231,28 @@ fn probe_7_prepared_edge_loop_vs_unprepared() {
     conn.query("MATCH ()-[r:R]->() DELETE r;").unwrap();
 
     // Prepared loop.
-    let mut stmt = conn.prepare(
-        "MATCH (a:P), (b:P) WHERE a.id = $from AND b.id = $to CREATE (a)-[:R]->(b);",
-    ).expect("prepare edge match+create");
+    let mut stmt = conn
+        .prepare("MATCH (a:P), (b:P) WHERE a.id = $from AND b.id = $to CREATE (a)-[:R]->(b);")
+        .expect("prepare edge match+create");
     let t1 = std::time::Instant::now();
     for i in 0..199 {
-        conn.execute(&mut stmt, vec![
-            ("from", Value::String(format!("e{i}"))),
-            ("to", Value::String(format!("e{}", i + 1))),
-        ]).unwrap();
+        conn.execute(
+            &mut stmt,
+            vec![
+                ("from", Value::String(format!("e{i}"))),
+                ("to", Value::String(format!("e{}", i + 1))),
+            ],
+        )
+        .unwrap();
     }
     let prep_dt = t1.elapsed();
 
     eprintln!("199 edges raw string:  {:?}", raw_dt);
     eprintln!("199 edges prepared:    {:?}", prep_dt);
-    eprintln!("speedup:               {:.2}x", raw_dt.as_secs_f64() / prep_dt.as_secs_f64());
+    eprintln!(
+        "speedup:               {:.2}x",
+        raw_dt.as_secs_f64() / prep_dt.as_secs_f64()
+    );
 }
 
 #[test]
@@ -235,28 +260,37 @@ fn probe_8_prepared_in_explicit_transaction() {
     // Wrap prepared-loop edge inserts in BEGIN/COMMIT.
     let (_dir, db) = tmpdb("probe8");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));")
+        .unwrap();
     conn.query("CREATE REL TABLE R(FROM P TO P);").unwrap();
     for i in 0..200 {
-        conn.query(&format!("CREATE (:P {{id: 'tx{i}'}});")).unwrap();
+        conn.query(&format!("CREATE (:P {{id: 'tx{i}'}});"))
+            .unwrap();
     }
 
-    let mut stmt = conn.prepare(
-        "MATCH (a:P), (b:P) WHERE a.id = $from AND b.id = $to CREATE (a)-[:R]->(b);",
-    ).unwrap();
+    let mut stmt = conn
+        .prepare("MATCH (a:P), (b:P) WHERE a.id = $from AND b.id = $to CREATE (a)-[:R]->(b);")
+        .unwrap();
 
     let t0 = std::time::Instant::now();
     conn.query("BEGIN TRANSACTION;").unwrap();
     for i in 0..199 {
-        conn.execute(&mut stmt, vec![
-            ("from", Value::String(format!("tx{i}"))),
-            ("to", Value::String(format!("tx{}", i + 1))),
-        ]).unwrap();
+        conn.execute(
+            &mut stmt,
+            vec![
+                ("from", Value::String(format!("tx{i}"))),
+                ("to", Value::String(format!("tx{}", i + 1))),
+            ],
+        )
+        .unwrap();
     }
     conn.query("COMMIT;").unwrap();
     let dt = t0.elapsed();
-    eprintln!("199 edges BEGIN/prepared/COMMIT: {:?}  ({:.2} ms/edge)",
-        dt, dt.as_secs_f64() * 1000.0 / 199.0);
+    eprintln!(
+        "199 edges BEGIN/prepared/COMMIT: {:?}  ({:.2} ms/edge)",
+        dt,
+        dt.as_secs_f64() * 1000.0 / 199.0
+    );
     let mut r = conn.query("MATCH ()-[r:R]->() RETURN count(r);").unwrap();
     assert_eq!(r.next().unwrap()[0], Value::Int64(199));
 }
@@ -267,18 +301,21 @@ fn probe_9_unwind_edges_in_one_execute() {
     // child type must be Struct.
     let (_dir, db) = tmpdb("probe9");
     let conn = Connection::new(&db).unwrap();
-    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));").unwrap();
+    conn.query("CREATE NODE TABLE P(id STRING, PRIMARY KEY(id));")
+        .unwrap();
     conn.query("CREATE REL TABLE R(FROM P TO P);").unwrap();
     for i in 0..200 {
         conn.query(&format!("CREATE (:P {{id: 'u{i}'}});")).unwrap();
     }
 
-    let mut stmt = conn.prepare(
-        "UNWIND $rows AS row \
+    let mut stmt = conn
+        .prepare(
+            "UNWIND $rows AS row \
          MATCH (a:P), (b:P) \
          WHERE a.id = row.from AND b.id = row.to \
          CREATE (a)-[:R]->(b);",
-    ).expect("prepare UNWIND edge");
+        )
+        .expect("prepare UNWIND edge");
 
     let row_type = LogicalType::Struct {
         fields: vec![
@@ -287,19 +324,24 @@ fn probe_9_unwind_edges_in_one_execute() {
         ],
     };
     let rows: Vec<Value> = (0..199)
-        .map(|i| Value::Struct(vec![
-            ("from".to_string(), Value::String(format!("u{i}"))),
-            ("to".to_string(), Value::String(format!("u{}", i + 1))),
-        ]))
+        .map(|i| {
+            Value::Struct(vec![
+                ("from".to_string(), Value::String(format!("u{i}"))),
+                ("to".to_string(), Value::String(format!("u{}", i + 1))),
+            ])
+        })
         .collect();
     let list = Value::List(row_type, rows);
 
     let t0 = std::time::Instant::now();
-    conn.execute(&mut stmt, vec![("rows", list)]).expect("execute UNWIND edge");
+    conn.execute(&mut stmt, vec![("rows", list)])
+        .expect("execute UNWIND edge");
     let dt = t0.elapsed();
-    eprintln!("199 edges UNWIND-single-call: {:?}  ({:.3} ms/edge)",
-        dt, dt.as_secs_f64() * 1000.0 / 199.0);
+    eprintln!(
+        "199 edges UNWIND-single-call: {:?}  ({:.3} ms/edge)",
+        dt,
+        dt.as_secs_f64() * 1000.0 / 199.0
+    );
     let mut r = conn.query("MATCH ()-[r:R]->() RETURN count(r);").unwrap();
     assert_eq!(r.next().unwrap()[0], Value::Int64(199));
 }
-

@@ -9,8 +9,13 @@ use std::path::Path;
 // ---------------------------------------------------------------------------
 
 /// Inserts Directory nodes for all ancestor dirs of a file (relative to root).
+/// `Contains_Dir_Dir` edges are staged into `batch` (flushed in large bulk
+/// calls alongside the symbol edges) rather than inserted one at a time.
+/// source: ADR-4253701 §Decision 2 (levier 2, persist.rs:89) — this was the
+/// last per-edge insert loop for directory-tree structural edges.
 pub(super) fn insert_ancestor_dirs(
     store: &GraphStore,
+    batch: &mut SymbolBatch,
     root: &Path,
     file_path: &Path,
     seen: &mut std::collections::HashSet<std::path::PathBuf>,
@@ -32,7 +37,12 @@ pub(super) fn insert_ancestor_dirs(
             insert_directory_node(store, &dir_id, &dir_name)?;
             label_by_qn.insert(dir_id.to_string(), "Directory".into());
             if !prev.as_os_str().is_empty() {
-                insert_dir_dir_edge(store, &prev.to_string_lossy(), &dir_id)?;
+                batch.push_edge(
+                    "Contains_Dir_Dir",
+                    prev.to_string_lossy().into_owned(),
+                    dir_id.into_owned(),
+                    Vec::new(),
+                );
             }
         }
     }
@@ -40,49 +50,62 @@ pub(super) fn insert_ancestor_dirs(
 }
 
 fn insert_directory_node(store: &GraphStore, id: &str, name: &str) -> Result<(), String> {
-    store.insert_node("Directory", &[
-        ("id", &cypher_str(id)),
-        ("path", &cypher_str(id)),
-        ("name", &cypher_str(name)),
-    ])
+    store.insert_node(
+        "Directory",
+        &[
+            ("id", &cypher_str(id)),
+            ("path", &cypher_str(id)),
+            ("name", &cypher_str(name)),
+        ],
+    )
 }
 
-pub(super) fn insert_file_node(store: &GraphStore, abs_path: &Path, rel_path: &str) -> Result<(), String> {
-    let name = abs_path.file_name()
+pub(super) fn insert_file_node(
+    store: &GraphStore,
+    abs_path: &Path,
+    rel_path: &str,
+) -> Result<(), String> {
+    let name = abs_path
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let ext = abs_path.extension()
+    let ext = abs_path
+        .extension()
         .map(|e| e.to_string_lossy().to_string())
         .unwrap_or_default();
-    let size = std::fs::metadata(abs_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    store.insert_node("File", &[
-        ("id", &cypher_str(rel_path)),
-        ("path", &cypher_str(rel_path)),
-        ("name", &cypher_str(&name)),
-        ("extension", &cypher_str(&ext)),
-        ("size_bytes", &size.to_string()),
-    ])
+    let size = std::fs::metadata(abs_path).map(|m| m.len()).unwrap_or(0);
+    store.insert_node(
+        "File",
+        &[
+            ("id", &cypher_str(rel_path)),
+            ("path", &cypher_str(rel_path)),
+            ("name", &cypher_str(&name)),
+            ("extension", &cypher_str(&ext)),
+            ("size_bytes", &size.to_string()),
+            // Inserted before the parse runs; index_single_file backfills the real
+            // count via set_file_parse_errors once the file is parsed. 0 = "no
+            // errors" and also the correct value for non-code files (never parsed).
+            ("parse_errors", "0"),
+        ],
+    )
 }
 
 // ---------------------------------------------------------------------------
 // Structural edges: Contains
 // ---------------------------------------------------------------------------
 
-pub(super) fn insert_dir_file_edge(store: &GraphStore, rel_path: &Path) -> Result<(), String> {
-    let file_id = rel_path.to_string_lossy();
-    let parent_id = rel_path.parent()
+/// Stages a `Contains_Dir_File` edge into `batch` instead of inserting it
+/// directly. source: ADR-4253701 §Decision 2 (levier 2, persist.rs:85).
+pub(super) fn insert_dir_file_edge(batch: &mut SymbolBatch, rel_path: &Path) {
+    let file_id = rel_path.to_string_lossy().into_owned();
+    let parent_id = rel_path
+        .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     if parent_id.is_empty() {
-        return Ok(()); // file is at root level, no parent directory node
+        return; // file is at root level, no parent directory node
     }
-    store.insert_edge("Contains_Dir_File", &parent_id, &file_id, &[])
-}
-
-fn insert_dir_dir_edge(store: &GraphStore, parent_id: &str, child_id: &str) -> Result<(), String> {
-    store.insert_edge("Contains_Dir_Dir", parent_id, child_id, &[])
+    batch.push_edge("Contains_Dir_File", parent_id, file_id, Vec::new());
 }
 
 // ---------------------------------------------------------------------------
@@ -90,11 +113,13 @@ fn insert_dir_dir_edge(store: &GraphStore, parent_id: &str, child_id: &str) -> R
 // ---------------------------------------------------------------------------
 
 pub(super) fn index_single_file(
+    store: &GraphStore,
     batch: &mut SymbolBatch,
     abs_path: &Path,
     rel_path: &str,
     label_by_qn: &mut HashMap<String, String>,
     seen_node_ids: &mut std::collections::HashSet<String>,
+    restrict_to_public_api: bool,
 ) -> Result<(), String> {
     // Detect language FIRST (cheap, no I/O). Under all-file indexing the
     // walker yields every file, so most non-code files reach here: they are
@@ -117,13 +142,39 @@ pub(super) fn index_single_file(
     if (source.len() as u64) > super::MAX_PARSE_BYTES {
         return Err(format!(
             "file_too_large_for_parser: {} bytes > MAX_PARSE_BYTES {}",
-            source.len(), super::MAX_PARSE_BYTES
+            source.len(),
+            super::MAX_PARSE_BYTES
         ));
     }
     let parsed = parser::parse_file(&source, rel_path, lang)?;
-    accumulate_parsed_nodes(batch, &parsed.nodes, label_by_qn, seen_node_ids, lang.as_str());
+    // Backfill the File node's parse-error count (inserted as 0 by the caller).
+    // Only issue the update when non-zero — the common clean-parse case pays no
+    // extra query. source: stages/stage-3.md §10.5.
+    if parsed.parse_errors > 0 {
+        set_file_parse_errors(store, rel_path, parsed.parse_errors)?;
+    }
+    accumulate_parsed_nodes(
+        batch,
+        &parsed.nodes,
+        label_by_qn,
+        seen_node_ids,
+        lang.as_str(),
+        restrict_to_public_api,
+    );
     accumulate_parsed_edges(batch, &parsed.refs, label_by_qn);
     Ok(())
+}
+
+/// Records the tree-sitter parse-error count on an already-inserted File node.
+/// The File node is created eagerly (before the parse) with parse_errors = 0;
+/// this flips it to the real count so a degraded parse is visible downstream.
+fn set_file_parse_errors(store: &GraphStore, rel_path: &str, errors: u32) -> Result<(), String> {
+    let cypher = format!(
+        "MATCH (f:File) WHERE f.id = {} SET f.parse_errors = {}",
+        cypher_str(rel_path),
+        errors
+    );
+    store.execute_query(&cypher).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +187,7 @@ fn accumulate_parsed_nodes(
     label_by_qn: &mut HashMap<String, String>,
     seen_node_ids: &mut std::collections::HashSet<String>,
     language: &str,
+    restrict_to_public_api: bool,
 ) {
     // Accumulate into the cross-file batch (flushed in large bulk calls).
     // source: Fermi audit — per-row CREATE was ~100x slower than batched;
@@ -146,7 +198,19 @@ fn accumulate_parsed_nodes(
     // there would abort the whole bulk flush (LadybugDB rejects duplicate
     // primary keys atomically), taking down every file in the batch, not one.
     // The id set is global to the run, so cross-file collisions are caught too.
+    //
+    // Enum qualified-names dropped by the PublicApi filter within THIS file's
+    // node list. A Variant's own `visibility` is always "" — parsers never
+    // declare it independently (source: src/parser/rust/extract/g2.rs:30) —
+    // so a Variant is kept iff its parent Enum was kept. Scoped per-file
+    // because `nodes` is one file's ExtractedNode list and parsers always
+    // emit an Enum before its Variants within it.
+    let mut dropped_enums: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
     for node in nodes {
+        if restrict_to_public_api && !keep_under_public_api(node, language, &mut dropped_enums) {
+            continue;
+        }
         if !seen_node_ids.insert(node.qualified_name.clone()) {
             eprintln!(
                 "indexer: dropped duplicate-id {} node '{}'",
@@ -157,6 +221,74 @@ fn accumulate_parsed_nodes(
         label_by_qn.insert(node.qualified_name.clone(), node.label.clone());
         let props = build_node_properties(node, language);
         batch.push_node(&node.label, props);
+    }
+}
+
+/// PublicApi-tier gate: true iff `node` belongs on the dependency's public
+/// API surface. Only applied to files under dependency directories — see
+/// `restrict_to_public_api` at the call site.
+/// source: ADR-4253701 §Decision 1 ("public_api": only visibility==public
+/// symbols persisted from dependency files).
+fn keep_under_public_api<'a>(
+    node: &'a parser::ExtractedNode,
+    language: &str,
+    dropped_enums: &mut std::collections::HashSet<&'a str>,
+) -> bool {
+    if node.label == "Variant" {
+        let Some((enum_qn, _)) = node.qualified_name.rsplit_once("::") else {
+            return true;
+        };
+        return !dropped_enums.contains(enum_qn);
+    }
+    if !is_visibility_declaring_label(&node.label) {
+        // Import, CallSite, Module, File, Directory: no declared-visibility
+        // contract to filter on. Kept as-is — they are structural/navigation
+        // nodes, not part of the "public API surface" the tier scopes.
+        return true;
+    }
+    if is_public_symbol(language, &node.visibility) {
+        true
+    } else {
+        if node.label == "Enum" {
+            dropped_enums.insert(node.qualified_name.as_str());
+        }
+        false
+    }
+}
+
+/// True for node labels whose `visibility` field is genuinely populated by
+/// every parser via an explicit visibility/export check. `Variant` is
+/// excluded — see `keep_under_public_api`.
+/// source: src/parser/rust/extract/g2.rs,g3.rs (Function/Method/Struct/Enum/
+/// Trait/Field/Constant/TypeAlias all call extract_visibility()) and
+/// src/parser/typescript/extract/g1.rs:47,79 (export-keyword check).
+fn is_visibility_declaring_label(label: &str) -> bool {
+    matches!(
+        label,
+        "Function" | "Method" | "Struct" | "Enum" | "Trait" | "Field" | "Constant" | "TypeAlias"
+    )
+}
+
+/// True when `visibility` denotes a publicly visible symbol for `language`.
+///
+/// Python's parser convention has the OPPOSITE polarity of every other
+/// supported language: `python_visibility` (src/parser/python/mod.rs:105-116,
+/// tested at lines 205-211) emits "" for a PUBLIC name and "private" for an
+/// underscore-prefixed one. Rust/TypeScript/JVM/Go/Swift emit "" when no
+/// visibility keyword is present (module-private by default) and a keyword
+/// token ("pub"/"export"/"public"/"open") when the symbol is public.
+/// Deliberately NOT reusing clustering::process::PUBLIC_VISIBILITY_VALUES:
+/// that list's "public" entry for Python never matches python_visibility's
+/// actual output ("" or "private"), which would silently exclude every
+/// Python symbol from this filter — a Bug-5-class inconsistency this
+/// function avoids rather than propagates.
+/// source: src/parser/{rust,typescript}/mod.rs visibility tests
+/// (rust/mod.rs:190 "pub", typescript/mod.rs:217 "pub"); python/mod.rs:205-211.
+fn is_public_symbol(language: &str, visibility: &str) -> bool {
+    if language == "python" {
+        visibility != "private"
+    } else {
+        matches!(visibility, "pub" | "export" | "public" | "open")
     }
 }
 
@@ -172,7 +304,10 @@ fn build_node_properties(node: &parser::ExtractedNode, language: &str) -> Vec<(S
         props.push(("name".to_string(), cypher_str(&node.name)));
     }
     if has_qualified_name_col(&node.label) {
-        props.push(("qualified_name".to_string(), cypher_str(&node.qualified_name)));
+        props.push((
+            "qualified_name".to_string(),
+            cypher_str(&node.qualified_name),
+        ));
     }
     if has_line_cols(&node.label) {
         props.push(("start_line".to_string(), node.start_line.to_string()));
@@ -193,15 +328,25 @@ fn build_node_properties(node: &parser::ExtractedNode, language: &str) -> Vec<(S
 fn has_language_col(label: &str) -> bool {
     matches!(
         label,
-        "Function" | "Method" | "Struct" | "Enum" | "Variant" | "Trait"
-            | "Field" | "Constant" | "TypeAlias" | "Import" | "CallSite"
+        "Function"
+            | "Method"
+            | "Struct"
+            | "Enum"
+            | "Variant"
+            | "Trait"
+            | "Field"
+            | "Constant"
+            | "TypeAlias"
+            | "Import"
+            | "CallSite"
     )
 }
 
 /// Maps parser extra properties to schema columns by label.
 fn append_label_properties(props: &mut Vec<(String, String)>, node: &parser::ExtractedNode) {
     let find = |key: &str| -> String {
-        node.properties.iter()
+        node.properties
+            .iter()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.clone())
             .unwrap_or_default()
@@ -212,16 +357,25 @@ fn append_label_properties(props: &mut Vec<(String, String)>, node: &parser::Ext
         }
         "Method" => {
             props.push(("is_async".to_string(), find("is_async")));
-            props.push(("receiver_type".to_string(), cypher_str(&find("receiver_type"))));
+            props.push((
+                "receiver_type".to_string(),
+                cypher_str(&find("receiver_type")),
+            ));
             // source: implements fix — trait_name set by the parser on methods
             // inside `impl Trait for Type` blocks; resolve_implements reads it.
             props.push(("trait_name".to_string(), cypher_str(&find("trait_name"))));
         }
         "Field" => {
-            props.push(("type_annotation".to_string(), cypher_str(&find("type_annotation"))));
+            props.push((
+                "type_annotation".to_string(),
+                cypher_str(&find("type_annotation")),
+            ));
         }
         "Constant" => {
-            props.push(("type_annotation".to_string(), cypher_str(&find("type_annotation"))));
+            props.push((
+                "type_annotation".to_string(),
+                cypher_str(&find("type_annotation")),
+            ));
         }
         "TypeAlias" => {
             props.push(("target_type".to_string(), cypher_str(&find("target_type"))));
@@ -238,11 +392,19 @@ fn append_label_properties(props: &mut Vec<(String, String)>, node: &parser::Ext
             props.push(("path".to_string(), cypher_str(&find("path"))));
             props.push(("alias".to_string(), cypher_str(&find("alias"))));
             props.push(("is_glob".to_string(), find("is_glob")));
+            // §10.1 span for the import statement; §10.4 is_resolved starts false
+            // and is flipped by the resolver's resolve pass.
+            props.push(("start_line".to_string(), node.start_line.to_string()));
+            props.push(("end_line".to_string(), node.end_line.to_string()));
+            props.push(("is_resolved".to_string(), "false".to_string()));
         }
         "CallSite" => {
             props.push(("callee_name".to_string(), cypher_str(&find("callee_name"))));
             props.push(("line".to_string(), node.start_line.to_string()));
             props.push(("col".to_string(), "0".to_string()));
+            // §10.4 is_resolved starts false; the resolver flips it to true when
+            // it emits the resolved Calls edge for this site.
+            props.push(("is_resolved".to_string(), "false".to_string()));
         }
         _ => {}
     }
@@ -336,12 +498,23 @@ fn resolve_defines_table(
         &["File", "Module", "Function", "Method"],
     )?;
     let to_candidates = &[
-        "Function", "Struct", "Enum", "Trait", "Constant",
-        "TypeAlias", "Module", "Import", "CallSite",
+        "Function",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
+        "Import",
+        "CallSite",
     ];
     let to_label = lookup_label_among(to_qn, label_by_qn, to_candidates)?;
     let table = format!("Defines_{from_label}_{to_label}");
-    if is_valid_rel_table(&table) { Some(table) } else { None }
+    if is_valid_rel_table(&table) {
+        Some(table)
+    } else {
+        None
+    }
 }
 
 fn resolve_has_method_table(
@@ -350,16 +523,21 @@ fn resolve_has_method_table(
 ) -> Option<String> {
     let from_label = lookup_label_among(from_qn, label_by_qn, &["Struct", "Enum", "Trait"])?;
     let table = format!("HasMethod_{from_label}_Method");
-    if is_valid_rel_table(&table) { Some(table) } else { None }
+    if is_valid_rel_table(&table) {
+        Some(table)
+    } else {
+        None
+    }
 }
 
-fn resolve_has_field_table(
-    from_qn: &str,
-    label_by_qn: &HashMap<String, String>,
-) -> Option<String> {
+fn resolve_has_field_table(from_qn: &str, label_by_qn: &HashMap<String, String>) -> Option<String> {
     let from_label = lookup_label_among(from_qn, label_by_qn, &["Struct", "Enum"])?;
     let table = format!("HasField_{from_label}_Field");
-    if is_valid_rel_table(&table) { Some(table) } else { None }
+    if is_valid_rel_table(&table) {
+        Some(table)
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,18 +575,42 @@ fn has_name_col(label: &str) -> bool {
 }
 
 fn has_qualified_name_col(label: &str) -> bool {
-    matches!(label,
-        "Module" | "Function" | "Method" | "Struct" | "Enum" | "Variant" |
-        "Trait" | "Constant" | "TypeAlias"
+    matches!(
+        label,
+        "Module"
+            | "Function"
+            | "Method"
+            | "Struct"
+            | "Enum"
+            | "Variant"
+            | "Trait"
+            | "Constant"
+            | "TypeAlias"
     )
 }
 
 fn has_line_cols(label: &str) -> bool {
-    matches!(label, "Function" | "Method" | "Struct" | "Enum" | "Trait")
+    // source: stages/stage-3.md §10.1 — every symbol carries its span. Variant,
+    // Field, Constant and TypeAlias now have span columns too (Import keeps its
+    // span via append_label_properties, alongside path/alias). CallSite records
+    // position via its own line/col columns, not start_line/end_line.
+    matches!(
+        label,
+        "Function"
+            | "Method"
+            | "Struct"
+            | "Enum"
+            | "Trait"
+            | "Variant"
+            | "Field"
+            | "Constant"
+            | "TypeAlias"
+    )
 }
 
 fn has_visibility_col(label: &str) -> bool {
-    matches!(label,
+    matches!(
+        label,
         "Function" | "Method" | "Struct" | "Enum" | "Trait" | "Field"
     )
 }

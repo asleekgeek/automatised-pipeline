@@ -4,6 +4,6 @@
 // the public API so that existing tests and external code continue to work.
 
 #[allow(unused_imports)]
-pub use crate::parser::{ExtractedNode, ExtractedRef, ParseResult};
-#[allow(unused_imports)]
 pub use crate::parser::rust::parse_rust_file;
+#[allow(unused_imports)]
+pub use crate::parser::{ExtractedNode, ExtractedRef, ParseResult};

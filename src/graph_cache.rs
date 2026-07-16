@@ -173,6 +173,37 @@ impl GraphCache {
     /// with its current fingerprint, and returns it. Exactly one
     /// `open_or_create` runs per (path, on-disk generation).
     fn get(&mut self, path: &Path) -> Result<Rc<GraphStore>, String> {
+        self.get_with_opener(path, GraphStore::open_or_create)
+    }
+
+    /// Test-only seam (issue #25): identical to `get`, but opens via a
+    /// caller-supplied `SystemConfig` instead of `GraphStore::open_or_create`'s
+    /// env-var-resolved `system_config()`. Lets tests exercise the cache's
+    /// fingerprint/eviction bookkeeping at a specific `max_db_size` — in
+    /// particular the production default — without racing
+    /// `.cargo/config.toml`'s process-wide `AP_LBUG_TEST_MAX_DB_SIZE`
+    /// override across parallel test threads (see
+    /// `graph_store::GraphStore::open_or_create_with_config`'s doc comment).
+    #[cfg(test)]
+    fn get_with_config(
+        &mut self,
+        path: &Path,
+        config: lbug::SystemConfig,
+    ) -> Result<Rc<GraphStore>, String> {
+        self.get_with_opener(path, move |p| {
+            GraphStore::open_or_create_with_config(p, config)
+        })
+    }
+
+    /// Shared bookkeeping for `get`/`get_with_config`: fingerprint check,
+    /// cache hit/miss, and LRU eviction. `opener` is the only thing that
+    /// differs between the two callers — how a fresh `GraphStore` is built on
+    /// a miss.
+    fn get_with_opener(
+        &mut self,
+        path: &Path,
+        opener: impl FnOnce(&Path) -> Result<GraphStore, String>,
+    ) -> Result<Rc<GraphStore>, String> {
         // Canonicalize so two spellings of the same path share one entry. Fall
         // back to the literal path if canonicalization fails (e.g. the path was
         // just removed) — that yields a miss, which is the safe direction.
@@ -190,7 +221,7 @@ impl GraphCache {
         }
 
         // Miss (absent, stale, or unfingerprintable): open exactly once.
-        let store = Rc::new(GraphStore::open_or_create(path)?);
+        let store = Rc::new(opener(path)?);
         #[cfg(test)]
         {
             self.opens += 1;
@@ -421,6 +452,88 @@ mod tests {
             );
         });
 
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn prod_default_bound_opens_max_cached_graphs_simultaneously() {
+        // issue #25 regression guard.
+        //
+        // Root cause this proves fixed: before this fix, every GraphStore
+        // opened with lbug's unbounded default reserved 8 TiB of virtual
+        // address space; with MAX_CACHED_GRAPHS (8) entries live in the cache
+        // at once, that is a 64 TiB worst case. This test opens
+        // MAX_CACHED_GRAPHS distinct GraphStores under
+        // `DEFAULT_PROD_MAX_DB_SIZE_BYTES` (8 GiB each, 64 GiB worst case —
+        // a 1024x reduction) and keeps every handle alive SIMULTANEOUSLY
+        // (not opened-and-dropped one at a time), reproducing the exact
+        // condition that exhausted address space pre-fix: N reservations
+        // coexisting at once.
+        //
+        // "Concurrently" here means "simultaneously live", not "opened from
+        // multiple OS threads": `GraphStore` cannot cross a `thread::spawn`
+        // boundary without `unsafe` — its `stmt_cache: RefCell<HashMap<_,
+        // PreparedStatement>>` field wraps `lbug::PreparedStatement`, an
+        // opaque `cxx::UniquePtr<ffi::PreparedStatement>` that lbug does NOT
+        // mark `Send` (contrast with `Database`/`Connection<'_>`, which lbug
+        // explicitly marks `unsafe impl Send` — see
+        // `lbug-0.15.4/src/database.rs:14-15` and
+        // `lbug-0.15.4/src/connection.rs:74-75`). Introducing an unjustified
+        // `unsafe impl Send for GraphStore` to force OS-thread concurrency
+        // into a test would violate this codebase's local-reasoning
+        // discipline for a guarantee this test does not need: the module
+        // doc comment above (Architectural fact 1) already establishes the
+        // MCP server is single-threaded, so the cache's real concurrency
+        // model is "many simultaneously-live handles on one thread", exactly
+        // what this test reproduces.
+        let parent = unique_dir("prod_bound_simultaneous");
+        let dbs: Vec<PathBuf> = (0..MAX_CACHED_GRAPHS)
+            .map(|i| parent.join(format!("g{i}")))
+            .collect();
+        for (i, db) in dbs.iter().enumerate() {
+            seed_graph(db, &format!("fn{i}"));
+        }
+
+        // Open all MAX_CACHED_GRAPHS graphs under the prod default bound and
+        // hold every handle alive at once (Vec keeps them live for the whole
+        // assertion, unlike the cache's LRU which would start evicting at
+        // capacity — this test targets VA exhaustion, not eviction policy).
+        let mut stores = Vec::with_capacity(dbs.len());
+        for (i, db) in dbs.iter().enumerate() {
+            let cfg = lbug::SystemConfig::default()
+                .max_db_size(crate::graph_store::DEFAULT_PROD_MAX_DB_SIZE_BYTES);
+            let store = GraphStore::open_or_create_with_config(db, cfg).unwrap_or_else(|e| {
+                panic!("graph {i} failed to open under the prod default bound: {e}")
+            });
+            stores.push(store);
+        }
+        assert_eq!(
+            stores.len(),
+            MAX_CACHED_GRAPHS,
+            "all graphs must open with no VA exhaustion"
+        );
+
+        // And the cache's own bookkeeping path (fingerprint + LRU eviction)
+        // must still behave correctly when opening at this exact bound —
+        // same assertions as evicts_least_recently_opened_over_capacity,
+        // above, but exercised at the production byte count via
+        // get_with_config instead of the 512 MiB test bound.
+        with_fresh_cache(|cache| {
+            for db in &dbs {
+                let cfg = lbug::SystemConfig::default()
+                    .max_db_size(crate::graph_store::DEFAULT_PROD_MAX_DB_SIZE_BYTES);
+                cache
+                    .get_with_config(db, cfg)
+                    .expect("cache get at the prod default bound");
+            }
+            assert_eq!(
+                cache.opens as usize,
+                dbs.len(),
+                "one open per distinct graph, at capacity, no eviction yet"
+            );
+        });
+
+        drop(stores);
         let _ = fs::remove_dir_all(&parent);
     }
 }

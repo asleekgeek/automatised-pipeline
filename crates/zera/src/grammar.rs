@@ -30,7 +30,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use crate::{EdgeRef, GraphState, NodeRef};
+use crate::{EdgeRef, GraphState};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Rule {
@@ -52,10 +52,7 @@ impl Grammar {
     pub fn for_cortex_memory() -> Self {
         Grammar {
             rules: vec![Rule::SymmetricClosure {
-                kinds: vec![
-                    "co_occurrence".into(),
-                    "correlates_with".into(),
-                ],
+                kinds: vec!["co_occurrence".into(), "correlates_with".into()],
             }],
         }
     }
@@ -92,10 +89,7 @@ impl Grammar {
     ///
     /// Round-trip-safe by construction: only edges flagged in the
     /// bidirectional index list get a reverse derived at decode.
-    pub fn split(
-        &self,
-        edges: &[EdgeRef],
-    ) -> (Vec<EdgeRef>, Vec<u32>, Vec<EdgeRef>) {
+    pub fn split(&self, edges: &[EdgeRef]) -> (Vec<EdgeRef>, Vec<u32>, Vec<EdgeRef>) {
         // Two passes: first identify which canonical pairs are bidirectional;
         // second emit base + indices in base order.
         let symmetric_kinds: Vec<&Vec<String>> = self
@@ -205,16 +199,35 @@ impl Grammar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NodeRef;
 
     fn graph_with_symmetric_pair() -> GraphState {
         let nodes = vec![
-            NodeRef { id: "a".into(), label: "Entity".into() },
-            NodeRef { id: "b".into(), label: "Entity".into() },
+            NodeRef {
+                id: "a".into(),
+                label: "Entity".into(),
+            },
+            NodeRef {
+                id: "b".into(),
+                label: "Entity".into(),
+            },
         ];
         let edges = vec![
-            EdgeRef { from: "a".into(), to: "b".into(), kind: "co_occurrence".into() },
-            EdgeRef { from: "b".into(), to: "a".into(), kind: "co_occurrence".into() },
-            EdgeRef { from: "a".into(), to: "b".into(), kind: "calls".into() }, // asym
+            EdgeRef {
+                from: "a".into(),
+                to: "b".into(),
+                kind: "co_occurrence".into(),
+            },
+            EdgeRef {
+                from: "b".into(),
+                to: "a".into(),
+                kind: "co_occurrence".into(),
+            },
+            EdgeRef {
+                from: "a".into(),
+                to: "b".into(),
+                kind: "calls".into(),
+            }, // asym
         ];
         GraphState::new(nodes, edges)
     }
@@ -240,7 +253,11 @@ mod tests {
         let g = graph_with_symmetric_pair();
         let grammar = Grammar::for_cortex_memory();
         let (ok, orig, recomputed) = grammar.round_trip_check(&g);
-        assert!(ok, "expected round-trip to reconstruct {} edges, got {}", orig, recomputed);
+        assert!(
+            ok,
+            "expected round-trip to reconstruct {} edges, got {}",
+            orig, recomputed
+        );
     }
 
     #[test]
@@ -256,12 +273,26 @@ mod tests {
     #[test]
     fn asymmetric_edges_are_never_dropped() {
         let nodes = vec![
-            NodeRef { id: "a".into(), label: "Entity".into() },
-            NodeRef { id: "b".into(), label: "Entity".into() },
+            NodeRef {
+                id: "a".into(),
+                label: "Entity".into(),
+            },
+            NodeRef {
+                id: "b".into(),
+                label: "Entity".into(),
+            },
         ];
         let edges = vec![
-            EdgeRef { from: "a".into(), to: "b".into(), kind: "calls".into() },
-            EdgeRef { from: "b".into(), to: "a".into(), kind: "calls".into() },
+            EdgeRef {
+                from: "a".into(),
+                to: "b".into(),
+                kind: "calls".into(),
+            },
+            EdgeRef {
+                from: "b".into(),
+                to: "a".into(),
+                kind: "calls".into(),
+            },
         ];
         let g = GraphState::new(nodes, edges);
         let grammar = Grammar::for_cortex_memory();
@@ -278,12 +309,20 @@ mod tests {
         // fabricate the reverse. This was an earlier bug — the round-trip on
         // production data caught it.
         let nodes = vec![
-            NodeRef { id: "a".into(), label: "Entity".into() },
-            NodeRef { id: "b".into(), label: "Entity".into() },
+            NodeRef {
+                id: "a".into(),
+                label: "Entity".into(),
+            },
+            NodeRef {
+                id: "b".into(),
+                label: "Entity".into(),
+            },
         ];
-        let edges = vec![
-            EdgeRef { from: "a".into(), to: "b".into(), kind: "co_occurrence".into() },
-        ];
+        let edges = vec![EdgeRef {
+            from: "a".into(),
+            to: "b".into(),
+            kind: "co_occurrence".into(),
+        }];
         let g = GraphState::new(nodes, edges);
         let grammar = Grammar::for_cortex_memory();
         let (base, bidir, derivable) = grammar.split(&g.edges);

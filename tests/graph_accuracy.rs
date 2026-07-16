@@ -124,15 +124,13 @@ fn fixture_text_py() -> Fixture {
     // Order matters for stable matching: we'll match by best (caller, callee, line).
     let _ck_sites_in_extract_keywords: Vec<(&str, u64)> = vec![
         ("set", 185),
-        ("text.lower", 188),       // Bug #10: dropped today
-        ("_SPLIT_RE.split", 188),  // Bug #10: dropped today
+        ("text.lower", 188),      // Bug #10: dropped today
+        ("_SPLIT_RE.split", 188), // Bug #10: dropped today
         ("len", 189),
         ("len", 189),
     ];
-    let _ck_sites_in_extract_keywords_array: Vec<(&str, u64)> = vec![
-        ("list", 195),
-        ("extract_keywords", 195),
-    ];
+    let _ck_sites_in_extract_keywords_array: Vec<(&str, u64)> =
+        vec![("list", 195), ("extract_keywords", 195)];
     // CallSite nodes are recorded for matching but with synthetic placeholder
     // QNs because the byte-offset suffix is producer-determined. The scorer
     // matches CallSites by (caller, callee, line) heuristic instead of by QN.
@@ -144,21 +142,14 @@ fn fixture_text_py() -> Fixture {
         ("len", 189),
     ] {
         nodes.push(ExpectedNode {
-            qn: format!(
-                "shared/text.py::extract_keywords::callsite::{callee}::{line}"
-            ),
+            qn: format!("shared/text.py::extract_keywords::callsite::{callee}::{line}"),
             label: "CallSite",
             start_line: *line,
         });
     }
-    for (callee, line) in &[
-        ("list", 195u64),
-        ("extract_keywords", 195),
-    ] {
+    for (callee, line) in &[("list", 195u64), ("extract_keywords", 195)] {
         nodes.push(ExpectedNode {
-            qn: format!(
-                "shared/text.py::extract_keywords_array::callsite::{callee}::{line}"
-            ),
+            qn: format!("shared/text.py::extract_keywords_array::callsite::{callee}::{line}"),
             label: "CallSite",
             start_line: *line,
         });
@@ -188,26 +179,21 @@ fn fixture_text_py() -> Fixture {
         edges.push(ExpectedEdge {
             kind: "Defines",
             from_qn: "shared/text.py::extract_keywords".to_string(),
-            to_qn: format!(
-                "shared/text.py::extract_keywords::callsite::{callee}::{line}"
-            ),
+            to_qn: format!("shared/text.py::extract_keywords::callsite::{callee}::{line}"),
         });
     }
     for (callee, line) in &[("list", 195u64), ("extract_keywords", 195)] {
         edges.push(ExpectedEdge {
             kind: "Defines",
             from_qn: "shared/text.py::extract_keywords_array".to_string(),
-            to_qn: format!(
-                "shared/text.py::extract_keywords_array::callsite::{callee}::{line}"
-            ),
+            to_qn: format!("shared/text.py::extract_keywords_array::callsite::{callee}::{line}"),
         });
     }
     // Resolved Calls: extract_keywords_array → extract_keywords (intra-file)
     edges.push(ExpectedEdge {
         kind: "Calls",
-        from_qn:
-            "shared/text.py::extract_keywords_array::callsite::extract_keywords::195"
-                .to_string(),
+        from_qn: "shared/text.py::extract_keywords_array::callsite::extract_keywords::195"
+            .to_string(),
         to_qn: "shared/text.py::extract_keywords".to_string(),
     });
 
@@ -250,24 +236,24 @@ fn fixture_similarity_py() -> Fixture {
     ];
     for (callee, line) in &[("len", 16u64), ("len", 17)] {
         nodes.push(ExpectedNode {
-            qn: format!(
-                "shared/similarity.py::jaccard_similarity::callsite::{callee}::{line}"
-            ),
+            qn: format!("shared/similarity.py::jaccard_similarity::callsite::{callee}::{line}"),
             label: "CallSite",
             start_line: *line,
         });
     }
     let mut edges = vec![
-        e("Defines", &file, "shared/similarity.py::__future__::annotations"),
+        e(
+            "Defines",
+            &file,
+            "shared/similarity.py::__future__::annotations",
+        ),
         e("Defines", &file, "shared/similarity.py::jaccard_similarity"),
     ];
     for (callee, line) in &[("len", 16u64), ("len", 17)] {
         edges.push(ExpectedEdge {
             kind: "Defines",
             from_qn: "shared/similarity.py::jaccard_similarity".to_string(),
-            to_qn: format!(
-                "shared/similarity.py::jaccard_similarity::callsite::{callee}::{line}"
-            ),
+            to_qn: format!("shared/similarity.py::jaccard_similarity::callsite::{callee}::{line}"),
         });
     }
     Fixture {
@@ -308,9 +294,7 @@ fn fixture_hash_py() -> Fixture {
     ];
     for (callee, line) in &[("ord", 18u64), ("format", 19)] {
         nodes.push(ExpectedNode {
-            qn: format!(
-                "shared/hash.py::simple_hash::callsite::{callee}::{line}"
-            ),
+            qn: format!("shared/hash.py::simple_hash::callsite::{callee}::{line}"),
             label: "CallSite",
             start_line: *line,
         });
@@ -323,9 +307,7 @@ fn fixture_hash_py() -> Fixture {
         edges.push(ExpectedEdge {
             kind: "Defines",
             from_qn: "shared/hash.py::simple_hash".to_string(),
-            to_qn: format!(
-                "shared/hash.py::simple_hash::callsite::{callee}::{line}"
-            ),
+            to_qn: format!("shared/hash.py::simple_hash::callsite::{callee}::{line}"),
         });
     }
     Fixture {
@@ -342,7 +324,7 @@ fn fixture_hash_py() -> Fixture {
 // ---------------------------------------------------------------------------
 
 struct Observed {
-    nodes: BTreeMap<String, String>,                 // qn -> label
+    nodes: BTreeMap<String, String>, // qn -> label
     edges_by_kind: BTreeMap<String, BTreeSet<(String, String)>>, // kind -> {(from, to)}
 }
 
@@ -351,11 +333,11 @@ fn index_fixture(fixture_root: &Path, graph_path: &Path) -> Observed {
         fixture_root,
         graph_path,
         Some(Language::Python),
+        indexer::DependencyScope::None,
     )
     .expect("indexer should succeed on a 1-file fixture");
 
-    let store = GraphStore::open_or_create(graph_path)
-        .expect("open the freshly-built graph");
+    let store = GraphStore::open_or_create(graph_path).expect("open the freshly-built graph");
 
     // Run stage-3b resolution: produces Calls / Imports / Uses / Implements
     // edges from the call-sites and import nodes the parser left as stubs.
@@ -378,7 +360,9 @@ fn index_fixture(fixture_root: &Path, graph_path: &Path) -> Observed {
 
     // Pull all nodes by label. We hit the labels the parser/indexer emits.
     let mut nodes: BTreeMap<String, String> = BTreeMap::new();
-    for label in &["File", "Import", "Constant", "Function", "Method", "Struct", "CallSite"] {
+    for label in &[
+        "File", "Import", "Constant", "Function", "Method", "Struct", "CallSite",
+    ] {
         let q = format!("MATCH (n:{label}) RETURN n.id");
         let res = match store.execute_query(&q) {
             Ok(r) => r,
@@ -481,10 +465,8 @@ impl Score {
 fn score_nodes(expected: &[ExpectedNode], observed: &BTreeMap<String, String>) -> Score {
     let observed_qns: BTreeSet<&String> = observed.keys().collect();
     let mut s = Score::default();
-    let expected_call_site_matches: usize = expected
-        .iter()
-        .filter(|n| n.label == "CallSite")
-        .count();
+    let expected_call_site_matches: usize =
+        expected.iter().filter(|n| n.label == "CallSite").count();
 
     // Non-callsite nodes match exactly by QN.
     for en in expected {
@@ -542,18 +524,14 @@ fn score_edges_by_kind(
     }
 
     for (kind, exp_edges) in &expected_by_kind {
-        let obs_set: BTreeSet<(String, String)> = observed
-            .get(*kind)
-            .cloned()
-            .unwrap_or_default();
+        let obs_set: BTreeSet<(String, String)> = observed.get(*kind).cloned().unwrap_or_default();
         let mut s = Score::default();
 
         // Partition expected into strict (no "callsite::" segment) and
         // relaxed (touches a CallSite placeholder).
         let (strict, relaxed): (Vec<&&ExpectedEdge>, Vec<&&ExpectedEdge>) =
             exp_edges.iter().partition(|e| {
-                !e.from_qn.contains("::callsite::")
-                    && !e.to_qn.contains("::callsite::")
+                !e.from_qn.contains("::callsite::") && !e.to_qn.contains("::callsite::")
             });
 
         // Strict matching: exact (from, to) pair.
@@ -579,10 +557,7 @@ fn score_edges_by_kind(
                 .iter()
                 .map(|e| (e.from_qn.clone(), e.to_qn.clone()))
                 .collect();
-            let obs_relaxed: usize = obs_set
-                .iter()
-                .filter(|p| !strict_pairs.contains(p))
-                .count();
+            let obs_relaxed: usize = obs_set.iter().filter(|p| !strict_pairs.contains(p)).count();
             let tp_r = obs_relaxed.min(exp_count);
             let fp_r = obs_relaxed.saturating_sub(exp_count);
             let fn_r = exp_count.saturating_sub(obs_relaxed);
@@ -618,7 +593,10 @@ fn score_edges_by_kind(
 // ---------------------------------------------------------------------------
 
 fn print_diff(fixture: &Fixture, observed: &Observed) {
-    println!("\n===== fixture: {} / {} =====", fixture.category, fixture.name);
+    println!(
+        "\n===== fixture: {} / {} =====",
+        fixture.category, fixture.name
+    );
     println!("  expected nodes : {}", fixture.nodes.len());
     println!("  observed nodes : {}", observed.nodes.len());
 
@@ -644,7 +622,10 @@ fn print_diff(fixture: &Fixture, observed: &Observed) {
             continue;
         }
         if !observed_qns.contains(&en.qn) {
-            println!("    MISSING node  [{}] {}  @line {}", en.label, en.qn, en.start_line);
+            println!(
+                "    MISSING node  [{}] {}  @line {}",
+                en.label, en.qn, en.start_line
+            );
             missing += 1;
         }
     }
@@ -664,7 +645,10 @@ fn print_diff(fixture: &Fixture, observed: &Observed) {
             .map(|s| s.contains(&pair))
             .unwrap_or(false)
         {
-            println!("    MISSING edge  [{}] {} -> {}", ee.kind, ee.from_qn, ee.to_qn);
+            println!(
+                "    MISSING edge  [{}] {} -> {}",
+                ee.kind, ee.from_qn, ee.to_qn
+            );
             missing_edges += 1;
         }
     }
@@ -678,13 +662,18 @@ fn print_diff(fixture: &Fixture, observed: &Observed) {
 // ---------------------------------------------------------------------------
 
 fn fixture_root_for(test_name: &str) -> PathBuf {
-    let tmp = std::env::temp_dir()
-        .join(format!("graph_accuracy_{}_{}", test_name, std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (test_name is kept as a
+    // human-readable prefix for debuggability, not for uniqueness).
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("graph_accuracy_{test_name}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("create tempdir");
     tmp
 }
-
 
 // ---------------------------------------------------------------------------
 // Fixture: shared/linear_algebra.py
@@ -724,9 +713,17 @@ fn fixture_linear_algebra_py() -> Fixture {
     // Imports: __future__ + np (aliased) + numpy::typing::NDArray (from-import)
     let mut nodes = vec![
         n(&file, "File", 0),
-        n("shared/linear_algebra.py::__future__::annotations", "Import", 7),
+        n(
+            "shared/linear_algebra.py::__future__::annotations",
+            "Import",
+            7,
+        ),
         n("shared/linear_algebra.py::np", "Import", 9), // aliased: display=alias
-        n("shared/linear_algebra.py::numpy::typing::NDArray", "Import", 10),
+        n(
+            "shared/linear_algebra.py::numpy::typing::NDArray",
+            "Import",
+            10,
+        ),
     ];
 
     // Functions in declaration order with their (line, body call-count).
@@ -744,9 +741,17 @@ fn fixture_linear_algebra_py() -> Fixture {
         ("zeros", 96, 0),
     ];
     let mut edges = vec![
-        e("Defines", &file, "shared/linear_algebra.py::__future__::annotations"),
+        e(
+            "Defines",
+            &file,
+            "shared/linear_algebra.py::__future__::annotations",
+        ),
         e("Defines", &file, "shared/linear_algebra.py::np"),
-        e("Defines", &file, "shared/linear_algebra.py::numpy::typing::NDArray"),
+        e(
+            "Defines",
+            &file,
+            "shared/linear_algebra.py::numpy::typing::NDArray",
+        ),
     ];
     for (fname, line, n_calls) in fns {
         let fqn = format!("shared/linear_algebra.py::{fname}");
@@ -800,9 +805,7 @@ fn fixture_linear_algebra_py() -> Fixture {
     for (i, (caller, callee)) in resolved_calls.iter().enumerate() {
         edges.push(ExpectedEdge {
             kind: "Calls",
-            from_qn: format!(
-                "shared/linear_algebra.py::{caller}::callsite::__resolved__::{i}"
-            ),
+            from_qn: format!("shared/linear_algebra.py::{caller}::callsite::__resolved__::{i}"),
             to_qn: format!("shared/linear_algebra.py::{callee}"),
         });
     }
@@ -868,13 +871,21 @@ fn fixture_yaml_parser_py() -> Fixture {
 
     let mut nodes = vec![
         n(&file, "File", 0),
-        n("shared/yaml_parser.py::__future__::annotations", "Import", 7),
+        n(
+            "shared/yaml_parser.py::__future__::annotations",
+            "Import",
+            7,
+        ),
         n("shared/yaml_parser.py::re", "Import", 9),
         n("shared/yaml_parser.py::typing::NamedTuple", "Import", 10),
         n("shared/yaml_parser.py::_FRONTMATTER_RE", "Constant", 12),
         n("shared/yaml_parser.py::_KV_RE", "Constant", 13),
         n("shared/yaml_parser.py::FrontmatterResult", "Struct", 16),
-        n("shared/yaml_parser.py::parse_yaml_frontmatter", "Function", 21),
+        n(
+            "shared/yaml_parser.py::parse_yaml_frontmatter",
+            "Function",
+            21,
+        ),
     ];
 
     let fn_qn = "shared/yaml_parser.py::parse_yaml_frontmatter".to_string();
@@ -888,9 +899,17 @@ fn fixture_yaml_parser_py() -> Fixture {
 
     let mut edges = vec![
         // File → top-level symbols
-        e("Defines", &file, "shared/yaml_parser.py::__future__::annotations"),
+        e(
+            "Defines",
+            &file,
+            "shared/yaml_parser.py::__future__::annotations",
+        ),
         e("Defines", &file, "shared/yaml_parser.py::re"),
-        e("Defines", &file, "shared/yaml_parser.py::typing::NamedTuple"),
+        e(
+            "Defines",
+            &file,
+            "shared/yaml_parser.py::typing::NamedTuple",
+        ),
         e("Defines", &file, "shared/yaml_parser.py::_FRONTMATTER_RE"),
         e("Defines", &file, "shared/yaml_parser.py::_KV_RE"),
         e("Defines", &file, "shared/yaml_parser.py::FrontmatterResult"),
@@ -1035,9 +1054,7 @@ fn fixture_persona_vector_py() -> Fixture {
     for (i, (caller, callee)) in resolved_calls.iter().enumerate() {
         edges.push(ExpectedEdge {
             kind: "Calls",
-            from_qn: format!(
-                "core/persona_vector.py::{caller}::callsite::__resolved__::{i}"
-            ),
+            from_qn: format!("core/persona_vector.py::{caller}::callsite::__resolved__::{i}"),
             to_qn: format!("core/persona_vector.py::{callee}"),
         });
     }
@@ -1060,8 +1077,8 @@ struct CoreFixtureInputs {
     category: &'static str,
     rel_path: &'static str,
     file_prefix: &'static str, // file ID prefix, e.g. "core/profile_builder.py"
-    imports: &'static [(&'static str, u64)],       // (qual_suffix, line)
-    constants: &'static [(&'static str, u64)],     // (name, line)
+    imports: &'static [(&'static str, u64)], // (qual_suffix, line)
+    constants: &'static [(&'static str, u64)], // (name, line)
     functions: &'static [(&'static str, u64, usize)], // (name, line, call_count)
     classes: &'static [ExpectedClassInput],
     resolved_calls: &'static [(&'static str, &'static str)], // (caller, callee) DEDUPLICATED
@@ -1089,11 +1106,20 @@ fn build_core_fixture(inp: &CoreFixtureInputs) -> Fixture {
     let mut edges: Vec<ExpectedEdge> = vec![];
 
     let push_node = |nodes: &mut Vec<ExpectedNode>, qn: String, label: &'static str, line: u64| {
-        nodes.push(ExpectedNode { qn, label, start_line: line });
+        nodes.push(ExpectedNode {
+            qn,
+            label,
+            start_line: line,
+        });
     };
-    let push_edge = |edges: &mut Vec<ExpectedEdge>, kind: &'static str, from: String, to: String| {
-        edges.push(ExpectedEdge { kind, from_qn: from, to_qn: to });
-    };
+    let push_edge =
+        |edges: &mut Vec<ExpectedEdge>, kind: &'static str, from: String, to: String| {
+            edges.push(ExpectedEdge {
+                kind,
+                from_qn: from,
+                to_qn: to,
+            });
+        };
 
     for (path, line) in inp.imports {
         let qn = format!("{}::{}", inp.file_prefix, path);
@@ -1136,7 +1162,10 @@ fn build_core_fixture(inp: &CoreFixtureInputs) -> Fixture {
         push_edge(
             &mut edges,
             "Calls",
-            format!("{}::{}::callsite::__resolved__::{i}", inp.file_prefix, caller),
+            format!(
+                "{}::{}::callsite::__resolved__::{i}",
+                inp.file_prefix, caller
+            ),
             format!("{}::{}", inp.file_prefix, callee),
         );
     }
@@ -1166,7 +1195,10 @@ fn fixture_profile_builder_py() -> Fixture {
             ("datetime::datetime", 10),
             ("datetime::timezone", 10),
             ("mcp_server::core::persona_vector::build_persona_vector", 12),
-            ("mcp_server::core::style_classifier_ema::update_style_ema", 13),
+            (
+                "mcp_server::core::style_classifier_ema::update_style_ema",
+                13,
+            ),
         ],
         constants: &[
             ("_BURST_THRESHOLD_MS", 19),
@@ -1272,9 +1304,15 @@ fn fixture_sparse_dictionary_py() -> Fixture {
         imports: &[
             ("__future__::annotations", 8),
             ("typing::Any", 10),
-            ("mcp_server::core::sparse_dictionary_activation::SIGNAL_NAMES", 12),
+            (
+                "mcp_server::core::sparse_dictionary_activation::SIGNAL_NAMES",
+                12,
+            ),
             ("mcp_server::core::sparse_dictionary_activation::D", 12),
-            ("mcp_server::core::sparse_dictionary_activation::extract_session_activation", 12),
+            (
+                "mcp_server::core::sparse_dictionary_activation::extract_session_activation",
+                12,
+            ),
             // Aliased: display_name = alias
             ("_initialize_atoms", 17),
             ("mcp_server::core::sparse_dictionary_learning::omp", 20),
@@ -1283,10 +1321,7 @@ fn fixture_sparse_dictionary_py() -> Fixture {
             ("mcp_server::shared::linear_algebra::normalize", 26),
             ("mcp_server::shared::linear_algebra::zeros", 26),
         ],
-        constants: &[
-            ("_SEED_FEATURES", 32),
-            ("_SIGNAL_LABELS", 179),
-        ],
+        constants: &[("_SEED_FEATURES", 32), ("_SIGNAL_LABELS", 179)],
         functions: &[
             ("_build_seed_feature", 101, 7),
             ("build_seed_dictionary", 123, 4),
@@ -1362,18 +1397,54 @@ fn fixture_hierarchical_predictive_coding_py() -> Fixture {
         imports: &[
             ("__future__::annotations", 19),
             ("math", 21),
-            ("mcp_server::core::predictive_coding_flat::compute_embedding_novelty", 23),
-            ("mcp_server::core::predictive_coding_flat::compute_entity_novelty", 23),
-            ("mcp_server::core::predictive_coding_flat::compute_structural_novelty", 23),
-            ("mcp_server::core::predictive_coding_flat::compute_temporal_novelty", 23),
-            ("mcp_server::core::predictive_coding_gate::PrecisionState", 29),
-            ("mcp_server::core::predictive_coding_gate::neuromodulate_precisions", 29),
-            ("mcp_server::core::predictive_coding_signals::HierarchicalPrediction", 33),
-            ("mcp_server::core::predictive_coding_signals::PredictionLevel", 33),
-            ("mcp_server::core::predictive_coding_signals::compute_entity_errors", 33),
-            ("mcp_server::core::predictive_coding_signals::compute_schema_errors", 33),
-            ("mcp_server::core::predictive_coding_signals::compute_sensory_errors", 33),
-            ("mcp_server::core::predictive_coding_signals::compute_sensory_prediction", 33),
+            (
+                "mcp_server::core::predictive_coding_flat::compute_embedding_novelty",
+                23,
+            ),
+            (
+                "mcp_server::core::predictive_coding_flat::compute_entity_novelty",
+                23,
+            ),
+            (
+                "mcp_server::core::predictive_coding_flat::compute_structural_novelty",
+                23,
+            ),
+            (
+                "mcp_server::core::predictive_coding_flat::compute_temporal_novelty",
+                23,
+            ),
+            (
+                "mcp_server::core::predictive_coding_gate::PrecisionState",
+                29,
+            ),
+            (
+                "mcp_server::core::predictive_coding_gate::neuromodulate_precisions",
+                29,
+            ),
+            (
+                "mcp_server::core::predictive_coding_signals::HierarchicalPrediction",
+                33,
+            ),
+            (
+                "mcp_server::core::predictive_coding_signals::PredictionLevel",
+                33,
+            ),
+            (
+                "mcp_server::core::predictive_coding_signals::compute_entity_errors",
+                33,
+            ),
+            (
+                "mcp_server::core::predictive_coding_signals::compute_schema_errors",
+                33,
+            ),
+            (
+                "mcp_server::core::predictive_coding_signals::compute_sensory_errors",
+                33,
+            ),
+            (
+                "mcp_server::core::predictive_coding_signals::compute_sensory_prediction",
+                33,
+            ),
         ],
         constants: &[("_LEVEL_WEIGHTS", 61)],
         functions: &[
@@ -1387,7 +1458,10 @@ fn fixture_hierarchical_predictive_coding_py() -> Fixture {
         resolved_calls: &[
             ("_aggregate_novelty", "_compute_ach_weights"),
             ("compute_hierarchical_novelty", "_aggregate_novelty"),
-            ("compute_hierarchical_novelty", "_apply_precision_modulation"),
+            (
+                "compute_hierarchical_novelty",
+                "_apply_precision_modulation",
+            ),
             ("compute_hierarchical_novelty", "_compute_prediction_levels"),
         ],
     })
@@ -1399,10 +1473,7 @@ fn fixture_dual_store_cls_py() -> Fixture {
         category: "core-with-deps",
         rel_path: "core/dual_store_cls.py",
         file_prefix: "core/dual_store_cls.py",
-        imports: &[
-            ("__future__::annotations", 20),
-            ("re", 22),
-        ],
+        imports: &[("__future__::annotations", 20), ("re", 22)],
         constants: &[
             ("_SEMANTIC_TAGS", 26),
             ("_DECISION_RE", 41),
@@ -1410,10 +1481,7 @@ fn fixture_dual_store_cls_py() -> Fixture {
             ("_ARCHITECTURE_RE", 51),
             ("_SPECIFIC_RE", 55),
         ],
-        functions: &[
-            ("classify_memory", 62, 9),
-            ("auto_weight", 96, 6),
-        ],
+        functions: &[("classify_memory", 62, 9), ("auto_weight", 96, 6)],
         classes: &[],
         resolved_calls: &[],
     })
@@ -1447,10 +1515,16 @@ fn fixture_causal_graph_py() -> Fixture {
         classes: &[],
         resolved_calls: &[
             ("_build_skeleton", "compute_conditional_independence"),
-            ("_find_conditionally_independent_edges", "compute_conditional_independence"),
+            (
+                "_find_conditionally_independent_edges",
+                "compute_conditional_independence",
+            ),
             ("_orient_edges", "compute_temporal_precedence"),
             ("discover_causal_edges", "_build_skeleton"),
-            ("discover_causal_edges", "_find_conditionally_independent_edges"),
+            (
+                "discover_causal_edges",
+                "_find_conditionally_independent_edges",
+            ),
             ("discover_causal_edges", "_orient_edges"),
             ("discover_causal_edges", "_prune_skeleton"),
             ("find_causal_chain", "_build_directed_adjacency"),
@@ -1468,10 +1542,22 @@ fn fixture_consolidation_engine_py() -> Fixture {
             ("__future__::annotations", 13),
             ("typing::Any", 15),
             ("mcp_server::core::dual_store_cls::classify_memory", 17),
-            ("mcp_server::core::dual_store_cls_abstraction::abstract_to_schema", 18),
-            ("mcp_server::core::dual_store_cls_abstraction::check_consistency", 18),
-            ("mcp_server::core::dual_store_cls_abstraction::cluster_by_similarity", 18),
-            ("mcp_server::core::dual_store_cls_abstraction::filter_recurring_patterns", 18),
+            (
+                "mcp_server::core::dual_store_cls_abstraction::abstract_to_schema",
+                18,
+            ),
+            (
+                "mcp_server::core::dual_store_cls_abstraction::check_consistency",
+                18,
+            ),
+            (
+                "mcp_server::core::dual_store_cls_abstraction::cluster_by_similarity",
+                18,
+            ),
+            (
+                "mcp_server::core::dual_store_cls_abstraction::filter_recurring_patterns",
+                18,
+            ),
         ],
         constants: &[],
         functions: &[
@@ -1502,23 +1588,44 @@ fn fixture_replay_py() -> Fixture {
         file_prefix: "core/replay.py",
         imports: &[
             ("__future__::annotations", 48),
-            ("mcp_server::core::replay_execution::build_causal_sequence", 50),
-            ("mcp_server::core::replay_execution::build_temporal_sequence", 50),
-            ("mcp_server::core::replay_execution::compute_replay_stdp_pairs", 50),
-            ("mcp_server::core::replay_formatting::format_restoration", 55),
-            ("mcp_server::core::replay_formatting::should_micro_checkpoint", 55),
-            ("mcp_server::core::replay_selection::compute_sequence_priority", 59),
-            ("mcp_server::core::replay_selection::compute_sequence_rpe", 59),
-            ("mcp_server::core::replay_selection::select_replay_sequences", 59),
+            (
+                "mcp_server::core::replay_execution::build_causal_sequence",
+                50,
+            ),
+            (
+                "mcp_server::core::replay_execution::build_temporal_sequence",
+                50,
+            ),
+            (
+                "mcp_server::core::replay_execution::compute_replay_stdp_pairs",
+                50,
+            ),
+            (
+                "mcp_server::core::replay_formatting::format_restoration",
+                55,
+            ),
+            (
+                "mcp_server::core::replay_formatting::should_micro_checkpoint",
+                55,
+            ),
+            (
+                "mcp_server::core::replay_selection::compute_sequence_priority",
+                59,
+            ),
+            (
+                "mcp_server::core::replay_selection::compute_sequence_rpe",
+                59,
+            ),
+            (
+                "mcp_server::core::replay_selection::select_replay_sequences",
+                59,
+            ),
             ("mcp_server::core::replay_types::ReplayDirection", 64),
             ("mcp_server::core::replay_types::ReplayEvent", 64),
             ("mcp_server::core::replay_types::ReplayResult", 64),
             ("mcp_server::core::replay_types::ReplaySequence", 64),
         ],
-        constants: &[
-            ("_MIN_SEQUENCE_LENGTH", 73),
-            ("_MAX_SEQUENCES_PER_SWR", 74),
-        ],
+        constants: &[("_MIN_SEQUENCE_LENGTH", 73), ("_MAX_SEQUENCES_PER_SWR", 74)],
         functions: &[
             ("_select_seeds", 80, 2),
             ("run_swr_replay", 86, 7),
@@ -1569,9 +1676,7 @@ fn fixture_file_io_py() -> Fixture {
             ("stat_file", 64, 2),
         ],
         classes: &[],
-        resolved_calls: &[
-            ("write_json", "ensure_dir"),
-        ],
+        resolved_calls: &[("write_json", "ensure_dir")],
     })
 }
 
@@ -1640,10 +1745,7 @@ fn fixture_mcp_client_py() -> Fixture {
             ("typing::Any", 12),
             ("mcp_server::errors::McpConnectionError", 14),
         ],
-        constants: &[
-            ("CLIENT_INFO", 16),
-            ("PROTOCOL_VERSION", 17),
-        ],
+        constants: &[("CLIENT_INFO", 16), ("PROTOCOL_VERSION", 17)],
         functions: &[],
         classes: &[ExpectedClassInput {
             name: "MCPClient",
@@ -1696,18 +1798,33 @@ fn fixture_pg_store_py() -> Fixture {
             ("psycopg::rows::dict_row", 29),
             ("psycopg_pool::ConnectionPool", 30),
             ("mcp_server::infrastructure::pg_schema::get_all_ddl", 32),
-            ("mcp_server::infrastructure::pg_store_auxiliary::PgAuxiliaryMixin", 33),
-            ("mcp_server::infrastructure::pg_store_entities::PgEntityMixin", 34),
-            ("mcp_server::infrastructure::pg_store_queries::PgQueryMixin", 35),
-            ("mcp_server::infrastructure::pg_store_relationships::PgRelationshipMixin", 36),
-            ("mcp_server::infrastructure::pg_store_rules::PgRuleMixin", 37),
-            ("mcp_server::infrastructure::pg_store_stats::PgStatsMixin", 38),
+            (
+                "mcp_server::infrastructure::pg_store_auxiliary::PgAuxiliaryMixin",
+                33,
+            ),
+            (
+                "mcp_server::infrastructure::pg_store_entities::PgEntityMixin",
+                34,
+            ),
+            (
+                "mcp_server::infrastructure::pg_store_queries::PgQueryMixin",
+                35,
+            ),
+            (
+                "mcp_server::infrastructure::pg_store_relationships::PgRelationshipMixin",
+                36,
+            ),
+            (
+                "mcp_server::infrastructure::pg_store_rules::PgRuleMixin",
+                37,
+            ),
+            (
+                "mcp_server::infrastructure::pg_store_stats::PgStatsMixin",
+                38,
+            ),
         ],
         constants: &[],
-        functions: &[
-            ("_get_database_url", 43, 2),
-            ("_now_iso", 96, 2),
-        ],
+        functions: &[("_get_database_url", 43, 2), ("_now_iso", 96, 2)],
         classes: &[
             ExpectedClassInput {
                 name: "_MaterializedCursor",
@@ -1736,8 +1853,12 @@ fn fixture_pg_store_py() -> Fixture {
                 // 6-base multi-inheritance. BUG #9 means these Extends edges
                 // never reach the graph today.
                 bases: &[
-                    "PgEntityMixin", "PgRelationshipMixin", "PgQueryMixin",
-                    "PgRuleMixin", "PgStatsMixin", "PgAuxiliaryMixin",
+                    "PgEntityMixin",
+                    "PgRelationshipMixin",
+                    "PgQueryMixin",
+                    "PgRuleMixin",
+                    "PgStatsMixin",
+                    "PgAuxiliaryMixin",
                 ],
                 methods: &[
                     ("__init__", 110, 5),
@@ -1827,15 +1948,24 @@ fn fixture_scanner_py() -> Fixture {
             ("mcp_server::infrastructure::file_io::list_dir", 17),
             ("mcp_server::infrastructure::file_io::read_text_file", 17),
             ("mcp_server::infrastructure::file_io::stat_file", 17),
-            ("mcp_server::infrastructure::scanner_parse::build_conversation_record", 18),
-            ("mcp_server::infrastructure::scanner_parse::extract_message_stats", 18),
-            ("mcp_server::infrastructure::scanner_parse::extract_metadata_fields", 18),
-            ("mcp_server::shared::yaml_parser::parse_yaml_frontmatter", 23),
+            (
+                "mcp_server::infrastructure::scanner_parse::build_conversation_record",
+                18,
+            ),
+            (
+                "mcp_server::infrastructure::scanner_parse::extract_message_stats",
+                18,
+            ),
+            (
+                "mcp_server::infrastructure::scanner_parse::extract_metadata_fields",
+                18,
+            ),
+            (
+                "mcp_server::shared::yaml_parser::parse_yaml_frontmatter",
+                23,
+            ),
         ],
-        constants: &[
-            ("HEAD_BYTES", 25),
-            ("TAIL_BYTES", 26),
-        ],
+        constants: &[("HEAD_BYTES", 25), ("TAIL_BYTES", 26)],
         functions: &[
             ("_parse_jsonl_lines", 29, 3),
             ("read_head_tail", 43, 17),
@@ -1872,14 +2002,26 @@ fn fixture_explore_features_py() -> Fixture {
         imports: &[
             ("__future__::annotations", 6),
             ("mcp_server::core::attribution_tracer::trace_attribution", 8),
-            ("mcp_server::core::behavioral_crosscoder::compare_feature_profiles", 9),
-            ("mcp_server::core::behavioral_crosscoder::detect_persistent_features", 9),
+            (
+                "mcp_server::core::behavioral_crosscoder::compare_feature_profiles",
+                9,
+            ),
+            (
+                "mcp_server::core::behavioral_crosscoder::detect_persistent_features",
+                9,
+            ),
             ("mcp_server::core::persona_vector::PERSONA_DIMENSIONS", 13),
             ("mcp_server::core::persona_vector::build_persona_vector", 13),
             ("mcp_server::core::persona_vector::compose_personas", 13),
-            ("mcp_server::core::sparse_dictionary::build_seed_dictionary", 18),
+            (
+                "mcp_server::core::sparse_dictionary::build_seed_dictionary",
+                18,
+            ),
             ("mcp_server::handlers::_tool_meta::READ_ONLY", 19),
-            ("mcp_server::infrastructure::profile_store::load_profiles", 20),
+            (
+                "mcp_server::infrastructure::profile_store::load_profiles",
+                20,
+            ),
         ],
         constants: &[],
         functions: &[
@@ -1916,11 +2058,26 @@ fn fixture_recall_handler_py() -> Fixture {
             ("mcp_server::core::query_intent::QueryIntent", 18),
             ("mcp_server::core::query_intent::classify_query_intent", 18),
             ("mcp_server::handlers::_tool_meta::READ_ONLY", 19),
-            ("mcp_server::handlers::recall_helpers::build_enhancements", 20),
-            ("mcp_server::handlers::recall_helpers::filter_low_signal", 20),
-            ("mcp_server::handlers::recall_helpers::inject_triggered_memories", 20),
-            ("mcp_server::infrastructure::embedding_engine::get_embedding_engine", 25),
-            ("mcp_server::infrastructure::memory_config::get_memory_settings", 26),
+            (
+                "mcp_server::handlers::recall_helpers::build_enhancements",
+                20,
+            ),
+            (
+                "mcp_server::handlers::recall_helpers::filter_low_signal",
+                20,
+            ),
+            (
+                "mcp_server::handlers::recall_helpers::inject_triggered_memories",
+                20,
+            ),
+            (
+                "mcp_server::infrastructure::embedding_engine::get_embedding_engine",
+                25,
+            ),
+            (
+                "mcp_server::infrastructure::memory_config::get_memory_settings",
+                26,
+            ),
             ("mcp_server::infrastructure::memory_store::MemoryStore", 27),
         ],
         constants: &[],
@@ -1959,18 +2116,39 @@ fn fixture_remember_handler_py() -> Fixture {
             ("mcp_server::core::domain_detector::detect_domain", 12),
             ("mcp_server::core::global_detector::detect_global", 13),
             ("mcp_server::handlers::_tool_meta::IDEMPOTENT_WRITE", 14),
-            ("mcp_server::handlers::remember_helpers::apply_modulations", 15),
+            (
+                "mcp_server::handlers::remember_helpers::apply_modulations",
+                15,
+            ),
             ("mcp_server::handlers::remember_helpers::evaluate_gate", 15),
-            ("mcp_server::handlers::remember_helpers::insert_and_post_process", 15),
+            (
+                "mcp_server::handlers::remember_helpers::insert_and_post_process",
+                15,
+            ),
             ("mcp_server::handlers::remember_helpers::try_curation", 15),
-            ("mcp_server::handlers::remember_helpers::update_user_mood_ema", 15),
-            ("mcp_server::handlers::remember_response::build_merge_response", 22),
+            (
+                "mcp_server::handlers::remember_helpers::update_user_mood_ema",
+                15,
+            ),
+            (
+                "mcp_server::handlers::remember_response::build_merge_response",
+                22,
+            ),
             ("mcp_server::infrastructure::wiki_store", 23),
             ("mcp_server::infrastructure::config::WIKI_ROOT", 24),
-            ("mcp_server::infrastructure::embedding_engine::get_embedding_engine", 25),
-            ("mcp_server::infrastructure::memory_config::get_memory_settings", 26),
+            (
+                "mcp_server::infrastructure::embedding_engine::get_embedding_engine",
+                25,
+            ),
+            (
+                "mcp_server::infrastructure::memory_config::get_memory_settings",
+                26,
+            ),
             ("mcp_server::infrastructure::memory_store::MemoryStore", 27),
-            ("mcp_server::infrastructure::profile_store::load_profiles", 28),
+            (
+                "mcp_server::infrastructure::profile_store::load_profiles",
+                28,
+            ),
         ],
         constants: &[],
         functions: &[
@@ -2002,20 +2180,62 @@ fn fixture_consolidate_handler_py() -> Fixture {
             ("time", 10),
             ("typing::Any", 11),
             ("mcp_server::core::emergence_metrics", 13),
-            ("mcp_server::handlers::consolidation::cascade::run_cascade_advancement", 14),
-            ("mcp_server::handlers::consolidation::cls::run_cls_cycle", 15),
-            ("mcp_server::handlers::consolidation::compression::run_compression_cycle", 16),
-            ("mcp_server::handlers::consolidation::decay::run_decay_cycle", 17),
-            ("mcp_server::handlers::consolidation::homeostatic::run_homeostatic_cycle", 18),
-            ("mcp_server::handlers::consolidation::memify::run_memify_cycle", 19),
-            ("mcp_server::handlers::consolidation::plasticity::run_plasticity_cycle", 20),
-            ("mcp_server::handlers::consolidation::pruning::run_pruning_cycle", 21),
-            ("mcp_server::handlers::consolidation::sleep::run_deep_sleep", 22),
-            ("mcp_server::handlers::consolidation::transfer::run_two_stage_transfer", 23),
-            ("mcp_server::handlers::consolidation::wiki_maintenance::run_wiki_maintenance", 24),
-            ("mcp_server::infrastructure::embedding_engine::EmbeddingEngine", 25),
-            ("mcp_server::infrastructure::embedding_engine::get_embedding_engine", 25),
-            ("mcp_server::infrastructure::memory_config::get_memory_settings", 29),
+            (
+                "mcp_server::handlers::consolidation::cascade::run_cascade_advancement",
+                14,
+            ),
+            (
+                "mcp_server::handlers::consolidation::cls::run_cls_cycle",
+                15,
+            ),
+            (
+                "mcp_server::handlers::consolidation::compression::run_compression_cycle",
+                16,
+            ),
+            (
+                "mcp_server::handlers::consolidation::decay::run_decay_cycle",
+                17,
+            ),
+            (
+                "mcp_server::handlers::consolidation::homeostatic::run_homeostatic_cycle",
+                18,
+            ),
+            (
+                "mcp_server::handlers::consolidation::memify::run_memify_cycle",
+                19,
+            ),
+            (
+                "mcp_server::handlers::consolidation::plasticity::run_plasticity_cycle",
+                20,
+            ),
+            (
+                "mcp_server::handlers::consolidation::pruning::run_pruning_cycle",
+                21,
+            ),
+            (
+                "mcp_server::handlers::consolidation::sleep::run_deep_sleep",
+                22,
+            ),
+            (
+                "mcp_server::handlers::consolidation::transfer::run_two_stage_transfer",
+                23,
+            ),
+            (
+                "mcp_server::handlers::consolidation::wiki_maintenance::run_wiki_maintenance",
+                24,
+            ),
+            (
+                "mcp_server::infrastructure::embedding_engine::EmbeddingEngine",
+                25,
+            ),
+            (
+                "mcp_server::infrastructure::embedding_engine::get_embedding_engine",
+                25,
+            ),
+            (
+                "mcp_server::infrastructure::memory_config::get_memory_settings",
+                29,
+            ),
             ("mcp_server::infrastructure::memory_store::MemoryStore", 30),
             ("mcp_server::handlers::_tool_meta::IDEMPOTENT_WRITE", 31),
         ],
@@ -2050,13 +2270,13 @@ fn fixture_get_methodology_graph_py() -> Fixture {
         imports: &[
             ("__future__::annotations", 3),
             ("mcp_server::core::graph_builder::build_graph", 5),
-            ("mcp_server::infrastructure::profile_store::load_profiles", 6),
+            (
+                "mcp_server::infrastructure::profile_store::load_profiles",
+                6,
+            ),
             ("mcp_server::handlers::_tool_meta::READ_ONLY", 7),
         ],
-        constants: &[
-            ("_MAX_NODES", 41),
-            ("_MAX_EDGES", 42),
-        ],
+        constants: &[("_MAX_NODES", 41), ("_MAX_EDGES", 42)],
         functions: &[("handler", 45, 13)],
         classes: &[],
         resolved_calls: &[],
@@ -2082,9 +2302,18 @@ fn fixture_http_standalone_graph_py() -> Fixture {
             ("threading", 30),
             ("time", 31),
             ("traceback", 32),
-            ("mcp_server::server::http_standalone_state::CONVERSATIONS_CACHE_TTL", 34),
-            ("mcp_server::server::http_standalone_state::get_cached_conversations_state", 34),
-            ("mcp_server::server::http_standalone_state::set_cached_conversations_state", 34),
+            (
+                "mcp_server::server::http_standalone_state::CONVERSATIONS_CACHE_TTL",
+                34,
+            ),
+            (
+                "mcp_server::server::http_standalone_state::get_cached_conversations_state",
+                34,
+            ),
+            (
+                "mcp_server::server::http_standalone_state::set_cached_conversations_state",
+                34,
+            ),
         ],
         constants: &[("PHASES", 78)],
         functions: &[
@@ -2146,23 +2375,71 @@ fn fixture_http_standalone_py() -> Fixture {
             ("pathlib::Path", 28),
             ("socketserver::ThreadingMixIn", 29),
             ("mcp_server::server::http_common::_apply_cors_headers", 31),
-            ("mcp_server::server::http_security::enforce_same_origin_write", 32),
-            ("mcp_server::server::http_security::validate_host_header", 32),
-            ("mcp_server::server::http_standalone_endpoints::serve_discussion_detail", 36),
-            ("mcp_server::server::http_standalone_endpoints::serve_discussions", 36),
-            ("mcp_server::server::http_standalone_endpoints::serve_file_diff", 36),
-            ("mcp_server::server::http_standalone_endpoints::serve_graph", 36),
-            ("mcp_server::server::http_standalone_endpoints::serve_sankey", 36),
-            ("mcp_server::server::http_standalone_endpoints::serve_static", 36),
-            ("mcp_server::server::http_standalone_state::IDLE_TIMEOUT", 44),
-            ("mcp_server::server::http_standalone_state::seconds_since_last_request", 44),
+            (
+                "mcp_server::server::http_security::enforce_same_origin_write",
+                32,
+            ),
+            (
+                "mcp_server::server::http_security::validate_host_header",
+                32,
+            ),
+            (
+                "mcp_server::server::http_standalone_endpoints::serve_discussion_detail",
+                36,
+            ),
+            (
+                "mcp_server::server::http_standalone_endpoints::serve_discussions",
+                36,
+            ),
+            (
+                "mcp_server::server::http_standalone_endpoints::serve_file_diff",
+                36,
+            ),
+            (
+                "mcp_server::server::http_standalone_endpoints::serve_graph",
+                36,
+            ),
+            (
+                "mcp_server::server::http_standalone_endpoints::serve_sankey",
+                36,
+            ),
+            (
+                "mcp_server::server::http_standalone_endpoints::serve_static",
+                36,
+            ),
+            (
+                "mcp_server::server::http_standalone_state::IDLE_TIMEOUT",
+                44,
+            ),
+            (
+                "mcp_server::server::http_standalone_state::seconds_since_last_request",
+                44,
+            ),
             ("mcp_server::server::http_standalone_state::touch", 44),
-            ("mcp_server::server::http_standalone_wiki::serve_wiki_db", 49),
-            ("mcp_server::server::http_standalone_wiki::serve_wiki_export", 49),
-            ("mcp_server::server::http_standalone_wiki::serve_wiki_list", 49),
-            ("mcp_server::server::http_standalone_wiki::serve_wiki_page", 49),
-            ("mcp_server::server::http_standalone_wiki::serve_wiki_projects", 49),
-            ("mcp_server::server::http_standalone_wiki::serve_wiki_save", 49),
+            (
+                "mcp_server::server::http_standalone_wiki::serve_wiki_db",
+                49,
+            ),
+            (
+                "mcp_server::server::http_standalone_wiki::serve_wiki_export",
+                49,
+            ),
+            (
+                "mcp_server::server::http_standalone_wiki::serve_wiki_list",
+                49,
+            ),
+            (
+                "mcp_server::server::http_standalone_wiki::serve_wiki_page",
+                49,
+            ),
+            (
+                "mcp_server::server::http_standalone_wiki::serve_wiki_projects",
+                49,
+            ),
+            (
+                "mcp_server::server::http_standalone_wiki::serve_wiki_save",
+                49,
+            ),
         ],
         constants: &[("_WIKI_DB_OPS", 108)],
         functions: &[
@@ -2180,7 +2457,7 @@ fn fixture_http_standalone_py() -> Fixture {
             name: "_ThreadedHTTPServer",
             line: 59,
             bases: &["ThreadingMixIn", "HTTPServer"], // dropped (BUG #9)
-            methods: &[], // empty class body
+            methods: &[],                             // empty class body
         }],
         resolved_calls: &[
             ("_build_unified_handler", "_route_unified_get"),
@@ -2285,11 +2562,7 @@ fn fixture_visualize_bootstrap_py() -> Fixture {
             ("sys", 31),
             ("pathlib::Path", 32),
         ],
-        constants: &[
-            ("PORT", 34),
-            ("_SYNC_SUBTREES", 90),
-            ("_SYNC_FILES", 101),
-        ],
+        constants: &[("PORT", 34), ("_SYNC_SUBTREES", 90), ("_SYNC_FILES", 101)],
         functions: &[
             ("_is_cortex_root", 37, 3),
             ("_find_dev_source", 45, 6),
@@ -2329,10 +2602,7 @@ fn fixture_session_lifecycle_py() -> Fixture {
             ("datetime::timezone", 38),
             ("typing::Any", 39),
         ],
-        constants: &[
-            ("_LOG_PREFIX", 66),
-            ("MAX_SESSION_LOG_ENTRIES", 69),
-        ],
+        constants: &[("_LOG_PREFIX", 66), ("MAX_SESSION_LOG_ENTRIES", 69)],
         functions: &[
             ("_log", 72, 1),
             ("_resolve_domain", 77, 8),
@@ -2506,11 +2776,7 @@ fn fixture_compaction_checkpoint_py() -> Fixture {
             ("typing::Any", 36),
         ],
         constants: &[("_LOG_PREFIX", 38)],
-        functions: &[
-            ("_log", 41, 1),
-            ("process_event", 46, 15),
-            ("main", 94, 7),
-        ],
+        functions: &[("_log", 41, 1), ("process_event", 46, 15), ("main", 94, 7)],
         classes: &[],
         resolved_calls: &[
             ("main", "_log"),
@@ -2532,62 +2798,103 @@ fn fixture_test_sparse_dictionary_py() -> Fixture {
         rel_path: "tests_py/core/test_sparse_dictionary.py",
         file_prefix: "tests_py/core/test_sparse_dictionary.py",
         imports: &[
-            ("mcp_server::core::sparse_dictionary::build_seed_dictionary", 3),
+            (
+                "mcp_server::core::sparse_dictionary::build_seed_dictionary",
+                3,
+            ),
             ("mcp_server::core::sparse_dictionary::learn_dictionary", 3),
             ("mcp_server::core::sparse_dictionary::encode_session", 3),
             ("mcp_server::core::sparse_dictionary::label_feature", 3),
-            ("mcp_server::core::sparse_dictionary_activation::SIGNAL_NAMES", 9),
+            (
+                "mcp_server::core::sparse_dictionary_activation::SIGNAL_NAMES",
+                9,
+            ),
             ("mcp_server::core::sparse_dictionary_activation::D", 9),
-            ("mcp_server::core::sparse_dictionary_activation::extract_session_activation", 9),
+            (
+                "mcp_server::core::sparse_dictionary_activation::extract_session_activation",
+                9,
+            ),
             ("mcp_server::core::sparse_dictionary_learning::omp", 14),
             ("mcp_server::shared::linear_algebra::norm", 15),
             ("mcp_server::shared::linear_algebra::normalize", 15),
         ],
         constants: &[],
-        functions: &[
-            ("_make_conv", 18, 1),
-            ("_make_conversations", 33, 2),
-        ],
+        functions: &[("_make_conv", 18, 1), ("_make_conversations", 33, 2)],
         classes: &[
-            ExpectedClassInput { name: "TestSignalNames", line: 37, bases: &[], methods: &[
-                ("test_has_27_dimensions", 38, 1),
-                ("test_no_duplicates", 42, 3),
-            ]},
-            ExpectedClassInput { name: "TestExtractSessionActivation", line: 46, bases: &[], methods: &[
-                ("test_returns_27d_vector", 47, 3),
-                ("test_all_values_finite", 51, 3),
-                ("test_tool_ratios_sum_to_1", 57, 4),
-                ("test_handles_empty_conversation", 64, 2),
-                ("test_burst_indicator_for_short_sessions", 68, 2),
-                ("test_exploration_indicator_for_high_turns", 72, 2),
-            ]},
-            ExpectedClassInput { name: "TestBuildSeedDictionary", line: 77, bases: &[], methods: &[
-                ("test_valid_structure", 78, 2),
-                ("test_all_atoms_unit_vectors", 86, 3),
-                ("test_features_have_labels_and_descriptions", 92, 4),
-            ]},
-            ExpectedClassInput { name: "TestOmp", line: 100, bases: &[], methods: &[
-                ("test_returns_empty_for_zero_signal", 101, 4),
-                ("test_finds_correct_single_atom", 106, 6),
-                ("test_respects_sparsity_constraint", 113, 6),
-                ("test_reconstructs_signal_with_low_error", 123, 4),
-            ]},
-            ExpectedClassInput { name: "TestLearnDictionary", line: 130, bases: &[], methods: &[
-                ("test_returns_seed_for_few_sessions", 131, 2),
-                ("test_returns_seed_for_null", 137, 1),
-                ("test_learns_for_10_plus_sessions", 141, 2),
-                ("test_all_learned_atoms_unit_vectors", 155, 4),
-                ("test_features_have_auto_generated_labels", 162, 4),
-            ]},
-            ExpectedClassInput { name: "TestEncodeSession", line: 170, bases: &[], methods: &[
-                ("test_returns_sparse_activation", 171, 5),
-                ("test_respects_sparsity", 178, 4),
-                ("test_weights_are_nonzero", 183, 5),
-            ]},
-            ExpectedClassInput { name: "TestLabelFeature", line: 197, bases: &[], methods: &[
-                ("test_generates_meaningful_label", 198, 4),
-                ("test_handles_zero_direction", 206, 1),
-            ]},
+            ExpectedClassInput {
+                name: "TestSignalNames",
+                line: 37,
+                bases: &[],
+                methods: &[
+                    ("test_has_27_dimensions", 38, 1),
+                    ("test_no_duplicates", 42, 3),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestExtractSessionActivation",
+                line: 46,
+                bases: &[],
+                methods: &[
+                    ("test_returns_27d_vector", 47, 3),
+                    ("test_all_values_finite", 51, 3),
+                    ("test_tool_ratios_sum_to_1", 57, 4),
+                    ("test_handles_empty_conversation", 64, 2),
+                    ("test_burst_indicator_for_short_sessions", 68, 2),
+                    ("test_exploration_indicator_for_high_turns", 72, 2),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestBuildSeedDictionary",
+                line: 77,
+                bases: &[],
+                methods: &[
+                    ("test_valid_structure", 78, 2),
+                    ("test_all_atoms_unit_vectors", 86, 3),
+                    ("test_features_have_labels_and_descriptions", 92, 4),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestOmp",
+                line: 100,
+                bases: &[],
+                methods: &[
+                    ("test_returns_empty_for_zero_signal", 101, 4),
+                    ("test_finds_correct_single_atom", 106, 6),
+                    ("test_respects_sparsity_constraint", 113, 6),
+                    ("test_reconstructs_signal_with_low_error", 123, 4),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestLearnDictionary",
+                line: 130,
+                bases: &[],
+                methods: &[
+                    ("test_returns_seed_for_few_sessions", 131, 2),
+                    ("test_returns_seed_for_null", 137, 1),
+                    ("test_learns_for_10_plus_sessions", 141, 2),
+                    ("test_all_learned_atoms_unit_vectors", 155, 4),
+                    ("test_features_have_auto_generated_labels", 162, 4),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestEncodeSession",
+                line: 170,
+                bases: &[],
+                methods: &[
+                    ("test_returns_sparse_activation", 171, 5),
+                    ("test_respects_sparsity", 178, 4),
+                    ("test_weights_are_nonzero", 183, 5),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestLabelFeature",
+                line: 197,
+                bases: &[],
+                methods: &[
+                    ("test_generates_meaningful_label", 198, 4),
+                    ("test_handles_zero_direction", 206, 1),
+                ],
+            },
         ],
         resolved_calls: &[("_make_conversations", "_make_conv")],
     });
@@ -2595,17 +2902,61 @@ fn fixture_test_sparse_dictionary_py() -> Fixture {
     // Each (class, method, callee) tuple becomes one deduped Calls edge.
     let method_to_fn: &[(&str, &str, &str)] = &[
         ("TestEncodeSession", "test_respects_sparsity", "_make_conv"),
-        ("TestEncodeSession", "test_returns_sparse_activation", "_make_conv"),
-        ("TestEncodeSession", "test_weights_are_nonzero", "_make_conv"),
-        ("TestExtractSessionActivation", "test_all_values_finite", "_make_conv"),
-        ("TestExtractSessionActivation", "test_burst_indicator_for_short_sessions", "_make_conv"),
-        ("TestExtractSessionActivation", "test_exploration_indicator_for_high_turns", "_make_conv"),
-        ("TestExtractSessionActivation", "test_returns_27d_vector", "_make_conv"),
-        ("TestExtractSessionActivation", "test_tool_ratios_sum_to_1", "_make_conv"),
-        ("TestLearnDictionary", "test_all_learned_atoms_unit_vectors", "_make_conversations"),
-        ("TestLearnDictionary", "test_features_have_auto_generated_labels", "_make_conversations"),
-        ("TestLearnDictionary", "test_learns_for_10_plus_sessions", "_make_conversations"),
-        ("TestLearnDictionary", "test_returns_seed_for_few_sessions", "_make_conversations"),
+        (
+            "TestEncodeSession",
+            "test_returns_sparse_activation",
+            "_make_conv",
+        ),
+        (
+            "TestEncodeSession",
+            "test_weights_are_nonzero",
+            "_make_conv",
+        ),
+        (
+            "TestExtractSessionActivation",
+            "test_all_values_finite",
+            "_make_conv",
+        ),
+        (
+            "TestExtractSessionActivation",
+            "test_burst_indicator_for_short_sessions",
+            "_make_conv",
+        ),
+        (
+            "TestExtractSessionActivation",
+            "test_exploration_indicator_for_high_turns",
+            "_make_conv",
+        ),
+        (
+            "TestExtractSessionActivation",
+            "test_returns_27d_vector",
+            "_make_conv",
+        ),
+        (
+            "TestExtractSessionActivation",
+            "test_tool_ratios_sum_to_1",
+            "_make_conv",
+        ),
+        (
+            "TestLearnDictionary",
+            "test_all_learned_atoms_unit_vectors",
+            "_make_conversations",
+        ),
+        (
+            "TestLearnDictionary",
+            "test_features_have_auto_generated_labels",
+            "_make_conversations",
+        ),
+        (
+            "TestLearnDictionary",
+            "test_learns_for_10_plus_sessions",
+            "_make_conversations",
+        ),
+        (
+            "TestLearnDictionary",
+            "test_returns_seed_for_few_sessions",
+            "_make_conversations",
+        ),
     ];
     let prefix = "tests_py/core/test_sparse_dictionary.py";
     for (i, (cls, m, fn_)) in method_to_fn.iter().enumerate() {
@@ -2633,31 +2984,55 @@ fn fixture_test_text_py() -> Fixture {
         constants: &[],
         functions: &[],
         classes: &[
-            ExpectedClassInput { name: "TestExtractKeywords", line: 11, bases: &[], methods: &[
-                ("test_returns_empty_set_for_empty_string", 12, 3),
-                ("test_returns_empty_set_for_none", 17, 2),
-                ("test_handles_unicode_text_without_crashing", 20, 2),
-                ("test_extracts_technical_abbreviations", 24, 1),
-                ("test_handles_mixed_case_by_lowercasing", 29, 1),
-                ("test_passes_words_longer_than_6_characters", 35, 1),
-                ("test_filters_out_short_non_technical_words", 41, 2),
-                ("test_handles_long_text", 45, 1),
-                ("test_deduplicates_keywords", 53, 2),
-            ]},
-            ExpectedClassInput { name: "TestExtractKeywordsArray", line: 60, bases: &[], methods: &[
-                ("test_returns_a_list", 61, 2),
-                ("test_returns_empty_list_for_empty_string", 65, 3),
-                ("test_contains_same_elements_as_extract_keywords", 70, 4),
-            ]},
-            ExpectedClassInput { name: "TestStopwordsFiltering", line: 79, bases: &[], methods: &[
-                ("test_excludes_common_stopwords_from_results", 80, 1),
-                ("test_stopwords_set_contains_common_english_words", 86, 0),
-            ]},
-            ExpectedClassInput { name: "TestTechnicalShortTerms", line: 94, bases: &[], methods: &[
-                ("test_includes_known_short_technical_terms", 95, 0),
-                ("test_extract_keywords_picks_up_technical_short_terms", 99, 1),
-                ("test_technical_short_terms_is_frozenset", 105, 2),
-            ]},
+            ExpectedClassInput {
+                name: "TestExtractKeywords",
+                line: 11,
+                bases: &[],
+                methods: &[
+                    ("test_returns_empty_set_for_empty_string", 12, 3),
+                    ("test_returns_empty_set_for_none", 17, 2),
+                    ("test_handles_unicode_text_without_crashing", 20, 2),
+                    ("test_extracts_technical_abbreviations", 24, 1),
+                    ("test_handles_mixed_case_by_lowercasing", 29, 1),
+                    ("test_passes_words_longer_than_6_characters", 35, 1),
+                    ("test_filters_out_short_non_technical_words", 41, 2),
+                    ("test_handles_long_text", 45, 1),
+                    ("test_deduplicates_keywords", 53, 2),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestExtractKeywordsArray",
+                line: 60,
+                bases: &[],
+                methods: &[
+                    ("test_returns_a_list", 61, 2),
+                    ("test_returns_empty_list_for_empty_string", 65, 3),
+                    ("test_contains_same_elements_as_extract_keywords", 70, 4),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestStopwordsFiltering",
+                line: 79,
+                bases: &[],
+                methods: &[
+                    ("test_excludes_common_stopwords_from_results", 80, 1),
+                    ("test_stopwords_set_contains_common_english_words", 86, 0),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestTechnicalShortTerms",
+                line: 94,
+                bases: &[],
+                methods: &[
+                    ("test_includes_known_short_technical_terms", 95, 0),
+                    (
+                        "test_extract_keywords_picks_up_technical_short_terms",
+                        99,
+                        1,
+                    ),
+                    ("test_technical_short_terms_is_frozenset", 105, 2),
+                ],
+            },
         ],
         resolved_calls: &[],
     })
@@ -2679,24 +3054,39 @@ fn fixture_test_recall_py() -> Fixture {
         constants: &[],
         functions: &[],
         classes: &[
-            ExpectedClassInput { name: "TestWRRFFuse", line: 10, bases: &[], methods: &[
-                ("test_single_signal", 11, 2),
-                ("test_multiple_signals_boost_overlap", 21, 1),
-                ("test_zero_weight_ignored", 34, 2),
-                ("test_empty_signals", 43, 1),
-            ]},
-            ExpectedClassInput { name: "TestRecallHandler", line: 48, bases: &[], methods: &[
-                ("test_no_query_returns_empty", 49, 2),
-                ("test_empty_query_returns_empty", 54, 2),
-                ("test_recall_stored_memory", 58, 4),
-                ("test_recall_response_shape", 85, 7),
-                ("test_domain_scoped_recall", 101, 6),
-                ("test_global_memory_visible_across_domains", 131, 6),
-            ]},
-            ExpectedClassInput { name: "TestRecallReturnsDict", line: 167, bases: &[], methods: &[
-                ("test_handler_direct_returns_dict", 170, 3),
-                ("test_safe_handler_returns_dict", 177, 4),
-            ]},
+            ExpectedClassInput {
+                name: "TestWRRFFuse",
+                line: 10,
+                bases: &[],
+                methods: &[
+                    ("test_single_signal", 11, 2),
+                    ("test_multiple_signals_boost_overlap", 21, 1),
+                    ("test_zero_weight_ignored", 34, 2),
+                    ("test_empty_signals", 43, 1),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestRecallHandler",
+                line: 48,
+                bases: &[],
+                methods: &[
+                    ("test_no_query_returns_empty", 49, 2),
+                    ("test_empty_query_returns_empty", 54, 2),
+                    ("test_recall_stored_memory", 58, 4),
+                    ("test_recall_response_shape", 85, 7),
+                    ("test_domain_scoped_recall", 101, 6),
+                    ("test_global_memory_visible_across_domains", 131, 6),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestRecallReturnsDict",
+                line: 167,
+                bases: &[],
+                methods: &[
+                    ("test_handler_direct_returns_dict", 170, 3),
+                    ("test_safe_handler_returns_dict", 177, 4),
+                ],
+            },
         ],
         resolved_calls: &[],
     })
@@ -2708,11 +3098,16 @@ fn fixture_test_brain_index_store_py() -> Fixture {
         category: "tests",
         rel_path: "tests_py/infrastructure/test_brain_index_store.py",
         file_prefix: "tests_py/infrastructure/test_brain_index_store.py",
-        imports: &[("mcp_server::infrastructure::brain_index_store::load_brain_index", 3)],
+        imports: &[(
+            "mcp_server::infrastructure::brain_index_store::load_brain_index",
+            3,
+        )],
         constants: &[],
         functions: &[],
         classes: &[ExpectedClassInput {
-            name: "TestLoadBrainIndex", line: 6, bases: &[],
+            name: "TestLoadBrainIndex",
+            line: 6,
+            bases: &[],
             methods: &[("test_returns_valid_structure", 7, 5)],
         }],
         resolved_calls: &[],
@@ -2739,50 +3134,70 @@ fn fixture_test_http_server_py() -> Fixture {
         constants: &[],
         functions: &[("_reset_module_state", 15, 1)],
         classes: &[
-            ExpectedClassInput { name: "TestResetIdleTimer", line: 23, bases: &[], methods: &[
-                ("setup_method", 24, 1),
-                ("teardown_method", 27, 1),
-                ("test_creates_daemon_timer", 30, 3),
-                ("test_cancels_previous_timer", 38, 5),
-                ("test_timer_duration_is_600", 48, 4),
-                ("test_shutdown_callback_clears_active_server", 56, 7),
-                ("test_shutdown_callback_noop_if_no_server", 75, 5),
-                ("test_shutdown_callback_prints_message", 91, 8),
-            ]},
-            ExpectedClassInput { name: "TestStartUiServer", line: 107, bases: &[], methods: &[
-                ("setup_method", 108, 1),
-                ("teardown_method", 111, 1),
-                ("test_reuses_existing_server", 114, 4),
-                ("test_reads_html_from_custom_path", 131, 11),
-                ("test_raises_on_missing_html_file", 162, 2),
-                ("test_starts_server_on_port_3456_first", 169, 8),
-                ("test_falls_back_to_port_0_on_oserror", 190, 9),
-                ("test_raises_if_both_ports_fail", 211, 5),
-                ("test_server_thread_is_daemon", 224, 11),
-                ("test_sets_active_server_state", 245, 9),
-                ("test_prints_startup_message", 265, 10),
-            ]},
-            ExpectedClassInput { name: "TestShutdownServer", line: 283, bases: &[], methods: &[
-                ("setup_method", 284, 1),
-                ("teardown_method", 287, 1),
-                ("test_shutdown_active_server", 290, 3),
-                ("test_shutdown_cancels_timer", 297, 4),
-                ("test_shutdown_noop_when_no_server", 305, 1),
-                ("test_shutdown_cancels_timer_even_without_server", 312, 3),
-            ]},
-            ExpectedClassInput { name: "TestHandlerBehavior", line: 321, bases: &[], methods: &[
-                ("setup_method", 324, 1),
-                ("teardown_method", 327, 1),
-                ("_create_handler_class", 330, 8),
-                ("_make_handler", 357, 5),
-                ("test_get_root_returns_html", 373, 6),
-                ("test_get_graph_returns_json", 388, 7),
-                ("test_get_sets_no_cache", 402, 4),
-                ("test_do_options_returns_204", 412, 4),
-                ("test_log_message_suppressed", 423, 3),
-                ("test_send_header_cors_is_noop", 429, 3),
-                ("test_get_resets_idle_timer", 435, 5),
-            ]},
+            ExpectedClassInput {
+                name: "TestResetIdleTimer",
+                line: 23,
+                bases: &[],
+                methods: &[
+                    ("setup_method", 24, 1),
+                    ("teardown_method", 27, 1),
+                    ("test_creates_daemon_timer", 30, 3),
+                    ("test_cancels_previous_timer", 38, 5),
+                    ("test_timer_duration_is_600", 48, 4),
+                    ("test_shutdown_callback_clears_active_server", 56, 7),
+                    ("test_shutdown_callback_noop_if_no_server", 75, 5),
+                    ("test_shutdown_callback_prints_message", 91, 8),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestStartUiServer",
+                line: 107,
+                bases: &[],
+                methods: &[
+                    ("setup_method", 108, 1),
+                    ("teardown_method", 111, 1),
+                    ("test_reuses_existing_server", 114, 4),
+                    ("test_reads_html_from_custom_path", 131, 11),
+                    ("test_raises_on_missing_html_file", 162, 2),
+                    ("test_starts_server_on_port_3456_first", 169, 8),
+                    ("test_falls_back_to_port_0_on_oserror", 190, 9),
+                    ("test_raises_if_both_ports_fail", 211, 5),
+                    ("test_server_thread_is_daemon", 224, 11),
+                    ("test_sets_active_server_state", 245, 9),
+                    ("test_prints_startup_message", 265, 10),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestShutdownServer",
+                line: 283,
+                bases: &[],
+                methods: &[
+                    ("setup_method", 284, 1),
+                    ("teardown_method", 287, 1),
+                    ("test_shutdown_active_server", 290, 3),
+                    ("test_shutdown_cancels_timer", 297, 4),
+                    ("test_shutdown_noop_when_no_server", 305, 1),
+                    ("test_shutdown_cancels_timer_even_without_server", 312, 3),
+                ],
+            },
+            ExpectedClassInput {
+                name: "TestHandlerBehavior",
+                line: 321,
+                bases: &[],
+                methods: &[
+                    ("setup_method", 324, 1),
+                    ("teardown_method", 327, 1),
+                    ("_create_handler_class", 330, 8),
+                    ("_make_handler", 357, 5),
+                    ("test_get_root_returns_html", 373, 6),
+                    ("test_get_graph_returns_json", 388, 7),
+                    ("test_get_sets_no_cache", 402, 4),
+                    ("test_do_options_returns_204", 412, 4),
+                    ("test_log_message_suppressed", 423, 3),
+                    ("test_send_header_cors_is_noop", 429, 3),
+                    ("test_get_resets_idle_timer", 435, 5),
+                ],
+            },
         ],
         resolved_calls: &[],
     });
@@ -2791,13 +3206,29 @@ fn fixture_test_http_server_py() -> Fixture {
     // so 8 distinct method→fn pairs = 8 Calls edges.
     let method_to_fn: &[(&str, &str, &str)] = &[
         ("TestHandlerBehavior", "setup_method", "_reset_module_state"),
-        ("TestHandlerBehavior", "teardown_method", "_reset_module_state"),
+        (
+            "TestHandlerBehavior",
+            "teardown_method",
+            "_reset_module_state",
+        ),
         ("TestResetIdleTimer", "setup_method", "_reset_module_state"),
-        ("TestResetIdleTimer", "teardown_method", "_reset_module_state"),
+        (
+            "TestResetIdleTimer",
+            "teardown_method",
+            "_reset_module_state",
+        ),
         ("TestShutdownServer", "setup_method", "_reset_module_state"),
-        ("TestShutdownServer", "teardown_method", "_reset_module_state"),
+        (
+            "TestShutdownServer",
+            "teardown_method",
+            "_reset_module_state",
+        ),
         ("TestStartUiServer", "setup_method", "_reset_module_state"),
-        ("TestStartUiServer", "teardown_method", "_reset_module_state"),
+        (
+            "TestStartUiServer",
+            "teardown_method",
+            "_reset_module_state",
+        ),
     ];
     let prefix = "tests_py/server/test_http_server.py";
     for (i, (cls, m, fn_)) in method_to_fn.iter().enumerate() {
@@ -2827,15 +3258,21 @@ fn fixture_intra_inheritance_py() -> Fixture {
         functions: &[],
         classes: &[
             ExpectedClassInput {
-                name: "Animal", line: 12, bases: &[],
+                name: "Animal",
+                line: 12,
+                bases: &[],
                 methods: &[("speak", 13, 0)],
             },
             ExpectedClassInput {
-                name: "Dog", line: 17, bases: &["Animal"],
+                name: "Dog",
+                line: 17,
+                bases: &["Animal"],
                 methods: &[("speak", 18, 0)],
             },
             ExpectedClassInput {
-                name: "Puppy", line: 22, bases: &["Dog"],
+                name: "Puppy",
+                line: 22,
+                bases: &["Dog"],
                 methods: &[("speak", 23, 0)],
             },
         ],
@@ -2921,14 +3358,11 @@ fn run_fixture(test_id: &str, fixture: Fixture, floors: Floors) {
     }
 
     let f1_defines = edge_scores.get("Defines").map(|s| s.f1()).unwrap_or(0.0);
-    let f1_calls = edge_scores
-        .get("Calls")
-        .map(|s| s.f1())
-        .unwrap_or_else(|| {
-            // No expectations for Calls (e.g. files with only builtins) means
-            // the gate is vacuously satisfied at 1.0. Don't penalize.
-            1.0
-        });
+    let f1_calls = edge_scores.get("Calls").map(|s| s.f1()).unwrap_or_else(|| {
+        // No expectations for Calls (e.g. files with only builtins) means
+        // the gate is vacuously satisfied at 1.0. Don't penalize.
+        1.0
+    });
     let f1_nodes = node_score.f1();
 
     println!(
@@ -2973,7 +3407,11 @@ fn pure_shared_text_py() {
     run_fixture(
         "text_py",
         fixture_text_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -2984,7 +3422,11 @@ fn pure_shared_similarity_py() {
         fixture_similarity_py(),
         // Calls floor stays at 1.0 vacuously (similarity.py has no resolvable
         // intra-file calls — len is a builtin).
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -2993,7 +3435,11 @@ fn pure_shared_hash_py() {
     run_fixture(
         "hash_py",
         fixture_hash_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3002,7 +3448,11 @@ fn pure_shared_linear_algebra_py() {
     run_fixture(
         "linear_algebra_py",
         fixture_linear_algebra_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3011,7 +3461,11 @@ fn pure_shared_yaml_parser_py() {
     run_fixture(
         "yaml_parser_py",
         fixture_yaml_parser_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3020,7 +3474,11 @@ fn pure_core_persona_vector_py() {
     run_fixture(
         "persona_vector_py",
         fixture_persona_vector_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3029,7 +3487,11 @@ fn pure_core_profile_builder_py() {
     run_fixture(
         "profile_builder_py",
         fixture_profile_builder_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3038,7 +3500,11 @@ fn pure_core_style_classifier_py() {
     run_fixture(
         "style_classifier_py",
         fixture_style_classifier_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3047,7 +3513,11 @@ fn pure_core_sparse_dictionary_py() {
     run_fixture(
         "sparse_dictionary_py",
         fixture_sparse_dictionary_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3056,7 +3526,11 @@ fn pure_core_cognitive_map_py() {
     run_fixture(
         "cognitive_map_py",
         fixture_cognitive_map_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3065,7 +3539,11 @@ fn core_with_deps_hierarchical_predictive_coding_py() {
     run_fixture(
         "hpc_py",
         fixture_hierarchical_predictive_coding_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3074,7 +3552,11 @@ fn core_with_deps_dual_store_cls_py() {
     run_fixture(
         "dual_store_cls_py",
         fixture_dual_store_cls_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3083,7 +3565,11 @@ fn core_with_deps_causal_graph_py() {
     run_fixture(
         "causal_graph_py",
         fixture_causal_graph_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3092,7 +3578,11 @@ fn core_with_deps_consolidation_engine_py() {
     run_fixture(
         "consolidation_engine_py",
         fixture_consolidation_engine_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3101,7 +3591,11 @@ fn core_with_deps_replay_py() {
     run_fixture(
         "replay_py",
         fixture_replay_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3110,7 +3604,11 @@ fn infrastructure_file_io_py() {
     run_fixture(
         "file_io_py",
         fixture_file_io_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3119,7 +3617,11 @@ fn infrastructure_scanner_py() {
     run_fixture(
         "scanner_py",
         fixture_scanner_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3128,7 +3630,11 @@ fn infrastructure_embedding_engine_py() {
     run_fixture(
         "embedding_engine_py",
         fixture_embedding_engine_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3137,7 +3643,11 @@ fn infrastructure_mcp_client_py() {
     run_fixture(
         "mcp_client_py",
         fixture_mcp_client_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3146,7 +3656,11 @@ fn infrastructure_pg_store_py() {
     run_fixture(
         "pg_store_py",
         fixture_pg_store_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3155,7 +3669,11 @@ fn handlers_explore_features_py() {
     run_fixture(
         "explore_features_py",
         fixture_explore_features_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3164,7 +3682,11 @@ fn handlers_recall_py() {
     run_fixture(
         "recall_handler_py",
         fixture_recall_handler_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3173,7 +3695,11 @@ fn handlers_remember_py() {
     run_fixture(
         "remember_handler_py",
         fixture_remember_handler_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3182,7 +3708,11 @@ fn handlers_consolidate_py() {
     run_fixture(
         "consolidate_handler_py",
         fixture_consolidate_handler_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3191,7 +3721,11 @@ fn handlers_get_methodology_graph_py() {
     run_fixture(
         "get_methodology_graph_py",
         fixture_get_methodology_graph_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3200,7 +3734,11 @@ fn server_transport_http_standalone_graph_py() {
     run_fixture(
         "http_standalone_graph_py",
         fixture_http_standalone_graph_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3209,7 +3747,11 @@ fn server_transport_http_standalone_py() {
     run_fixture(
         "http_standalone_py",
         fixture_http_standalone_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3218,7 +3760,11 @@ fn server_transport_http_launcher_py() {
     run_fixture(
         "http_launcher_py",
         fixture_http_launcher_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3227,7 +3773,11 @@ fn server_transport_http_dashboard_data_py() {
     run_fixture(
         "http_dashboard_data_py",
         fixture_http_dashboard_data_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3236,29 +3786,137 @@ fn server_transport_visualize_bootstrap_py() {
     run_fixture(
         "visualize_bootstrap_py",
         fixture_visualize_bootstrap_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
 // hooks (4 — note: hooks category has only 4 modules in Cortex)
-#[test] fn hooks_session_lifecycle_py() { run_fixture("session_lifecycle_py", fixture_session_lifecycle_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
-#[test] fn hooks_session_start_py() { run_fixture("session_start_py", fixture_session_start_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
-#[test] fn hooks_post_tool_capture_py() { run_fixture("post_tool_capture_py", fixture_post_tool_capture_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
-#[test] fn hooks_compaction_checkpoint_py() { run_fixture("compaction_checkpoint_py", fixture_compaction_checkpoint_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test]
+fn hooks_session_lifecycle_py() {
+    run_fixture(
+        "session_lifecycle_py",
+        fixture_session_lifecycle_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
+#[test]
+fn hooks_session_start_py() {
+    run_fixture(
+        "session_start_py",
+        fixture_session_start_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
+#[test]
+fn hooks_post_tool_capture_py() {
+    run_fixture(
+        "post_tool_capture_py",
+        fixture_post_tool_capture_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
+#[test]
+fn hooks_compaction_checkpoint_py() {
+    run_fixture(
+        "compaction_checkpoint_py",
+        fixture_compaction_checkpoint_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
 
 // tests (5)
-#[test] fn tests_sparse_dictionary_py() { run_fixture("ts_sparse_dictionary_py", fixture_test_sparse_dictionary_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
-#[test] fn tests_text_py() { run_fixture("ts_text_py", fixture_test_text_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
-#[test] fn tests_recall_py() { run_fixture("ts_recall_py", fixture_test_recall_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
-#[test] fn tests_brain_index_store_py() { run_fixture("ts_brain_index_store_py", fixture_test_brain_index_store_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
-#[test] fn tests_http_server_py() { run_fixture("ts_http_server_py", fixture_test_http_server_py(), Floors { nodes: 1.0, defines: 1.0, calls: 1.0 }); }
+#[test]
+fn tests_sparse_dictionary_py() {
+    run_fixture(
+        "ts_sparse_dictionary_py",
+        fixture_test_sparse_dictionary_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
+#[test]
+fn tests_text_py() {
+    run_fixture(
+        "ts_text_py",
+        fixture_test_text_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
+#[test]
+fn tests_recall_py() {
+    run_fixture(
+        "ts_recall_py",
+        fixture_test_recall_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
+#[test]
+fn tests_brain_index_store_py() {
+    run_fixture(
+        "ts_brain_index_store_py",
+        fixture_test_brain_index_store_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
+#[test]
+fn tests_http_server_py() {
+    run_fixture(
+        "ts_http_server_py",
+        fixture_test_http_server_py(),
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
+    );
+}
 
 // synthetic — purpose-built fixtures for specific bug scenarios
-#[test] fn synthetic_intra_inheritance_py() {
+#[test]
+fn synthetic_intra_inheritance_py() {
     run_fixture(
         "intra_inheritance_py",
         fixture_intra_inheritance_py(),
-        Floors { nodes: 1.0, defines: 1.0, calls: 1.0 },
+        Floors {
+            nodes: 1.0,
+            defines: 1.0,
+            calls: 1.0,
+        },
     );
 }
 
@@ -3275,10 +3933,8 @@ fn synthetic_multi_file_imports() {
     let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/graph_accuracy/synthetic/multi_file");
     let tmp = fixture_root_for("multi_file");
-    fs::copy(corpus.join("file_a.py"), tmp.join("file_a.py"))
-        .expect("copy file_a.py");
-    fs::copy(corpus.join("file_b.py"), tmp.join("file_b.py"))
-        .expect("copy file_b.py");
+    fs::copy(corpus.join("file_a.py"), tmp.join("file_a.py")).expect("copy file_a.py");
+    fs::copy(corpus.join("file_b.py"), tmp.join("file_b.py")).expect("copy file_b.py");
 
     let graph_path = tmp.join("graph.lbug");
     let observed = index_fixture(&tmp, &graph_path);
@@ -3329,9 +3985,7 @@ fn synthetic_multi_file_imports() {
         .unwrap_or_default();
     let cross_file_calls = calls
         .iter()
-        .filter(|(from, to)| {
-            from.contains("file_a") && to.contains("file_b")
-        })
+        .filter(|(from, to)| from.contains("file_a") && to.contains("file_b"))
         .count();
     println!("cross-file Calls edges    : {cross_file_calls}");
 

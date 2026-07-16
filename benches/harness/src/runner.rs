@@ -14,8 +14,7 @@
 use crate::corpora::{CorpusConfig, GroundTruthLabel};
 use crate::queries;
 use crate::scoring::{
-    self, score_adjusted_rand, score_exact_match, score_f1, score_precision_recall_mean,
-    ScoreType,
+    self, score_adjusted_rand, score_exact_match, score_f1, score_precision_recall_mean, ScoreType,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -112,16 +111,17 @@ pub fn run_corpus(corpus: &CorpusConfig, binary: &Path) -> CorpusRun {
             }
         };
         let start = Instant::now();
-        let score = match dispatch_label(&mut client, &graph_path, &spec.tool, spec.score_type, label) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!(
-                    "[bench] {}/{}: dispatch error: {}",
-                    corpus.name, label.query_id, e
-                );
-                0.0
-            }
-        };
+        let score =
+            match dispatch_label(&mut client, &graph_path, &spec.tool, spec.score_type, label) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!(
+                        "[bench] {}/{}: dispatch error: {}",
+                        corpus.name, label.query_id, e
+                    );
+                    0.0
+                }
+            };
         let dt = start.elapsed().as_millis();
         *sums.entry(label.query_id.clone()).or_insert(0.0) += score;
         *counts.entry(label.query_id.clone()).or_insert(0) += 1;
@@ -131,8 +131,7 @@ pub fn run_corpus(corpus: &CorpusConfig, binary: &Path) -> CorpusRun {
 
     for (q, total) in &sums {
         let n = counts.get(q).copied().unwrap_or(1).max(1);
-        run.per_query_scores
-            .insert(q.clone(), total / n as f64);
+        run.per_query_scores.insert(q.clone(), total / n as f64);
         run.per_query_samples.insert(q.clone(), n);
         if let Some(e) = elapsed.get(q) {
             run.per_query_elapsed_ms.insert(q.clone(), *e);
@@ -235,8 +234,8 @@ fn score_response(
 ///     require us to extract a separate module concept the graph doesn't
 ///     carry yet.
 fn score_exact_from_payload(tool: &str, payload: &Value, expected: &Value) -> Result<f64, String> {
-    let expected_str = expected_field_str(expected, &["qualified_name", "value", "exists"])
-        .unwrap_or_default();
+    let expected_str =
+        expected_field_str(expected, &["qualified_name", "value", "exists"]).unwrap_or_default();
     let actual_str = match tool {
         "search_codebase" => payload
             .get("results")
@@ -309,9 +308,7 @@ fn extract_actual_set(tool: &str, payload: &Value) -> Vec<String> {
                     .and_then(|v| v.as_array())
                 {
                     for item in arr {
-                        if let Some(qn) =
-                            item.get("qualified_name").and_then(|v| v.as_str())
-                        {
+                        if let Some(qn) = item.get("qualified_name").and_then(|v| v.as_str()) {
                             out.push(qn.to_string());
                         }
                     }
@@ -328,9 +325,7 @@ fn extract_actual_set(tool: &str, payload: &Value) -> Vec<String> {
                 for item in arr {
                     if let Some(qn) = item.as_str() {
                         out.push(qn.to_string());
-                    } else if let Some(qn) =
-                        item.get("qualified_name").and_then(|v| v.as_str())
-                    {
+                    } else if let Some(qn) = item.get("qualified_name").and_then(|v| v.as_str()) {
                         out.push(qn.to_string());
                     }
                 }
@@ -479,7 +474,9 @@ fn expected_string_array(expected: &Value) -> Result<Vec<String>, String> {
                 .collect());
         }
     }
-    Err(format!("expected has no recognized array field: {expected}"))
+    Err(format!(
+        "expected has no recognized array field: {expected}"
+    ))
 }
 
 /// MCP client that owns a child process + its stdio pipes + a request id.
@@ -617,8 +614,7 @@ mod tests {
             }
         });
         let expected = json!({ "truly_present": ["symbol_hallucination"] });
-        let score = score_prmean_from_payload(&payload_hallucinated, &expected)
-            .expect("score");
+        let score = score_prmean_from_payload(&payload_hallucinated, &expected).expect("score");
         assert!(
             score >= 0.8,
             "prd_02_hallucinated expected >=0.8, got {score}"
@@ -635,8 +631,7 @@ mod tests {
             }
         });
         let expected = json!({ "truly_present": ["community_consistency"] });
-        let score = score_prmean_from_payload(&payload_community, &expected)
-            .expect("score");
+        let score = score_prmean_from_payload(&payload_community, &expected).expect("score");
         assert!(
             score >= 0.8,
             "prd_03_community_violation expected >=0.8, got {score}"
@@ -648,8 +643,7 @@ mod tests {
             "report": { "findings": [] }
         });
         let expected = json!({ "truly_present": [] });
-        let score = score_prmean_from_payload(&payload_valid, &expected)
-            .expect("score");
+        let score = score_prmean_from_payload(&payload_valid, &expected).expect("score");
         assert!(
             (score - 1.0).abs() < 1e-9,
             "empty expected + empty actual should be 1.0, got {score}"
@@ -667,8 +661,7 @@ mod tests {
             }
         });
         let expected = json!({ "truly_present": ["symbol_hallucination"] });
-        let score = score_prmean_from_payload(&payload_mixed, &expected)
-            .expect("score");
+        let score = score_prmean_from_payload(&payload_mixed, &expected).expect("score");
         // Recall = 1.0, precision = 0.5 → mean = 0.75.
         assert!(
             (score - 0.75).abs() < 1e-6,
@@ -676,4 +669,3 @@ mod tests {
         );
     }
 }
-

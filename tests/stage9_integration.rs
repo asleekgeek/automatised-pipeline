@@ -57,7 +57,16 @@ fn b() {
 "#;
 
 fn tmp(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("stage9_{tag}_{}", std::process::id()))
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (tag is kept as a
+    // human-readable prefix for debuggability, not for uniqueness). Callers
+    // immediately `remove_dir_all` + `create_dir_all` this path, so handing
+    // back an already-`tempdir()`-created directory is harmless.
+    tempfile::Builder::new()
+        .prefix(&format!("stage9_{tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep()
 }
 
 fn build_graph(root: &std::path::Path, name: &str, main_src: &str) -> PathBuf {
@@ -107,7 +116,10 @@ fn test_semantic_diff_detects_removed_symbol() {
     // regression_score computed and in the valid range.
     assert!(outcome.regression_score >= 0.0);
     assert!(outcome.regression_score <= semantic_diff::REGRESSION_SCORE_CAP);
-    assert!(matches!(outcome.verdict, "clean" | "concerning" | "regression"));
+    assert!(matches!(
+        outcome.verdict,
+        "clean" | "concerning" | "regression"
+    ));
 
     let _ = fs::remove_dir_all(&root);
 }
@@ -163,7 +175,11 @@ fn test_semantic_diff_identical_graphs_clean() {
     assert_eq!(outcome.summary.dangling_references, 0);
     assert_eq!(outcome.summary.new_cycles, 0);
     // Identical fixtures → clean verdict.
-    assert_eq!(outcome.verdict, "clean", "score={}", outcome.regression_score);
+    assert_eq!(
+        outcome.verdict, "clean",
+        "score={}",
+        outcome.regression_score
+    );
 
     let _ = fs::remove_dir_all(&root);
 }
