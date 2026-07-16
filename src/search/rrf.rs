@@ -39,8 +39,12 @@ pub fn fuse(rankings: &[&[RankedEntry]], limit: usize) -> Vec<RrfResult> {
         }
     }
 
-    let mut results: Vec<RrfResult> = scores.into_iter()
-        .map(|(key, score)| RrfResult { key: key.to_string(), score })
+    let mut results: Vec<RrfResult> = scores
+        .into_iter()
+        .map(|(key, score)| RrfResult {
+            key: key.to_string(),
+            score,
+        })
         .collect();
     // Primary: descending RRF score. Secondary: ascending key — `scores` is a
     // HashMap whose iteration order is nondeterministic, so without a total
@@ -69,8 +73,14 @@ mod tests {
     #[test]
     fn test_rrf_single_list() {
         let list = vec![
-            RankedEntry { key: "a".into(), rank: 1 },
-            RankedEntry { key: "b".into(), rank: 2 },
+            RankedEntry {
+                key: "a".into(),
+                rank: 1,
+            },
+            RankedEntry {
+                key: "b".into(),
+                rank: 2,
+            },
         ];
         let results = fuse(&[&list], 10);
         assert_eq!(results.len(), 2);
@@ -87,12 +97,24 @@ mod tests {
         // Document "a" is rank 2 in list1 and rank 1 in list2.
         // Both should have equal RRF scores.
         let list1 = vec![
-            RankedEntry { key: "b".into(), rank: 1 },
-            RankedEntry { key: "a".into(), rank: 2 },
+            RankedEntry {
+                key: "b".into(),
+                rank: 1,
+            },
+            RankedEntry {
+                key: "a".into(),
+                rank: 2,
+            },
         ];
         let list2 = vec![
-            RankedEntry { key: "a".into(), rank: 1 },
-            RankedEntry { key: "b".into(), rank: 2 },
+            RankedEntry {
+                key: "a".into(),
+                rank: 1,
+            },
+            RankedEntry {
+                key: "b".into(),
+                rank: 2,
+            },
         ];
         let results = fuse(&[&list1, &list2], 10);
         assert_eq!(results.len(), 2);
@@ -104,12 +126,14 @@ mod tests {
 
     #[test]
     fn test_rrf_disjoint_lists() {
-        let list1 = vec![
-            RankedEntry { key: "a".into(), rank: 1 },
-        ];
-        let list2 = vec![
-            RankedEntry { key: "b".into(), rank: 1 },
-        ];
+        let list1 = vec![RankedEntry {
+            key: "a".into(),
+            rank: 1,
+        }];
+        let list2 = vec![RankedEntry {
+            key: "b".into(),
+            rank: 1,
+        }];
         let results = fuse(&[&list1, &list2], 10);
         assert_eq!(results.len(), 2);
         // Both have the same score: 1/61

@@ -44,7 +44,10 @@ pub fn get_macro_table(language: &str) -> Option<&'static dyn MacroTable> {
 /// Lookup by macro name. O(n) scan; tables are small.
 pub fn lookup(language: &str, macro_name: &str) -> Option<&'static MacroExpansion> {
     let table = get_macro_table(language)?;
-    table.expansions().iter().find(|e| e.macro_name == macro_name)
+    table
+        .expansions()
+        .iter()
+        .find(|e| e.macro_name == macro_name)
 }
 
 #[cfg(test)]
@@ -54,7 +57,10 @@ mod tests {
     #[test]
     fn test_rust_macro_count() {
         let n = rust::RustMacros.expansions().len();
-        assert!(n >= 20, "rust macro table should have >=20 entries, got {n}");
+        assert!(
+            n >= 20,
+            "rust macro table should have >=20 entries, got {n}"
+        );
     }
 
     #[test]

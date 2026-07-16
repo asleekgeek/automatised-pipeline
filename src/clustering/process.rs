@@ -1,4 +1,4 @@
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use std::collections::{HashMap, VecDeque};
 
 pub struct ProcessInfo {
@@ -34,28 +34,76 @@ fn detect_entry_points(store: &GraphStore) -> Result<Vec<EntryPoint>, String> {
     // common framework entry-point shapes.
     // source: Pictet-tech-fest benchmark 2026-05-20 / RUST_BUGS_VERIFIED.md
     query_entries(store, "f.name = 'main'", "main", 1.0, &mut entries)?;
-    query_entries(store, "f.name STARTS WITH 'test_'", "test", 1.0, &mut entries)?;
-    query_entries(store, "f.name STARTS WITH 'do_'", "handler", 0.8, &mut entries)?;
+    query_entries(
+        store,
+        "f.name STARTS WITH 'test_'",
+        "test",
+        1.0,
+        &mut entries,
+    )?;
+    query_entries(
+        store,
+        "f.name STARTS WITH 'do_'",
+        "handler",
+        0.8,
+        &mut entries,
+    )?;
     // Android Activity / Fragment / Service / Receiver / Worker / Provider lifecycle.
     // source: Android SDK reference 2025 — every lifecycle override is on[A-Z]*.
     // ~5% false-positive in non-Android UI frameworks (e.g. onClick listeners).
-    query_entries(store, "f.name =~ '^on[A-Z][A-Za-z]*$'", "android_lifecycle", 0.95, &mut entries)?;
+    query_entries(
+        store,
+        "f.name =~ '^on[A-Z][A-Za-z]*$'",
+        "android_lifecycle",
+        0.95,
+        &mut entries,
+    )?;
     // ContentProvider CRUD — collides with non-Provider repos so weaker confidence.
     // source: android.content.ContentProvider abstract methods.
-    query_entries(store, "f.name IN ['query', 'insert', 'update', 'delete', 'getType', 'openFile']", "android_provider", 0.85, &mut entries)?;
+    query_entries(
+        store,
+        "f.name IN ['query', 'insert', 'update', 'delete', 'getType', 'openFile']",
+        "android_provider",
+        0.85,
+        &mut entries,
+    )?;
     // androidx.work.Worker / ListenableWorker / CoroutineWorker.
     // source: androidx.work 2.x — stable name across versions.
-    query_entries(store, "f.name IN ['doWork', 'createWork']", "android_worker", 0.95, &mut entries)?;
+    query_entries(
+        store,
+        "f.name IN ['doWork', 'createWork']",
+        "android_worker",
+        0.95,
+        &mut entries,
+    )?;
     // Composable shape — CamelCase noun, no @Composable annotation tracking yet
     // (parser would need annotation capture). Lower confidence because data
     // classes and result wrappers also match.
     // source: Jetpack Compose naming convention — Composable functions are nouns.
-    query_entries(store, "f.name =~ '^[A-Z][a-zA-Z0-9]{1,40}$' AND f.visibility IN ['public', 'pub']", "composable_candidate", 0.5, &mut entries)?;
+    query_entries(
+        store,
+        "f.name =~ '^[A-Z][a-zA-Z0-9]{1,40}$' AND f.visibility IN ['public', 'pub']",
+        "composable_candidate",
+        0.5,
+        &mut entries,
+    )?;
     // Tests (extra — JUnit/Vitest patterns beyond the original test_ prefix).
-    query_entries(store, "f.name STARTS WITH 'test' AND NOT f.name STARTS WITH 'test_'", "test", 1.0, &mut entries)?;
+    query_entries(
+        store,
+        "f.name STARTS WITH 'test' AND NOT f.name STARTS WITH 'test_'",
+        "test",
+        1.0,
+        &mut entries,
+    )?;
     query_entries(store, "f.name ENDS WITH 'Test'", "test", 1.0, &mut entries)?;
     // Web-framework handler names that don't fit the do_/Handler pattern.
-    query_entries(store, "f.name ENDS WITH '_handler' OR f.name ENDS WITH 'Handler'", "handler", 0.8, &mut entries)?;
+    query_entries(
+        store,
+        "f.name ENDS WITH '_handler' OR f.name ENDS WITH 'Handler'",
+        "handler",
+        0.8,
+        &mut entries,
+    )?;
 
     detect_lib_entries(store, &mut entries)?;
 
@@ -73,19 +121,25 @@ fn detect_entry_points(store: &GraphStore) -> Result<Vec<EntryPoint>, String> {
 }
 
 fn query_entries(
-    store: &GraphStore, filter: &str, kind: &str,
-    confidence: f64, out: &mut Vec<EntryPoint>,
+    store: &GraphStore,
+    filter: &str,
+    kind: &str,
+    confidence: f64,
+    out: &mut Vec<EntryPoint>,
 ) -> Result<(), String> {
-    let cypher = format!(
-        "MATCH (f:Function) WHERE {filter} RETURN f.id, f.name, f.qualified_name"
-    );
+    let cypher = format!("MATCH (f:Function) WHERE {filter} RETURN f.id, f.name, f.qualified_name");
     let qr = store.execute_query(&cypher)?;
     for row in &qr.rows {
-        if row.len() < 3 { continue; }
+        if row.len() < 3 {
+            continue;
+        }
         out.push(EntryPoint {
-            id: row[0].clone(), label: "Function".into(),
-            name: row[1].clone(), qualified_name: row[2].clone(),
-            kind: kind.into(), confidence,
+            id: row[0].clone(),
+            label: "Function".into(),
+            name: row[1].clone(),
+            qualified_name: row[2].clone(),
+            kind: kind.into(),
+            confidence,
         });
     }
     Ok(())
@@ -101,10 +155,10 @@ fn query_entries(
 // source: src/parser/{java,kotlin,swift,go,c,cpp,objc,python,typescript}.rs visibility outputs.
 //   Bug 5 in RUST_BUGS_VERIFIED.md (Pictet-tech-fest benchmark 2026-05-20).
 const PUBLIC_VISIBILITY_VALUES: &[&str] = &[
-    "pub",       // Rust
-    "export",    // TypeScript / JavaScript
-    "public",    // Java, Kotlin, Swift, Go, Python
-    "open",      // Swift (more permissive than public)
+    "pub",    // Rust
+    "export", // TypeScript / JavaScript
+    "public", // Java, Kotlin, Swift, Go, Python
+    "open",   // Swift (more permissive than public)
 ];
 
 // Extensions whose top-level public functions are candidate library
@@ -112,25 +166,23 @@ const PUBLIC_VISIBILITY_VALUES: &[&str] = &[
 // excluding 9 of the 10 supported languages.
 // source: Bug 7 in RUST_BUGS_VERIFIED.md.
 const LIB_ENTRY_FILE_EXTENSIONS: &[&str] = &[
-    ".rs",   // Rust
+    ".rs", // Rust
     ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx",  // TypeScript / JavaScript
     ".py",   // Python
     ".java", // Java
-    ".kt", ".kts",  // Kotlin
-    ".swift",       // Swift
-    ".go",          // Go
-    ".c", ".h",     // C (no visibility keyword — handled below)
-    ".cc", ".cpp", ".cxx", ".hpp",  // C++
-    ".m", ".mm",    // Objective-C
+    ".kt", ".kts",   // Kotlin
+    ".swift", // Swift
+    ".go",    // Go
+    ".c", ".h", // C (no visibility keyword — handled below)
+    ".cc", ".cpp", ".cxx", ".hpp", // C++
+    ".m", ".mm", // Objective-C
 ];
 
 fn ends_with_any(s: &str, suffixes: &[&str]) -> bool {
     suffixes.iter().any(|suf| s.ends_with(suf))
 }
 
-fn detect_lib_entries(
-    store: &GraphStore, entries: &mut Vec<EntryPoint>,
-) -> Result<(), String> {
+fn detect_lib_entries(store: &GraphStore, entries: &mut Vec<EntryPoint>) -> Result<(), String> {
     // Bug 5 fix — widen the visibility list. Cypher IN clause matches any of
     // the language-specific public-visibility strings.
     let in_list = PUBLIC_VISIBILITY_VALUES
@@ -144,7 +196,9 @@ fn detect_lib_entries(
     );
     let qr = store.execute_query(&cypher)?;
     for row in &qr.rows {
-        if row.len() < 3 { continue; }
+        if row.len() < 3 {
+            continue;
+        }
         let qn = &row[2];
         let segments: Vec<&str> = qn.split("::").collect();
         // Bug 7 fix — accept any of the 10 supported source extensions,
@@ -153,9 +207,12 @@ fn detect_lib_entries(
             let already = entries.iter().any(|e| e.id == row[0]);
             if !already {
                 entries.push(EntryPoint {
-                    id: row[0].clone(), label: "Function".into(),
-                    name: row[1].clone(), qualified_name: qn.clone(),
-                    kind: "lib_entry".into(), confidence: 0.6,
+                    id: row[0].clone(),
+                    label: "Function".into(),
+                    name: row[1].clone(),
+                    qualified_name: qn.clone(),
+                    kind: "lib_entry".into(),
+                    confidence: 0.6,
                 });
             }
         }
@@ -212,7 +269,9 @@ fn bfs_from_entry(
     queue.push_back((start_id.to_string(), 0));
 
     while let Some((node_id, depth)) = queue.pop_front() {
-        if depth >= MAX_BFS_DEPTH { continue; }
+        if depth >= MAX_BFS_DEPTH {
+            continue;
+        }
         if let Some(targets) = call_edges.get(&node_id) {
             for target in targets {
                 if !depths.contains_key(target) {
@@ -226,19 +285,25 @@ fn bfs_from_entry(
 }
 
 fn persist_process_node(
-    store: &GraphStore, entry: &EntryPoint, process_id: &str,
-    symbol_count: u64, max_depth: u64,
+    store: &GraphStore,
+    entry: &EntryPoint,
+    process_id: &str,
+    symbol_count: u64,
+    max_depth: u64,
 ) -> Result<(), String> {
-    let proc_esc = process_id.replace('\'', "\\'");
-    store.insert_node("Process", &[
-        ("id", &format!("'{proc_esc}'")),
-        ("name", &format!("'{proc_esc}'")),
-        ("entry_point_id", &format!("'{}'", entry.id.replace('\'', "\\'"))),
-        ("entry_kind", &format!("'{}'", entry.kind)),
-        ("entry_confidence", &entry.confidence.to_string()),
-        ("depth", &max_depth.to_string()),
-        ("symbol_count", &symbol_count.to_string()),
-    ])?;
+    let proc_lit = cypher_str(process_id);
+    store.insert_node(
+        "Process",
+        &[
+            ("id", &proc_lit),
+            ("name", &proc_lit),
+            ("entry_point_id", &cypher_str(&entry.id)),
+            ("entry_kind", &cypher_str(&entry.kind)),
+            ("entry_confidence", &entry.confidence.to_string()),
+            ("depth", &max_depth.to_string()),
+            ("symbol_count", &symbol_count.to_string()),
+        ],
+    )?;
     let ep_rel = format!("EntryPointOf_{}_Process", entry.label);
     // EntryPointOf tables only defined for Function/Method per REL_TABLES.
     if !crate::graph_store::is_known_rel_table(&ep_rel) {
@@ -248,9 +313,12 @@ fn persist_process_node(
         );
         return Ok(());
     }
-    store.insert_edge(&ep_rel, &entry.id, process_id, &[
-        ("confidence", &entry.confidence.to_string()),
-    ])
+    store.insert_edge(
+        &ep_rel,
+        &entry.id,
+        process_id,
+        &[("confidence", &entry.confidence.to_string())],
+    )
 }
 
 fn persist_participates_in(
@@ -262,8 +330,7 @@ fn persist_participates_in(
     // Group edges by rel table, bulk-insert per group.
     // source: Fermi audit April 2026 — was 2 probe queries per visited node
     //         plus a per-row CREATE; now zero probes and one bulk call per rel.
-    let mut by_rel: HashMap<String, Vec<(String, String, Vec<(String, String)>)>> =
-        HashMap::new();
+    let mut by_rel: HashMap<String, Vec<(String, String, Vec<(String, String)>)>> = HashMap::new();
     for (node_id, depth) in depths {
         let lbl = match id_to_label.get(node_id) {
             Some(l) => l,
@@ -281,14 +348,11 @@ fn persist_participates_in(
         // computed in bfs_from_entry and discarded here, collapsing the chain
         // into an unordered set. `depth` is the shortest-path distance from
         // the entry point, so a consumer can order participants by it.
-        by_rel
-            .entry(rel)
-            .or_default()
-            .push((
-                node_id.clone(),
-                process_id.to_string(),
-                vec![("depth".into(), depth.to_string())],
-            ));
+        by_rel.entry(rel).or_default().push((
+            node_id.clone(),
+            process_id.to_string(),
+            vec![("depth".into(), depth.to_string())],
+        ));
     }
     for (rel, edges) in &by_rel {
         store.bulk_insert_edges(rel, edges)?;
@@ -299,9 +363,7 @@ fn persist_participates_in(
 /// Loads id -> label for every Function and Method in the graph. One scan
 /// per label (two total) replaces the per-node probes that used to fire
 /// inside persist_participates_in.
-fn build_call_target_labels(
-    store: &GraphStore,
-) -> Result<HashMap<String, String>, String> {
+fn build_call_target_labels(store: &GraphStore) -> Result<HashMap<String, String>, String> {
     let mut map = HashMap::new();
     for label in &["Function", "Method"] {
         let cypher = format!("MATCH (n:{label}) RETURN n.id");
@@ -318,9 +380,7 @@ fn build_call_target_labels(
     Ok(map)
 }
 
-fn collect_call_edges(
-    store: &GraphStore,
-) -> Result<HashMap<String, Vec<String>>, String> {
+fn collect_call_edges(store: &GraphStore) -> Result<HashMap<String, Vec<String>>, String> {
     let mut edges: HashMap<String, Vec<String>> = HashMap::new();
     let call_rels = &[
         ("Calls_Function_Function", "Function", "Function"),
@@ -329,16 +389,17 @@ fn collect_call_edges(
         ("Calls_Method_Method", "Method", "Method"),
     ];
     for &(rel, from_label, to_label) in call_rels {
-        let cypher = format!(
-            "MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) RETURN a.id, b.id"
-        );
+        let cypher = format!("MATCH (a:{from_label})-[:{rel}]->(b:{to_label}) RETURN a.id, b.id");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
             Err(_) => continue,
         };
         for row in &qr.rows {
             if row.len() >= 2 {
-                edges.entry(row[0].clone()).or_default().push(row[1].clone());
+                edges
+                    .entry(row[0].clone())
+                    .or_default()
+                    .push(row[1].clone());
             }
         }
     }
@@ -370,11 +431,13 @@ pub fn trace_processes(store: &GraphStore) -> Result<u64, String> {
 pub fn get_processes(store: &GraphStore) -> Result<Vec<ProcessInfo>, String> {
     let qr = store.execute_query(
         "MATCH (p:Process) RETURN p.id, p.name, p.entry_point_id, \
-         p.entry_kind, p.depth, p.symbol_count"
+         p.entry_kind, p.depth, p.symbol_count",
     )?;
     let mut result = Vec::new();
     for row in &qr.rows {
-        if row.len() < 6 { continue; }
+        if row.len() < 6 {
+            continue;
+        }
         result.push(ProcessInfo {
             name: row[1].clone(),
             entry_point: row[2].clone(),

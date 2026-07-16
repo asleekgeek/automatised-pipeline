@@ -120,9 +120,9 @@ pub fn resolve<T: Candidate>(candidates: &[T], ctx: &Context) -> Resolution<T> {
     if let Some(target) = unique_match(candidates, |c| import_matches(c, ctx.imports_in_scope)) {
         return resolved(target.clone(), Evidence::ImportMatch);
     }
-    if let Some(target) =
-        unique_match(candidates, |c| c.qualified_name().starts_with(ctx.caller_file))
-    {
+    if let Some(target) = unique_match(candidates, |c| {
+        c.qualified_name().starts_with(ctx.caller_file)
+    }) {
         return resolved(target.clone(), Evidence::SameFileUnique);
     }
     if let Some(pkg) = ctx.caller_package {
@@ -130,7 +130,9 @@ pub fn resolve<T: Candidate>(candidates: &[T], ctx: &Context) -> Resolution<T> {
             return resolved(target.clone(), Evidence::PackageProximity);
         }
     }
-    Resolution::Ambiguous { candidates: candidates.to_vec() }
+    Resolution::Ambiguous {
+        candidates: candidates.to_vec(),
+    }
 }
 
 /// Same contract as `resolve`, plus: when `resolve` would return
@@ -179,7 +181,11 @@ pub fn resolution_label(evidence: Evidence) -> &'static str {
 }
 
 fn resolved<T>(target: T, evidence: Evidence) -> Resolution<T> {
-    Resolution::Resolved { target, confidence: confidence_for(evidence), evidence }
+    Resolution::Resolved {
+        target,
+        confidence: confidence_for(evidence),
+        evidence,
+    }
 }
 
 /// Returns `Some` only when exactly one candidate satisfies `pred` —
@@ -237,7 +243,11 @@ mod tests {
     }
 
     fn empty_ctx<'a>() -> Context<'a> {
-        Context { imports_in_scope: &[], caller_file: "no/such/file.rs", caller_package: None }
+        Context {
+            imports_in_scope: &[],
+            caller_file: "no/such/file.rs",
+            caller_package: None,
+        }
     }
 
     // --- Test 1: spelling invariance -----------------------------------
@@ -266,7 +276,11 @@ mod tests {
         let r2 = resolve_deterministic(&candidates, &unqualified_ctx);
         assert_eq!(r1, r2);
         match r1 {
-            Resolution::Resolved { target, evidence, confidence } => {
+            Resolution::Resolved {
+                target,
+                evidence,
+                confidence,
+            } => {
                 assert_eq!(target.qn, "a::helper");
                 assert_eq!(evidence, Evidence::ImportMatch);
                 assert_eq!(confidence, confidence_for(Evidence::ImportMatch));
@@ -287,8 +301,15 @@ mod tests {
         let r2 = resolve_deterministic(&candidates, &ctx_b);
         assert_eq!(r1, r2);
         match r1 {
-            Resolution::Resolved { target, evidence, confidence } => {
-                assert_eq!(target.qn, "a::helper", "deterministic tiebreak picks lexicographically first");
+            Resolution::Resolved {
+                target,
+                evidence,
+                confidence,
+            } => {
+                assert_eq!(
+                    target.qn, "a::helper",
+                    "deterministic tiebreak picks lexicographically first"
+                );
                 assert_eq!(evidence, Evidence::DeterministicTiebreak);
                 assert_eq!(confidence, 0.5);
             }
@@ -344,9 +365,16 @@ mod tests {
         let candidates = vec![sym("a::helper"), sym("b::helper")];
         let ctx = empty_ctx();
         match resolve_deterministic(&candidates, &ctx) {
-            Resolution::Resolved { confidence, evidence, .. } => {
+            Resolution::Resolved {
+                confidence,
+                evidence,
+                ..
+            } => {
                 assert_eq!(evidence, Evidence::DeterministicTiebreak);
-                assert!(confidence < 1.0, "tiebreak confidence {confidence} must be < 1.0");
+                assert!(
+                    confidence < 1.0,
+                    "tiebreak confidence {confidence} must be < 1.0"
+                );
                 assert!(confidence < confidence_for(Evidence::ImportMatch));
             }
             other => panic!("expected Resolved, got {other:?}"),
@@ -374,7 +402,11 @@ mod tests {
         let candidates = vec![sym("only::one")];
         let ctx = empty_ctx();
         match resolve(&candidates, &ctx) {
-            Resolution::Resolved { target, evidence, confidence } => {
+            Resolution::Resolved {
+                target,
+                evidence,
+                confidence,
+            } => {
                 assert_eq!(target.qn, "only::one");
                 assert_eq!(evidence, Evidence::UniqueGlobal);
                 assert_eq!(confidence, confidence_for(Evidence::UniqueGlobal));
@@ -392,7 +424,9 @@ mod tests {
             caller_package: None,
         };
         match resolve(&candidates, &ctx) {
-            Resolution::Resolved { target, evidence, .. } => {
+            Resolution::Resolved {
+                target, evidence, ..
+            } => {
                 assert_eq!(target.qn, "src/foo.rs::helper");
                 assert_eq!(evidence, Evidence::SameFileUnique);
             }
@@ -409,7 +443,9 @@ mod tests {
             caller_package: Some("pkg_a"),
         };
         match resolve(&candidates, &ctx) {
-            Resolution::Resolved { target, evidence, .. } => {
+            Resolution::Resolved {
+                target, evidence, ..
+            } => {
                 assert_eq!(target.qn, "pkg_a::mod::helper");
                 assert_eq!(evidence, Evidence::PackageProximity);
             }

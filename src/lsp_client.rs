@@ -102,8 +102,7 @@ pub fn path_to_file_uri(path: &Path) -> String {
     let mut out = String::from("file://");
     for b in s.as_bytes() {
         let c = *b;
-        let keep = c.is_ascii_alphanumeric()
-            || matches!(c, b'-' | b'.' | b'_' | b'~' | b'/');
+        let keep = c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_' | b'~' | b'/');
         if keep {
             out.push(c as char);
         } else {
@@ -131,16 +130,20 @@ pub fn is_command_available(command: &str) -> bool {
 
 fn write_lsp_message(stdin: &mut std::process::ChildStdin, msg: &[u8]) -> Result<(), String> {
     let header = format!("Content-Length: {}\r\n\r\n", msg.len());
-    stdin.write_all(header.as_bytes())
+    stdin
+        .write_all(header.as_bytes())
         .map_err(|e| format!("write header: {e}"))?;
-    stdin.write_all(msg)
+    stdin
+        .write_all(msg)
         .map_err(|e| format!("write body: {e}"))?;
-    stdin.flush()
-        .map_err(|e| format!("flush: {e}"))?;
+    stdin.flush().map_err(|e| format!("flush: {e}"))?;
     Ok(())
 }
 
-fn read_lsp_message(reader: &mut BufReader<std::process::ChildStdout>, timeout: Duration) -> Result<Value, String> {
+fn read_lsp_message(
+    reader: &mut BufReader<std::process::ChildStdout>,
+    timeout: Duration,
+) -> Result<Value, String> {
     let deadline = Instant::now() + timeout;
 
     // Read headers until empty line. If the server closes stdout (EOF)
@@ -154,7 +157,8 @@ fn read_lsp_message(reader: &mut BufReader<std::process::ChildStdout>, timeout: 
             return Err("timeout reading LSP header".to_string());
         }
         let mut line = String::new();
-        let n = reader.read_line(&mut line)
+        let n = reader
+            .read_line(&mut line)
             .map_err(|e| format!("read header line: {e}"))?;
         if n == 0 {
             // EOF — child closed stdout.
@@ -175,11 +179,11 @@ fn read_lsp_message(reader: &mut BufReader<std::process::ChildStdout>, timeout: 
 
     let len = content_length.ok_or("missing Content-Length header")?;
     let mut body = vec![0u8; len];
-    reader.read_exact(&mut body)
+    reader
+        .read_exact(&mut body)
         .map_err(|e| format!("read body ({len} bytes): {e}"))?;
 
-    serde_json::from_slice(&body)
-        .map_err(|e| format!("parse JSON body: {e}"))
+    serde_json::from_slice(&body).map_err(|e| format!("parse JSON body: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -226,8 +230,7 @@ impl LspClient {
             .spawn()
             .map_err(|e| format!("spawn {command}: {e}"))?;
 
-        let stdout = child.stdout.take()
-            .ok_or("failed to capture LSP stdout")?;
+        let stdout = child.stdout.take().ok_or("failed to capture LSP stdout")?;
         let reader = BufReader::new(stdout);
 
         Ok(LspClient {
@@ -285,8 +288,7 @@ impl LspClient {
             }
         });
 
-        self.send_request(&init_req)
-            .map_err(classify_probe_err)?;
+        self.send_request(&init_req).map_err(classify_probe_err)?;
 
         // Read the first response under probe_timeout. Any failure here —
         // EOF, timeout, parse error, missing jsonrpc field — is reclassified
@@ -301,16 +303,20 @@ impl LspClient {
             "method": "initialized",
             "params": {}
         });
-        self.send_notification(&notif)
-            .map_err(classify_probe_err)?;
+        self.send_notification(&notif).map_err(classify_probe_err)?;
 
         Ok(())
     }
 
-    fn read_initialize_response(&mut self, id: i64, probe_timeout: Duration) -> Result<Value, String> {
+    fn read_initialize_response(
+        &mut self,
+        id: i64,
+        probe_timeout: Duration,
+    ) -> Result<Value, String> {
         let deadline = Instant::now() + probe_timeout;
         loop {
-            let remaining = deadline.checked_duration_since(Instant::now())
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
                 .unwrap_or(Duration::ZERO);
             if remaining.is_zero() {
                 return Err(format!(
@@ -318,8 +324,7 @@ impl LspClient {
                     probe_timeout.as_millis()
                 ));
             }
-            let msg = read_lsp_message(&mut self.reader, remaining)
-                .map_err(classify_probe_err)?;
+            let msg = read_lsp_message(&mut self.reader, remaining).map_err(classify_probe_err)?;
             if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
                 return Ok(msg);
             }
@@ -328,7 +333,12 @@ impl LspClient {
     }
 
     /// Notify the server about an open document.
-    pub fn did_open(&mut self, file_uri: &str, language_id: &str, text: &str) -> Result<(), String> {
+    pub fn did_open(
+        &mut self,
+        file_uri: &str,
+        language_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
         let notif = json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didOpen",
@@ -388,10 +398,8 @@ impl LspClient {
     }
 
     fn send_request(&mut self, msg: &Value) -> Result<(), String> {
-        let bytes = serde_json::to_vec(msg)
-            .map_err(|e| format!("serialize request: {e}"))?;
-        let stdin = self.process.stdin.as_mut()
-            .ok_or("LSP stdin unavailable")?;
+        let bytes = serde_json::to_vec(msg).map_err(|e| format!("serialize request: {e}"))?;
+        let stdin = self.process.stdin.as_mut().ok_or("LSP stdin unavailable")?;
         write_lsp_message(stdin, &bytes)
     }
 
@@ -404,7 +412,8 @@ impl LspClient {
     fn read_response_for_id(&mut self, target_id: i64) -> Result<Value, String> {
         let deadline = Instant::now() + self.timeout;
         loop {
-            let remaining = deadline.checked_duration_since(Instant::now())
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
                 .unwrap_or(Duration::ZERO);
             if remaining.is_zero() {
                 return Err(format!("timeout waiting for response id={target_id}"));
@@ -446,7 +455,9 @@ fn classify_probe_err(e: String) -> String {
         "found on PATH but dropped the connection mid-header (partial LSP framing then EOF)"
     } else if e.contains("missing Content-Length") {
         "found on PATH but sent non-LSP output (no Content-Length header)"
-    } else if e.contains("timeout reading LSP header") || e.contains("no response within probe timeout") {
+    } else if e.contains("timeout reading LSP header")
+        || e.contains("no response within probe timeout")
+    {
         "found on PATH but didn't respond within the probe window (not an LSP server or hung)"
     } else if e.contains("parse JSON body") {
         "found on PATH but sent non-JSON-RPC bytes as the first frame"
@@ -468,7 +479,7 @@ fn validate_probe_response(resp: &Value) -> Result<(), String> {
     }
     if resp.get("result").is_none() && resp.get("error").is_none() {
         return Err(
-            "lsp_probe_failed: first response has neither `result` nor `error`".to_string()
+            "lsp_probe_failed: first response has neither `result` nor `error`".to_string(),
         );
     }
     Ok(())
@@ -491,7 +502,9 @@ fn parse_definition_response(resp: &Value) -> Result<Option<DefinitionResult>, S
     // or an array of LocationLinks. Handle all cases.
     let location = if result.is_array() {
         let arr = result.as_array().unwrap();
-        if arr.is_empty() { return Ok(None); }
+        if arr.is_empty() {
+            return Ok(None);
+        }
         &arr[0]
     } else if result.is_object() {
         result
@@ -500,10 +513,12 @@ fn parse_definition_response(resp: &Value) -> Result<Option<DefinitionResult>, S
     };
 
     // LocationLink has targetUri + targetRange; Location has uri + range
-    let uri = location.get("targetUri")
+    let uri = location
+        .get("targetUri")
         .or_else(|| location.get("uri"))
         .and_then(|v| v.as_str());
-    let range = location.get("targetRange")
+    let range = location
+        .get("targetRange")
         .or_else(|| location.get("range"));
 
     match (uri, range) {
@@ -618,18 +633,15 @@ mod tests {
         assert!(err.contains("lsp_command_not_allowed"), "got: {err}");
 
         // Rejected: absolute path (contains '/').
-        let err = validate_lsp_command("/tmp/evil")
-            .expect_err("absolute path must be rejected");
+        let err = validate_lsp_command("/tmp/evil").expect_err("absolute path must be rejected");
         assert!(err.contains("lsp_command_not_allowed"), "got: {err}");
 
         // Rejected: relative path with separator.
-        let err = validate_lsp_command("./evil")
-            .expect_err("relative path must be rejected");
+        let err = validate_lsp_command("./evil").expect_err("relative path must be rejected");
         assert!(err.contains("lsp_command_not_allowed"), "got: {err}");
 
         // Rejected: path with backslash (Windows-style).
-        let err = validate_lsp_command("evil\\bin")
-            .expect_err("backslash path must be rejected");
+        let err = validate_lsp_command("evil\\bin").expect_err("backslash path must be rejected");
         assert!(err.contains("lsp_command_not_allowed"), "got: {err}");
 
         // Accepted: allowlisted bare names.
@@ -683,12 +695,7 @@ mod tests {
             panic!("no `true` binary available for test");
         };
 
-        let client = LspClient::start_unchecked(
-            true_bin,
-            &[],
-            &tmp,
-            Duration::from_secs(5),
-        );
+        let client = LspClient::start_unchecked(true_bin, &[], &tmp, Duration::from_secs(5));
         let mut client = client.expect("spawn /bin/true should succeed");
 
         let err = client
@@ -704,7 +711,7 @@ mod tests {
     #[test]
     fn test_classify_probe_err_eof() {
         let classified = classify_probe_err(
-            "eof_before_header: child stdout closed without LSP framing".to_string()
+            "eof_before_header: child stdout closed without LSP framing".to_string(),
         );
         assert!(classified.starts_with("lsp_probe_failed:"));
         assert!(classified.contains("stub, proxy, or non-LSP binary"));

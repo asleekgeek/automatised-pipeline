@@ -43,10 +43,13 @@ pub fn standalone_leaf() -> i32 {
 
 #[test]
 fn test_get_impact_reports_lower_bound_for_interface() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3c_epistemic_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3c_epistemic_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture/src");
@@ -111,10 +114,13 @@ fn test_get_impact_reports_lower_bound_for_interface() {
 
 #[test]
 fn test_get_impact_reports_exact_for_concrete_leaf() {
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3c_epistemic_leaf_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3c_epistemic_leaf_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
 
     let fixture_dir = tmp_root.join("fixture/src");

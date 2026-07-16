@@ -42,6 +42,7 @@ fn health_check_schema() -> Value {
     json!({
         "name": "health_check",
         "description": "Stage 0 — Healthcheck + handshake verification. Returns server identity, protocol version, and the registered stage count. Use this before calling any other stage tool to confirm the MCP is live.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -54,6 +55,7 @@ fn extract_finding_schema() -> Value {
     json!({
         "name": "extract_finding",
         "description": "Stage 1a — Deterministic extraction. Normalizes one incoming finding (inline object or absolute path to a .json file) to the canonical schema, writes stage-1.source.json + stage-1.extracted.json atomically under <output_dir>/runs/<run_id>/findings/<finding_id>/, and creates or updates an index.json entry. Does NOT call an LLM. The caller runs the orchestrator refinement and then calls refine_finding with the payload.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["finding", "output_dir"],
@@ -84,6 +86,7 @@ fn refine_finding_schema() -> Value {
     json!({
         "name": "refine_finding",
         "description": "Stage 1b — Orchestrator-aware persistence. Reads an existing stage-1.extracted.json, composes stage-1.refined.json with the agent-produced refined_prompt + refinement payload, and updates index.json atomically. Pure persistence — no LLM call, no network. Requires extract_finding to have been called first for the same (run_id, finding_id).",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["run_id", "finding_id", "output_dir", "refined_prompt", "refinement"],
@@ -140,6 +143,7 @@ fn start_verification_schema() -> Value {
     json!({
         "name": "start_verification",
         "description": "Stage 2a — Create a clarification session for a refined finding. Verifies stage-1.refined.json exists and parses (schema_ok), then atomically writes stage-2.session.json with state 'open'. Rejects if an existing session is finalized; overwrites an aborted session. No LLM call.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["run_id", "finding_id", "output_dir"],
@@ -157,6 +161,7 @@ fn append_clarification_schema() -> Value {
     json!({
         "name": "append_clarification",
         "description": "Stage 2b — Append one turn (agent_question or user_answer) to stage-2.session.json. Enforces the alternation invariant (two consecutive same-kind turns rejected) and the §3 state machine. Whole-file atomic rewrite per spec §12.3. No LLM call.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["run_id", "finding_id", "output_dir", "kind", "content"],
@@ -177,6 +182,7 @@ fn finalize_verification_schema() -> Value {
     json!({
         "name": "finalize_verification",
         "description": "Stage 2c — Consume the user-ready signal. Rejects from state 'open' (no_clarification_round) or 'waiting_for_user' (unanswered_question) per spec §12.2. Computes sha256 over the canonical transcript bytes, writes stage-2.verified.json atomically, flips the session to 'finalized', and updates index.json with verified+stage2_path. No LLM call.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["run_id", "finding_id", "output_dir"],
@@ -194,6 +200,7 @@ fn abort_verification_schema() -> Value {
     json!({
         "name": "abort_verification",
         "description": "Stage 2d — Kill a non-terminal session. Atomically rewrites stage-2.session.json with state 'aborted', aborted_at, and optional abort_reason. Does NOT touch index.json (aborted sessions are invisible to stage 3). A fresh start_verification after abort overwrites the session.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["run_id", "finding_id", "output_dir"],
@@ -212,6 +219,7 @@ fn index_codebase_schema() -> Value {
     json!({
         "name": "index_codebase",
         "description": "Stage 3a — Index a codebase. Walks the directory, parses source files with tree-sitter (Rust, Python, TypeScript), and persists a code-intelligence graph (nodes: functions, structs/classes, enums, traits/interfaces, etc.; edges: contains, defines, has_method, etc.) into a LadybugDB database at <output_dir>/graph/. Returns node/edge counts and elapsed time.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["path", "output_dir"],
@@ -230,6 +238,17 @@ fn index_codebase_schema() -> Value {
                 "output_dir": {
                     "type": "string",
                     "description": "Absolute directory where the graph will be stored (at <output_dir>/graph/)."
+                },
+                "dependency_scope": {
+                    "type": "string",
+                    "enum": ["none", "public_api", "full"],
+                    "default": "none",
+                    "description": "Tri-tier control over dependency-directory ingestion. 'none': prune build/dependency dirs (node_modules, .venv, vendor, target, dist, …); only .git is always skipped. 'public_api': descend into those dirs but persist only publicly-visible symbols from files under them — project files are still indexed in full. 'full': descend and persist everything (equivalent to the deprecated include_dependencies=true). Supersedes 'include_dependencies'; if both are given, dependency_scope wins."
+                },
+                "include_dependencies": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
                 }
             }
         }
@@ -240,6 +259,7 @@ fn query_graph_schema() -> Value {
     json!({
         "name": "query_graph",
         "description": "Stage 3a — Execute a Cypher query against an indexed code graph. The graph must have been created by a prior index_codebase call. Returns column names and rows.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "query"],
@@ -268,6 +288,7 @@ fn get_symbol_schema() -> Value {
     json!({
         "name": "get_symbol",
         "description": "Stage 3a — Look up a symbol by qualified name in the code graph. Returns the node properties plus all incoming and outgoing edges. Qualified names follow the pattern 'file_path::symbol_name' (e.g., 'src/main.rs::handle_tool_call').",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "qualified_name"],
@@ -295,6 +316,7 @@ fn resolve_graph_schema() -> Value {
     json!({
         "name": "resolve_graph",
         "description": "Stage 3b — Resolve cross-file edges in the code graph. Runs AFTER index_codebase. Adds Imports, Calls, Implements, Extends, and Uses edges by matching string references to concrete target nodes. Returns resolution statistics including edge counts and resolution rate.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path"],
@@ -318,6 +340,7 @@ fn cluster_graph_schema() -> Value {
     json!({
         "name": "cluster_graph",
         "description": "Stage 3c — Run community detection and process tracing on an indexed+resolved graph. Groups symbols into functional communities via Louvain+C2 repair, detects entry points (main, test, handler, lib_entry), and traces BFS call chains to create Process nodes. Requires resolve_graph to have been called first.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path"],
@@ -341,6 +364,7 @@ fn get_processes_schema() -> Value {
     json!({
         "name": "get_processes",
         "description": "Stage 3c — List all detected processes (execution flows from entry points). Each process has an entry point, entry kind (main/test/handler/lib_entry), BFS depth, and symbol count. Requires cluster_graph to have been called first.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path"],
@@ -370,6 +394,7 @@ fn get_impact_schema() -> Value {
     json!({
         "name": "get_impact",
         "description": "Stage 3c — Blast radius analysis for a symbol. Returns the symbol's reverse dependencies — callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements) — each as a re-queryable {id, qualified_name, label} handle you can traverse further via get_symbol/get_context/query_graph, plus the communities the symbol belongs to and the processes it participates in. Community/process fields require cluster_graph to have been called first; reverse-dependency fields work on any resolved graph.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "qualified_name"],
@@ -403,6 +428,7 @@ fn index_history_schema() -> Value {
     json!({
         "name": "index_history",
         "description": "History layer — ingests git commit history into an already-indexed graph as a traversable version spine (not a flat diff report). Creates Commit nodes with author/timestamp/message, PreviousVersion commit ancestry, and a Version node per (entity, commit) for every File and symbol a commit changed — linked by ChangedIn (version→commit) and VersionOf (version→entity), and chained by PreviousVersion (version→prior version). Lets a consumer walk: entity ← VersionOf ← Version → ChangedIn → Commit → PreviousVersion → Commit, and the reverse. File attribution is exact; symbol attribution maps changed lines onto the current graph's symbol ranges (best-effort on older commits). Call after index_codebase + resolve_graph on the same graph_path.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "codebase_path"],
@@ -430,6 +456,7 @@ fn search_codebase_schema() -> Value {
     json!({
         "name": "search_codebase",
         "description": "Stage 3d — Search the code graph by keyword. Returns ranked symbols with name, kind, file path, community, process participation, and relevance score. Use this to find symbols without knowing their exact qualified names. Requires index_codebase + resolve_graph + cluster_graph to have been called first (or use analyze_codebase for all-in-one).",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "query"],
@@ -473,6 +500,7 @@ fn get_context_schema() -> Value {
     json!({
         "name": "get_context",
         "description": "Stage 3d — 360° symbol view. Returns the symbol plus ALL its relationships grouped by kind: what it imports, what imports it, what it calls, what calls it, what it implements, what implements it, community membership, and process participation. Richer than get_symbol — use this when you need full context for PRD generation or impact analysis.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "qualified_name"],
@@ -495,6 +523,7 @@ fn analyze_codebase_schema() -> Value {
     json!({
         "name": "analyze_codebase",
         "description": "Stage 3 — All-in-one codebase analysis. Runs index_codebase + resolve_graph + cluster_graph in sequence, producing a fully searchable code graph in one call. Supports Rust, Python, and TypeScript (auto-detected by extension). Returns combined statistics from all phases.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["path", "output_dir"],
@@ -523,6 +552,17 @@ fn analyze_codebase_schema() -> Value {
                     "type": "boolean",
                     "default": false,
                     "description": "Enable LSP-enhanced resolution after the static resolve pass. Requires the language server to be installed. Default: false."
+                },
+                "dependency_scope": {
+                    "type": "string",
+                    "enum": ["none", "public_api", "full"],
+                    "default": "none",
+                    "description": "Tri-tier control over dependency-directory ingestion. 'none': prune build/dependency dirs (node_modules, .venv, vendor, target, dist, …); only .git is always skipped. 'public_api': descend into those dirs but persist only publicly-visible symbols from files under them — project files are still indexed in full. 'full': descend and persist everything (equivalent to the deprecated include_dependencies=true). Supersedes 'include_dependencies'; if both are given, dependency_scope wins."
+                },
+                "include_dependencies": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
                 }
             }
         }
@@ -533,6 +573,7 @@ fn lsp_resolve_schema() -> Value {
     json!({
         "name": "lsp_resolve",
         "description": "Stage 3b-v2 — LSP-enhanced resolution. Queries a Language Server Protocol server (rust-analyzer, pyright, typescript-language-server) to resolve method calls on inferred types that the static resolver cannot handle. Runs AFTER resolve_graph. Requires the LSP server to be installed; gracefully fails if not found.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "codebase_path"],
@@ -569,7 +610,8 @@ fn lsp_resolve_schema() -> Value {
 fn prepare_prd_input_schema() -> Value {
     json!({
         "name": "prepare_prd_input",
-        "description": "Stage 4 — Bundle graph intel (matched symbols, impacted communities, impacted processes, graph stats) into stage-4.prd_input.json for the PRD generator. Read-only against the graph. TWO modes: (1) FINDING mode — pass finding_id to bundle a VERIFIED stage-2 finding (writes under runs/<run_id>/findings/<finding_id>/ and updates index.json); (2) FEATURE mode — pass feature_description (no finding_id) to ground a free-text feature directly on the code graph, skipping the stage-2 gate (writes under runs/<run_id>/features/<slug>/). Provide finding_id OR feature_description.",
+        "description": "Stage 4 — Bundle graph intel (matched symbols, impacted communities, impacted processes, graph stats) into stage-4.prd_input.json for the PRD generator. Read-only against the graph. TWO modes: (1) FINDING mode — pass finding_id to bundle a VERIFIED stage-2 finding (writes under runs/<run_id>/findings/<finding_id>/ and updates index.json); (2) FEATURE mode — pass feature_description (no finding_id) to ground a free-text feature directly on the code graph, skipping the stage-2 gate (writes under runs/<run_id>/features/<slug>/). Provide finding_id OR feature_description. Grounding trust (v1.1.0, issue #14): each `matched_symbols` entry carries `match_mode` ('verbatim' — identifier cited in backticks and resolved exactly; 'exact_name' — a description word equals the symbol's name exactly) and `confidence`; only these are counted as verified grounding. Substring/fuzzy hits with no exact-identity evidence are returned separately in `candidate_symbols` (same shape, `match_mode: 'lexical'`) and are NEVER folded into matched_symbols or into impacted_communities/impacted_processes — an empty matched_symbols is expected and correct when the description contains no cited or exactly-named identifiers. Cite identifiers in backticks in finding/feature descriptions to get verbatim-priority grounding.",
+        "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["output_dir", "graph_path"],
@@ -589,6 +631,7 @@ fn validate_prd_against_graph_schema() -> Value {
     json!({
         "name": "validate_prd_against_graph",
         "description": "Stage 6 — Validate a PRD against the resolved+clustered graph. Three axes: (1) symbol hallucination — claimed symbols that don't exist (critical); (2) community-consistency — affected symbols spanning multiple Leiden communities (warning/critical); (3) process-impact contradiction — PRD claims 'does not affect X' while a changed symbol participates in X (critical). Contract-first on stage-5.affected_symbols.json with regex fallback from the PRD markdown. LLM-free. Read-only. When run_id+finding_id+output_dir are provided, writes stage-6.validation.json under findings/<finding_id>/.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["prd_path", "graph_path"],
@@ -609,6 +652,7 @@ fn check_security_gates_schema() -> Value {
     json!({
         "name": "check_security_gates",
         "description": "Stage 8 — Graph-aware security gates. Runs five checks on the changed_symbols list: S1 auth-critical community touch (critical), S2 unsafe-symbol touch (info-skip until parser records is_unsafe), S3 public-API surface change (warning), S4 unresolved-import introduction (warning/critical), S5 test-coverage structural gap (warning). Returns gates_passed=true iff zero critical flags. LLM-free. Read-only. When run_id+finding_id+output_dir are provided, writes stage-8.security.json.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path", "changed_symbols"],
@@ -628,6 +672,7 @@ fn verify_semantic_diff_schema() -> Value {
     json!({
         "name": "verify_semantic_diff",
         "description": "Stage 9 — Compare a post-implementation graph against a pre-implementation graph to flag regressions: nodes added/removed, edges added/removed, dangling references (edges whose target disappeared), new unresolved imports, and new strongly-connected cycles. Returns a heuristic regression_score (cap 10.0, thresholds: <1 clean, <5 concerning, >=5 regression). Read-only against both graphs.",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["before_graph_path", "after_graph_path"],
@@ -645,6 +690,7 @@ fn detect_changes_schema() -> Value {
     json!({
         "name": "detect_changes",
         "description": "Stage 3e — Git diff impact analysis. Maps changed lines to affected symbols, communities, and processes in the code graph. Accepts either raw unified diff text OR base_ref/head_ref to run git diff internally. Returns affected symbols with change type, community membership, process participation, and a heuristic risk score (0.0-1.0).",
+        "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
             "required": ["graph_path"],

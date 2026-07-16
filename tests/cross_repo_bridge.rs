@@ -68,7 +68,13 @@ fn build_graph(root: &Path, name: &str, file: &str, source: &str) -> PathBuf {
 
 #[test]
 fn cross_repo_forward_reverse_and_homonym() {
-    let root = std::env::temp_dir().join(format!("cross_repo_bridge_{}", std::process::id()));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let root = tempfile::Builder::new()
+        .prefix("cross_repo_bridge_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&root);
 
     let provider = build_graph(&root, "provider", "lib.rs", PROVIDER_LIB);
@@ -78,15 +84,21 @@ fn cross_repo_forward_reverse_and_homonym() {
     // --- FORWARD: from the consumer, resolve the dangling call into the provider.
     let args = json!({ "sibling_graphs": [provider.to_str().unwrap()] });
     let siblings = SiblingGraphs::from_arg(&args, &consumer);
-    assert!(!siblings.is_empty(), "provider sibling should be registered");
+    assert!(
+        !siblings.is_empty(),
+        "provider sibling should be registered"
+    );
 
     let defs = bridge::resolve_definition(&siblings, "process_payment");
     assert!(
-        defs.iter().any(|d| d.qualified_name.contains("process_payment")
-            && d.label == "Function"
-            && d.repo == provider.display().to_string()),
+        defs.iter()
+            .any(|d| d.qualified_name.contains("process_payment")
+                && d.label == "Function"
+                && d.repo == provider.display().to_string()),
         "forward resolution should find process_payment defined in the provider repo; got {:?}",
-        defs.iter().map(|d| (&d.repo, &d.label, &d.qualified_name)).collect::<Vec<_>>()
+        defs.iter()
+            .map(|d| (&d.repo, &d.label, &d.qualified_name))
+            .collect::<Vec<_>>()
     );
     // A symbol the provider does NOT define must not resolve.
     assert!(
@@ -99,10 +111,14 @@ fn cross_repo_forward_reverse_and_homonym() {
     let siblings = SiblingGraphs::from_arg(&args, &provider);
     let callers = bridge::foreign_callers(&siblings, "process_payment");
     assert!(
-        callers.iter().any(|c| c.repo == consumer.display().to_string()
-            && c.caller_qn.contains("checkout")),
+        callers
+            .iter()
+            .any(|c| c.repo == consumer.display().to_string() && c.caller_qn.contains("checkout")),
         "reverse resolution should find checkout() in the consumer as a foreign caller; got {:?}",
-        callers.iter().map(|c| (&c.repo, &c.caller_qn, &c.callee_name)).collect::<Vec<_>>()
+        callers
+            .iter()
+            .map(|c| (&c.repo, &c.caller_qn, &c.callee_name))
+            .collect::<Vec<_>>()
     );
 
     // --- HOMONYM: a sibling that defines process_payment locally is skipped —
@@ -113,7 +129,10 @@ fn cross_repo_forward_reverse_and_homonym() {
     assert!(
         callers.is_empty(),
         "homonym repo defines process_payment locally → must not be a foreign caller; got {:?}",
-        callers.iter().map(|c| (&c.repo, &c.caller_qn)).collect::<Vec<_>>()
+        callers
+            .iter()
+            .map(|c| (&c.repo, &c.caller_qn))
+            .collect::<Vec<_>>()
     );
 
     let _ = fs::remove_dir_all(&root);

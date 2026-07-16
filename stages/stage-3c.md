@@ -81,10 +81,11 @@ Community detection operates on an **undirected, weighted** graph derived from t
 | Uses | 1.0 | Type usage is structural coupling. |
 | Extends | 2.0 | Supertrait relationship. |
 | HasMethod, HasField, HasVariant | 5.0 | Containment edges — strongest affinity. |
+| Defines, Contains | 5.0 | Containment edges (file/module → symbol) — same class as HasMethod. |
 
 **Directionality:** edges are treated as undirected for modularity computation. An edge A->B contributes weight w to both A's and B's adjacency.
 
-**Node set:** all symbol nodes (Function, Method, Struct, Enum, Trait, Constant, TypeAlias, Module). File and Directory nodes are excluded — they are structural, not functional.
+**Node set:** all symbol nodes (Function, Method, Struct, Enum, Trait, Constant, TypeAlias, Module) **plus File nodes**. File nodes participate as containment carriers: `Defines_File_*` edges bind same-file symbols, the dominant module-affinity signal — measured on the rust-self bench graph (2026-07-05): ~1129 `Defines_File_*` edges vs ~1559 `Calls_*`; without File nodes the adjacency carries no file/module co-membership signal and the Q12 directory-based ground-truth partition is unrecoverable (ARI 0.156 after the multi-level Louvain fix). File community memberships are not persisted (no `MemberOf_File_Community` table; Q12 scores symbol qualified names only). Directory nodes remain excluded — they are structural, not functional.
 
 ---
 

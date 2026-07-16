@@ -37,10 +37,13 @@ fn test_stdlib_resolution_push() {
     // source: stages/stage-3b-v2.md §5 Layer 5 — the Field's type_annotation
     // "Vec<i32>" puts "Vec" in receiver-type scope, the resolver's stdlib
     // pass creates the StdlibSymbol node for Vec::push.
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_v2_stdlib_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_v2_stdlib_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
     let fixture = tmp_root.join("fixture");
     fs::create_dir_all(fixture.join("src")).unwrap();
@@ -91,10 +94,13 @@ fn test_macro_expansion_println_creates_edge() {
     // source: stages/stage-3b-v2.md §5 Layer 4. A println!() call inside a
     // function must produce a Calls_Function_StdlibSymbol edge with
     // confidence 0.85 (rule-based).
-    let tmp_root = std::env::temp_dir().join(format!(
-        "stage3b_v2_macro_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not.
+    let tmp_root = tempfile::Builder::new()
+        .prefix("stage3b_v2_macro_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&tmp_root);
     let fixture = tmp_root.join("fixture");
     fs::create_dir_all(fixture.join("src")).unwrap();
@@ -141,8 +147,7 @@ pub struct Foo {
     pub x: i32,
 }
 "#;
-    let result = ai_architect_mcp::parser::rust::parse_rust_file(src, "test.rs")
-        .expect("parse");
+    let result = ai_architect_mcp::parser::rust::parse_rust_file(src, "test.rs").expect("parse");
     let debug_ref = result
         .refs
         .iter()
@@ -153,5 +158,8 @@ pub struct Foo {
         .refs
         .iter()
         .find(|r| r.kind == "DeriveImplements" && r.to_qualified_name == "Clone");
-    assert!(clone_ref.is_some(), "expected DeriveImplements ref for Clone");
+    assert!(
+        clone_ref.is_some(),
+        "expected DeriveImplements ref for Clone"
+    );
 }
