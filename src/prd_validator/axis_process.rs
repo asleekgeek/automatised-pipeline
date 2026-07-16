@@ -6,7 +6,7 @@
 // verdict.rs's header for the full split rationale).
 
 use super::{ResolvedClaim, ScopeClaim, ValidationFinding};
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use serde_json::json;
 
 pub(super) fn processes_for_resolved(
@@ -24,13 +24,13 @@ pub(super) fn processes_for_resolved(
 }
 
 fn processes_of(store: &GraphStore, qualified_name: &str) -> Vec<String> {
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     let mut out: Vec<String> = Vec::new();
     for label in ["Function", "Method"] {
         let rel = format!("ParticipatesIn_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(p:Process) \
-             WHERE n.qualified_name = '{escaped}' RETURN p.name"
+             WHERE n.qualified_name = {escaped} RETURN p.name"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {

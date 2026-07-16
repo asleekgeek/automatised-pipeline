@@ -2,8 +2,9 @@ use super::*;
 use crate::graph_store::NODE_FILE;
 
 // source: review finding #3 on issue #13's fix — file_has_graph_node used
-// to build its Cypher literal via `.replace('\'', "\\'")`, which a
-// `\'` payload in claim.token (LLM-generated PRD content, not trusted)
+// to build its Cypher literal via a naive single-quote-only
+// `String::replace` escape, which a `\'` payload in claim.token
+// (LLM-generated PRD content, not trusted)
 // can defeat: the escape turns `\'` into `\\'`, an escaped backslash
 // followed by an UNescaped closing quote, breaking out of the string
 // literal early. Mirrors graph_store::tests::test_cypher_injection_rejected.

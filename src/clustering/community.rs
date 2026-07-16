@@ -1,4 +1,4 @@
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
@@ -566,9 +566,8 @@ fn persist_communities(
         .map(|c| {
             let count = counts.get(&c).copied().unwrap_or(0);
             let cid = format!("community::louvain::{gamma}::{c}");
-            let cid_esc = cid.replace('\'', "\\'");
             vec![
-                ("id".into(), format!("'{cid_esc}'")),
+                ("id".into(), cypher_str(&cid)),
                 ("name".into(), format!("'community_{c}'")),
                 ("algorithm".into(), "'louvain+c2'".into()),
                 ("resolution_param".into(), gamma.to_string()),

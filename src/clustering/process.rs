@@ -1,4 +1,4 @@
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use std::collections::{HashMap, VecDeque};
 
 pub struct ProcessInfo {
@@ -291,17 +291,14 @@ fn persist_process_node(
     symbol_count: u64,
     max_depth: u64,
 ) -> Result<(), String> {
-    let proc_esc = process_id.replace('\'', "\\'");
+    let proc_lit = cypher_str(process_id);
     store.insert_node(
         "Process",
         &[
-            ("id", &format!("'{proc_esc}'")),
-            ("name", &format!("'{proc_esc}'")),
-            (
-                "entry_point_id",
-                &format!("'{}'", entry.id.replace('\'', "\\'")),
-            ),
-            ("entry_kind", &format!("'{}'", entry.kind)),
+            ("id", &proc_lit),
+            ("name", &proc_lit),
+            ("entry_point_id", &cypher_str(&entry.id)),
+            ("entry_kind", &cypher_str(&entry.kind)),
             ("entry_confidence", &entry.confidence.to_string()),
             ("depth", &max_depth.to_string()),
             ("symbol_count", &symbol_count.to_string()),
