@@ -4,25 +4,43 @@
 // new passes are added. source: stages/stage-3b-v2.md §5.
 
 use crate::graph_store::{cypher_str, GraphStore};
+use crate::resolver::{PhaseResult, UnresolvedRef};
 use std::collections::HashSet;
 
 /// Entry point for Layer 4 (macros + derives).
+/// postcondition: returns the same `(resolved, total, unresolved)` shape as
+/// every resolver.rs phase, so its counts fold cleanly into `total_refs`.
+/// source: issue #28 — previously returned only `resolved` (a raw edge
+/// count folded into the numerator with no matching denominator
+/// contribution), which let `resolution_rate` exceed 1.0.
 pub fn run_macro_expansion(
     store: &GraphStore,
     buf: &mut crate::resolver::EdgeBuffer,
     caller_label_of: &dyn Fn(&str) -> String,
-) -> Result<u64, String> {
+) -> PhaseResult {
     let mut created: HashSet<String> = HashSet::new();
-    let macro_edges = expand_macro_calls(store, buf, caller_label_of, &mut created)?;
-    Ok(macro_edges)
+    expand_macro_calls(store, buf, caller_label_of, &mut created)
 }
 
+/// Resolves each legacy macro-marker CallSite (`callee_name` ending in
+/// `!`) to its expansion table entry, then to one Calls_*_StdlibSymbol
+/// edge per `emit_calls` entry.
+///
+/// Granularity: one macro invocation is one syntactic reference, but its
+/// resolution fans out into N edges (one per `emit_calls` entry) — mirrors
+/// resolver::resolve_field_type_uses, where the denominator matches the
+/// numerator's granularity rather than the row's. A macro invocation with
+/// zero attemptable emissions (unknown macro name, non-callable caller, or
+/// an expansion with an empty `emit_calls`) contributes exactly 1 unresolved
+/// unit; a macro invocation with N emissions contributes N total units,
+/// split resolved/unresolved per the same rules other phases use
+/// (unknown-rel-table drops are unresolved, not silently skipped).
 fn expand_macro_calls(
     store: &GraphStore,
     buf: &mut crate::resolver::EdgeBuffer,
     caller_label_of: &dyn Fn(&str) -> String,
     created: &mut HashSet<String>,
-) -> Result<u64, String> {
+) -> PhaseResult {
     // The parser emits synthetic ExtractedRefs with kind="CallsMacro" that
     // the indexer drops (no matching rel-table). Re-reading is impossible
     // without another parse, so Layer 4 reads CallSite-less fallback: any
@@ -40,6 +58,8 @@ fn expand_macro_calls(
         "MATCH (cs:CallSite) RETURN cs.id, cs.callee_name"
     )?;
     let mut resolved = 0u64;
+    let mut total = 0u64;
+    let mut unresolved = Vec::new();
     for row in &qr.rows {
         if row.len() < 2 {
             continue;
@@ -50,26 +70,63 @@ fn expand_macro_calls(
             Some(n) => n,
             None => continue,
         };
-        let expansion = match crate::macro_expansion::lookup("rust", macro_name) {
-            Some(e) => e,
-            None => continue,
-        };
-        let caller_qn = caller_from_callsite(cs_id);
-        let caller_label = caller_label_of(&caller_qn);
-        // source: stages/stage-3b.md §2 — Calls_*_StdlibSymbol is defined
-        // for Function|Method callers only. Skip non-callable callers.
-        if caller_label != "Function" && caller_label != "Method" {
+        let (r, t, u) = resolve_one_macro_call_site(
+            store, buf, caller_label_of, created, cs_id, macro_name,
+        )?;
+        resolved += r;
+        total += t;
+        unresolved.extend(u);
+    }
+    Ok((resolved, total, unresolved))
+}
+
+fn resolve_one_macro_call_site(
+    store: &GraphStore,
+    buf: &mut crate::resolver::EdgeBuffer,
+    caller_label_of: &dyn Fn(&str) -> String,
+    created: &mut HashSet<String>,
+    cs_id: &str,
+    macro_name: &str,
+) -> PhaseResult {
+    let one_unresolved = |reason: &str| {
+        (0, 1, vec![UnresolvedRef {
+            kind: "Calls".to_string(), from_id: cs_id.to_string(),
+            target_text: format!("{macro_name}!"), reason: reason.to_string(),
+        }])
+    };
+    let expansion = match crate::macro_expansion::lookup("rust", macro_name) {
+        Some(e) => e,
+        None => return Ok(one_unresolved("no macro-expansion table entry")),
+    };
+    let caller_qn = caller_from_callsite(cs_id);
+    let caller_label = caller_label_of(&caller_qn);
+    // source: stages/stage-3b.md §2 — Calls_*_StdlibSymbol is defined for
+    // Function|Method callers only.
+    if caller_label != "Function" && caller_label != "Method" {
+        return Ok(one_unresolved("caller is not a callable (Function|Method)"));
+    }
+    if expansion.emit_calls.is_empty() {
+        return Ok(one_unresolved("expansion has no emit_calls entries"));
+    }
+    let mut resolved = 0u64;
+    let mut total = 0u64;
+    let mut unresolved = Vec::new();
+    let rel = format!("Calls_{caller_label}_StdlibSymbol");
+    for canonical in expansion.emit_calls {
+        total += 1;
+        ensure_stdlib_symbol(store, created, canonical, "rust")?;
+        if !crate::graph_store::is_known_rel_table(&rel) {
+            unresolved.push(UnresolvedRef {
+                kind: "Calls".to_string(), from_id: cs_id.to_string(),
+                target_text: canonical.to_string(),
+                reason: format!("unknown rel table {rel}"),
+            });
             continue;
         }
-        for canonical in expansion.emit_calls {
-            ensure_stdlib_symbol(store, created, canonical, "rust")?;
-            let rel = format!("Calls_{caller_label}_StdlibSymbol");
-            if buf.add(&rel, &caller_qn, canonical, 0.85, "macro-expansion") {
-                resolved += 1;
-            }
-        }
+        buf.add(&rel, &caller_qn, canonical, 0.85, "macro-expansion");
+        resolved += 1;
     }
-    Ok(resolved)
+    Ok((resolved, total, unresolved))
 }
 
 fn caller_from_callsite(cs_id: &str) -> String {
