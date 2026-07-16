@@ -17,6 +17,7 @@
 //
 // Reference implementation (to read, not copy): /Users/cdeust/Developments/ai-architect
 
+mod ambiguity_policy;
 mod bridge;
 mod clustering;
 mod epistemic;
