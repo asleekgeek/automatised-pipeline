@@ -68,9 +68,8 @@ fn expand_macro_calls(
             Some(n) => n,
             None => continue,
         };
-        let (r, t, u) = resolve_one_macro_call_site(
-            store, buf, caller_label_of, created, cs_id, macro_name,
-        )?;
+        let (r, t, u) =
+            resolve_one_macro_call_site(store, buf, caller_label_of, created, cs_id, macro_name)?;
         resolved += r;
         total += t;
         unresolved.extend(u);
@@ -87,10 +86,16 @@ fn resolve_one_macro_call_site(
     macro_name: &str,
 ) -> PhaseResult {
     let one_unresolved = |reason: &str| {
-        (0, 1, vec![UnresolvedRef {
-            kind: "Calls".to_string(), from_id: cs_id.to_string(),
-            target_text: format!("{macro_name}!"), reason: reason.to_string(),
-        }])
+        (
+            0,
+            1,
+            vec![UnresolvedRef {
+                kind: "Calls".to_string(),
+                from_id: cs_id.to_string(),
+                target_text: format!("{macro_name}!"),
+                reason: reason.to_string(),
+            }],
+        )
     };
     let expansion = match crate::macro_expansion::lookup("rust", macro_name) {
         Some(e) => e,
@@ -115,7 +120,8 @@ fn resolve_one_macro_call_site(
         ensure_stdlib_symbol(store, created, canonical, "rust")?;
         if !crate::graph_store::is_known_rel_table(&rel) {
             unresolved.push(UnresolvedRef {
-                kind: "Calls".to_string(), from_id: cs_id.to_string(),
+                kind: "Calls".to_string(),
+                from_id: cs_id.to_string(),
                 target_text: canonical.to_string(),
                 reason: format!("unknown rel table {rel}"),
             });

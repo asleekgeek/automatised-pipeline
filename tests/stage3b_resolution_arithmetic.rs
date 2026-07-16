@@ -22,11 +22,11 @@ use std::fs;
 /// Indexes `files` into a fresh graph and runs `resolve_graph` once.
 /// Returns the result plus the open store (so callers can re-resolve or
 /// inspect edge counts) and the tmp root (for cleanup).
-fn index_and_open(tag: &str, files: &[(&str, &str)]) -> (ResolutionResult, GraphStore, std::path::PathBuf) {
-    let root = std::env::temp_dir().join(format!(
-        "issue28_{tag}_{}",
-        std::process::id()
-    ));
+fn index_and_open(
+    tag: &str,
+    files: &[(&str, &str)],
+) -> (ResolutionResult, GraphStore, std::path::PathBuf) {
+    let root = std::env::temp_dir().join(format!("issue28_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let src = root.join("src");
     for (rel, body) in files {
@@ -49,14 +49,18 @@ fn resolved_sum(r: &ResolutionResult) -> u64 {
 
 fn assert_accounting_invariant(r: &ResolutionResult, label: &str) {
     assert_eq!(
-        resolved_sum(r), r.total_edges,
+        resolved_sum(r),
+        r.total_edges,
         "{label}: sum of per-kind resolved counts must equal total_edges"
     );
     assert_eq!(
-        r.total_edges + r.unresolved.len() as u64, r.total_refs,
+        r.total_edges + r.unresolved.len() as u64,
+        r.total_refs,
         "{label}: resolved ({}) + unresolved ({}) must equal total_refs ({}); \
          a mismatch means resolution_rate can read outside [0.0, 1.0]",
-        r.total_edges, r.unresolved.len(), r.total_refs
+        r.total_edges,
+        r.unresolved.len(),
+        r.total_refs
     );
     if r.total_refs > 0 {
         let rate = r.total_edges as f64 / r.total_refs as f64;
@@ -108,11 +112,21 @@ fn test_resolution_accounting_invariant_calls_macros_uses() {
     );
     eprintln!(
         "calls_macros_uses: calls={} uses={} total_edges={} total_refs={} unresolved={}",
-        res.calls_resolved, res.uses_resolved, res.total_edges, res.total_refs, res.unresolved.len()
+        res.calls_resolved,
+        res.uses_resolved,
+        res.total_edges,
+        res.total_refs,
+        res.unresolved.len()
     );
     // Sanity: the fixture actually exercises calls, macro expansion, and uses.
-    assert!(res.calls_resolved > 0, "expected the helper() call to resolve");
-    assert!(res.uses_resolved >= 1, "expected at least one Uses_Field_Struct edge from HashMap<Foo, Bar>");
+    assert!(
+        res.calls_resolved > 0,
+        "expected the helper() call to resolve"
+    );
+    assert!(
+        res.uses_resolved >= 1,
+        "expected at least one Uses_Field_Struct edge from HashMap<Foo, Bar>"
+    );
 
     assert_accounting_invariant(&res, "calls_macros_uses");
     let _ = fs::remove_dir_all(&root);
@@ -143,9 +157,16 @@ fn test_resolution_accounting_invariant_extends() {
     let (res, _store, root) = index_and_open("extends", &[("Demo.java", FIXTURE_JAVA_EXTENDS)]);
     eprintln!(
         "extends: impls={} extends={} total_edges={} total_refs={} unresolved={}",
-        res.impls_resolved, res.extends_resolved, res.total_edges, res.total_refs, res.unresolved.len()
+        res.impls_resolved,
+        res.extends_resolved,
+        res.total_edges,
+        res.total_refs,
+        res.unresolved.len()
     );
-    assert!(res.extends_resolved > 0, "expected Dog -> Animal to resolve");
+    assert!(
+        res.extends_resolved > 0,
+        "expected Dog -> Animal to resolve"
+    );
     assert_accounting_invariant(&res, "extends");
     let _ = fs::remove_dir_all(&root);
 }
@@ -164,7 +185,10 @@ fn test_resolution_idempotent_second_run_matches_first() {
         ],
     );
     assert_accounting_invariant(&res1, "idempotent-run1");
-    assert!(res1.total_refs > 0, "fixture must produce at least one reference");
+    assert!(
+        res1.total_refs > 0,
+        "fixture must produce at least one reference"
+    );
     let rate1 = res1.total_edges as f64 / res1.total_refs as f64;
 
     let edge_count_before = store.edge_count().expect("edge_count before");
@@ -221,10 +245,13 @@ class Dog(Animal, Animal):
 
 #[test]
 fn test_resolve_extends_dedups_duplicate_base_but_counts_both_resolved() {
-    let (res, store, root) = index_and_open("extends_dup", &[("demo.py", FIXTURE_PY_DUPLICATE_BASE)]);
+    let (res, store, root) =
+        index_and_open("extends_dup", &[("demo.py", FIXTURE_PY_DUPLICATE_BASE)]);
     eprintln!(
         "extends_dup: extends_resolved={} total_refs={} unresolved={}",
-        res.extends_resolved, res.total_refs, res.unresolved.len()
+        res.extends_resolved,
+        res.total_refs,
+        res.unresolved.len()
     );
     assert_accounting_invariant(&res, "extends_dup");
 
@@ -245,7 +272,8 @@ fn test_resolve_extends_dedups_duplicate_base_but_counts_both_resolved() {
         )
         .expect("query Extends_Struct_Struct");
     assert_eq!(
-        qr.rows.len(), 1,
+        qr.rows.len(),
+        1,
         "duplicate base name must collapse to exactly one physical edge, got {}",
         qr.rows.len()
     );
