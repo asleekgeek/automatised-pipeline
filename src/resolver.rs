@@ -496,9 +496,9 @@ fn resolve_single_import(
         caller_file: file_id,
         caller_package: None,
     };
-    // resolve() (not resolve_deterministic): a genuinely ambiguous import
-    // (no evidence distinguishes the candidates) is left unresolved rather
-    // than guessed — see resolve_single_call's doc comment for why.
+    // resolve() leaves a genuinely ambiguous import (no evidence
+    // distinguishes the candidates) unresolved rather than guessed — see
+    // resolve_single_call's doc comment for why.
     let (entry, evidence, conf) = match ambiguity_policy::resolve(candidates, &ctx) {
         PolicyResolution::Resolved {
             target,
@@ -751,7 +751,7 @@ fn stage_call_edge(
 /// remains the ONLY place that decides ambiguity/confidence; this function
 /// (and call_evidence.rs) only gather and represent evidence for it.
 ///
-/// Deliberately never reaches `resolve_deterministic`: a genuinely
+/// Deliberately never applies a deterministic tiebreak: a genuinely
 /// ambiguous reference (no evidence tier discriminates the candidates) is
 /// left unresolved (`Ambiguous`) rather than guessed. This is stricter than
 /// the issue's suggested "deterministic tiebreak to preserve recall" —
@@ -766,9 +766,10 @@ fn stage_call_edge(
 /// `ambiguous (N candidates)`) matches the pre-issue-#30 unqualified
 /// behavior exactly, so no real edges are lost — only the mislabeling and
 /// the qualified-path's arbitrary-`candidates[0]` guess are fixed.
-/// `resolve_deterministic` remains available (and tested) in
-/// ambiguity_policy for a future caller that prefers recall over
-/// precision for its own ambiguity class.
+/// The tiebreaking variant (`resolve_deterministic`) was removed from
+/// ambiguity_policy as dead code (PR #38); recover it from git history if
+/// a future caller prefers recall over precision for its own ambiguity
+/// class.
 ///
 /// precondition: `callee` is the raw callee spelling as parsed (for Kotlin,
 /// per issue #29, this preserves a package/object qualifier — see
