@@ -6,6 +6,120 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Production `GraphStore` opens no longer reserve lbug's unbounded 8 TiB
+  default per instance (issue #25).** PR #24 (issue #21) bounded
+  `max_db_size` for `cargo test` only, via `AP_LBUG_TEST_MAX_DB_SIZE` in
+  `.cargo/config.toml`; production code paths still resolved through
+  `SystemConfig::default()`'s sentinel, which lbug's C++ core substitutes
+  with `DEFAULT_VM_REGION_MAX_SIZE = 1 << 43` (8 TiB) per `Database::new`.
+  With `graph_cache::MAX_CACHED_GRAPHS = 8` entries live in the read-path
+  cache at once, that was a 64 TiB worst-case virtual-address reservation.
+  Fix: `graph_store::system_config()` now resolves a new
+  `AP_LBUG_MAX_DB_SIZE` production override (falling back to a measured 8
+  GiB default — see the README's "Configuration — `max_db_size`" section
+  for the full measurement table and sizing derivation) when the test-only
+  var is absent, validating either var (power of two, ≥ 8 MiB per lbug's
+  `BufferManager::verifySizeParams`) with an actionable error rather than a
+  silent fallback. Worst case at the cache cap: 8 × 8 GiB = 64 GiB — a
+  1024x reduction from the pre-fix 64 TiB. Regression guard:
+  `graph_cache::tests::prod_default_bound_opens_max_cached_graphs_simultaneously`
+  opens `MAX_CACHED_GRAPHS` real `GraphStore`s under the production default
+  bound, keeps every handle simultaneously live, and exercises the cache's
+  fingerprint/eviction path at that exact byte count.
+
+- **Isolation-site audit (issue #25 follow-up): 46 test fixture/output
+  directories derived their path from `std::env::temp_dir().join(format!(
+  "{prefix}_{}", std::process::id()))`, an issue-#21-class defect the
+  original #21/#24 sweep missed.** Found via a soak run that hit
+  `tests/multilang_integration.rs`'s `test_multilang_auto_index` and
+  `test_language_filter_rust_only` both failing with "Found duplicated
+  primary key value sample.rs / sample.py". Root cause: `std::process::id()`
+  is identical for every `#[test]` in one binary (all run as threads of one
+  process, so it disambiguates nothing beyond a differing literal prefix)
+  and, more importantly, can repeat across separate process invocations
+  under OS PID reuse — a real risk under a tight back-to-back soak, where a
+  leftover DB from a prior run's process can collide with a new run that
+  gets the same recycled PID. Fix: every site now derives its directory via
+  `tempfile::Builder::new().prefix(tag).tempdir().expect(..).keep()` — a
+  cryptographically-random suffix that depends on neither the thread nor
+  the OS PID; `.keep()` hands the already-created directory to each test's
+  existing manual cleanup instead of auto-deleting it on drop. Full audit
+  table (file:line, prior derivation, verdict) is in the issue #25 PR body.
+
+- **`prepare_prd_input` now uses the hybrid BM25/vector search index when one
+  exists, instead of always running the substring-only fallback scorer
+  (issue #18).** `search_and_classify` (`src/prd_input/matching.rs`)
+  unconditionally passed `index_dir: None` to `search::search_graph`
+  regardless of whether `analyze_codebase` had already built a
+  `search_index/` next to the graph — Stage 4 recall was capped at the
+  weakest matcher unconditionally, even when Stage 3d's `search_codebase`
+  on the same graph used the real hybrid index. Fix: extracted
+  `search::resolve_search_index_dir` (the sibling-`search_index/`-directory
+  logic previously inlined in `do_search_codebase`, `src/main.rs`) as the
+  single source of truth for resolving a graph's index directory, and
+  `prepare_prd_input` now calls it and threads the result through
+  `search_and_classify` → `search_hits`. When no index exists, the fallback
+  to substring search is now explicit and always logged
+  (`eprintln!("[ap] prepare_prd_input: no search_index found ...")`) —
+  never silent. Measured on a fixed fixture (`src/prd_input/matching_tests.rs::
+  test_issue18_hybrid_index_reduces_spurious_candidates`): substring
+  fallback (pre-fix behavior) surfaced 2 spurious `candidate_symbols` from
+  unrelated filler words in the description; the hybrid index (post-fix)
+  surfaced 1 on the identical graph and description — source: measured on
+  2026-07-15, that test's fixture. The 2→1 count is specific to that small
+  fixture, not a guaranteed reduction ratio for arbitrary descriptions/graphs
+  — the regression test itself asserts `before >= after`, not a fixed delta.
+
+### Changed — `prepare_prd_input` tool schema, `preparer_version` 1.1.0 → 1.2.0
+
+Additive only. `prd_context` gains a new `search_backend` field —
+`"hybrid"` when the search index was found and used, `"substring_fallback"`
+when none was found — so consumers can see which scorer produced
+`matched_symbols`/`candidate_symbols` for a given run.
+
+- **`prepare_prd_input` (feature mode) no longer presents lexical substring
+  matches as verified grounding (issue #14).** The matcher ran every
+  natural-language word from the description through the graph search with
+  `min_score: 0.0` and folded every hit into `matched_symbols` next to a
+  bundle-level `verified: true`, so an accidental substring collision (e.g.
+  the word "anchor" hitting `_CONCRETE_ANCHOR`) was indistinguishable from a
+  real identifier reference. Measured proof: a genuine partial-word hit and
+  a false-positive substring hit score IDENTICALLY under the existing scoring
+  formula at equal substring-to-name ratio, so no score threshold can tell
+  them apart — the fix classifies every hit's `match_mode` (verbatim exact
+  citation / exact name match / lexical-only) instead.
+
+### Changed — `prepare_prd_input` tool schema, `preparer_version` 1.0.0 → 1.1.0
+
+**Consumed by `prd-spec-generator` — read this before bumping the pinned AP
+version.** All changes are additive to the JSON shape; the semantic change
+below is the one to check for in integrating code.
+
+- **`matched_symbols` semantics changed: it can now be empty where it
+  previously would not have been.** A description with only lexical
+  (non-exact) word overlap against the graph now yields `matched_symbols:
+  []` rather than a list of unverified guesses — an empty array is the
+  correct, expected output when nothing can be verified, not a bug or a
+  sign the pipeline failed. Any consumer that treated a non-empty
+  `matched_symbols` as a given must handle the empty case.
+- **New per-symbol fields** on every `matched_symbols` entry: `match_mode`
+  (`"verbatim"` — identifier cited in the description in backticks and
+  resolved exactly; `"exact_name"` — a description word equals the symbol's
+  name/qualified-name tail exactly) and `confidence` (the raw search score;
+  informational only — trust is carried by `match_mode`, not this score).
+- **New `candidate_symbols` array** (`prd_context.candidate_symbols`, same
+  shape as `matched_symbols` plus `match_mode: "lexical"`): substring/fuzzy
+  hits with no exact-identity evidence. Never folded into `matched_symbols`
+  or into `impacted_communities`/`impacted_processes`. Exposed for
+  visibility only — do not treat as verified.
+- **New `candidate_symbol_count`** field on the `prepare_prd_input` tool
+  response, alongside the existing `matched_symbol_count`.
+- Cite identifiers in backticks in finding/feature descriptions to get
+  verbatim-priority grounding — this is now the reliable way to guarantee a
+  specific symbol appears in `matched_symbols`.
+
 ## [0.5.0] — Cross-repo bridge: link per-repo graphs at query time
 
 First tagged release since v0.2.2; folds in the untagged 0.3.0 and 0.4.0 work

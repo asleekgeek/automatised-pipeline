@@ -66,26 +66,58 @@ pub const RUST_SYMBOLS: &[StdlibSymbol] = &[
     m!("Vec", "as_mut_slice", "std::vec::Vec::as_mut_slice"),
     // VecDeque — source: https://doc.rust-lang.org/std/collections/struct.VecDeque.html
     m!("VecDeque", "new", "std::collections::VecDeque::new"),
-    m!("VecDeque", "push_back", "std::collections::VecDeque::push_back"),
-    m!("VecDeque", "push_front", "std::collections::VecDeque::push_front"),
-    m!("VecDeque", "pop_back", "std::collections::VecDeque::pop_back"),
-    m!("VecDeque", "pop_front", "std::collections::VecDeque::pop_front"),
+    m!(
+        "VecDeque",
+        "push_back",
+        "std::collections::VecDeque::push_back"
+    ),
+    m!(
+        "VecDeque",
+        "push_front",
+        "std::collections::VecDeque::push_front"
+    ),
+    m!(
+        "VecDeque",
+        "pop_back",
+        "std::collections::VecDeque::pop_back"
+    ),
+    m!(
+        "VecDeque",
+        "pop_front",
+        "std::collections::VecDeque::pop_front"
+    ),
     m!("VecDeque", "len", "std::collections::VecDeque::len"),
-    m!("VecDeque", "is_empty", "std::collections::VecDeque::is_empty"),
+    m!(
+        "VecDeque",
+        "is_empty",
+        "std::collections::VecDeque::is_empty"
+    ),
     m!("VecDeque", "iter", "std::collections::VecDeque::iter"),
     // HashMap — source: https://doc.rust-lang.org/std/collections/struct.HashMap.html
     m!("HashMap", "new", "std::collections::HashMap::new"),
-    m!("HashMap", "with_capacity", "std::collections::HashMap::with_capacity"),
+    m!(
+        "HashMap",
+        "with_capacity",
+        "std::collections::HashMap::with_capacity"
+    ),
     m!("HashMap", "get", "std::collections::HashMap::get"),
     m!("HashMap", "get_mut", "std::collections::HashMap::get_mut"),
     m!("HashMap", "insert", "std::collections::HashMap::insert"),
     m!("HashMap", "remove", "std::collections::HashMap::remove"),
-    m!("HashMap", "contains_key", "std::collections::HashMap::contains_key"),
+    m!(
+        "HashMap",
+        "contains_key",
+        "std::collections::HashMap::contains_key"
+    ),
     m!("HashMap", "iter", "std::collections::HashMap::iter"),
     m!("HashMap", "iter_mut", "std::collections::HashMap::iter_mut"),
     m!("HashMap", "keys", "std::collections::HashMap::keys"),
     m!("HashMap", "values", "std::collections::HashMap::values"),
-    m!("HashMap", "values_mut", "std::collections::HashMap::values_mut"),
+    m!(
+        "HashMap",
+        "values_mut",
+        "std::collections::HashMap::values_mut"
+    ),
     m!("HashMap", "len", "std::collections::HashMap::len"),
     m!("HashMap", "is_empty", "std::collections::HashMap::is_empty"),
     m!("HashMap", "entry", "std::collections::HashMap::entry"),
@@ -93,7 +125,11 @@ pub const RUST_SYMBOLS: &[StdlibSymbol] = &[
     m!("HashMap", "drain", "std::collections::HashMap::drain"),
     // HashSet — source: https://doc.rust-lang.org/std/collections/struct.HashSet.html
     m!("HashSet", "new", "std::collections::HashSet::new"),
-    m!("HashSet", "with_capacity", "std::collections::HashSet::with_capacity"),
+    m!(
+        "HashSet",
+        "with_capacity",
+        "std::collections::HashSet::with_capacity"
+    ),
     m!("HashSet", "insert", "std::collections::HashSet::insert"),
     m!("HashSet", "remove", "std::collections::HashSet::remove"),
     m!("HashSet", "contains", "std::collections::HashSet::contains"),
@@ -105,17 +141,29 @@ pub const RUST_SYMBOLS: &[StdlibSymbol] = &[
     m!("BTreeMap", "get", "std::collections::BTreeMap::get"),
     m!("BTreeMap", "insert", "std::collections::BTreeMap::insert"),
     m!("BTreeMap", "remove", "std::collections::BTreeMap::remove"),
-    m!("BTreeMap", "contains_key", "std::collections::BTreeMap::contains_key"),
+    m!(
+        "BTreeMap",
+        "contains_key",
+        "std::collections::BTreeMap::contains_key"
+    ),
     m!("BTreeMap", "iter", "std::collections::BTreeMap::iter"),
     m!("BTreeMap", "len", "std::collections::BTreeMap::len"),
     // BTreeSet — source: https://doc.rust-lang.org/std/collections/struct.BTreeSet.html
     m!("BTreeSet", "new", "std::collections::BTreeSet::new"),
     m!("BTreeSet", "insert", "std::collections::BTreeSet::insert"),
-    m!("BTreeSet", "contains", "std::collections::BTreeSet::contains"),
+    m!(
+        "BTreeSet",
+        "contains",
+        "std::collections::BTreeSet::contains"
+    ),
     m!("BTreeSet", "iter", "std::collections::BTreeSet::iter"),
     // String / &str — source: https://doc.rust-lang.org/std/string/struct.String.html
     m!("String", "new", "std::string::String::new"),
-    m!("String", "with_capacity", "std::string::String::with_capacity"),
+    m!(
+        "String",
+        "with_capacity",
+        "std::string::String::with_capacity"
+    ),
     m!("String", "from", "std::string::String::from"),
     m!("String", "len", "std::string::String::len"),
     m!("String", "is_empty", "std::string::String::is_empty"),
@@ -136,14 +184,30 @@ pub const RUST_SYMBOLS: &[StdlibSymbol] = &[
     m!("String", "starts_with", "std::string::String::starts_with"),
     m!("String", "ends_with", "std::string::String::ends_with"),
     m!("String", "replace", "std::string::String::replace"),
-    m!("String", "to_uppercase", "std::string::String::to_uppercase"),
-    m!("String", "to_lowercase", "std::string::String::to_lowercase"),
+    m!(
+        "String",
+        "to_uppercase",
+        "std::string::String::to_uppercase"
+    ),
+    m!(
+        "String",
+        "to_lowercase",
+        "std::string::String::to_lowercase"
+    ),
     m!("String", "parse", "std::string::String::parse"),
     // Option — source: https://doc.rust-lang.org/std/option/enum.Option.html
     m!("Option", "unwrap", "std::option::Option::unwrap"),
     m!("Option", "unwrap_or", "std::option::Option::unwrap_or"),
-    m!("Option", "unwrap_or_else", "std::option::Option::unwrap_or_else"),
-    m!("Option", "unwrap_or_default", "std::option::Option::unwrap_or_default"),
+    m!(
+        "Option",
+        "unwrap_or_else",
+        "std::option::Option::unwrap_or_else"
+    ),
+    m!(
+        "Option",
+        "unwrap_or_default",
+        "std::option::Option::unwrap_or_default"
+    ),
     m!("Option", "expect", "std::option::Option::expect"),
     m!("Option", "is_some", "std::option::Option::is_some"),
     m!("Option", "is_none", "std::option::Option::is_none"),
@@ -160,7 +224,11 @@ pub const RUST_SYMBOLS: &[StdlibSymbol] = &[
     // Result — source: https://doc.rust-lang.org/std/result/enum.Result.html
     m!("Result", "unwrap", "std::result::Result::unwrap"),
     m!("Result", "unwrap_or", "std::result::Result::unwrap_or"),
-    m!("Result", "unwrap_or_else", "std::result::Result::unwrap_or_else"),
+    m!(
+        "Result",
+        "unwrap_or_else",
+        "std::result::Result::unwrap_or_else"
+    ),
     m!("Result", "expect", "std::result::Result::expect"),
     m!("Result", "is_ok", "std::result::Result::is_ok"),
     m!("Result", "is_err", "std::result::Result::is_err"),

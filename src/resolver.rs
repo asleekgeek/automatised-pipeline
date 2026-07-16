@@ -80,21 +80,37 @@ struct SymbolEntry {
 struct SymbolIndex {
     by_name: HashMap<String, Vec<SymbolEntry>>,
     by_qn: HashMap<String, SymbolEntry>,
+    // Symbols grouped by their immediate parent module path (qualified_name
+    // with the last "::segment" stripped). Populated once, O(total_symbols).
+    // Lets glob-import resolution (`from x import *`) look up only the
+    // symbols that live directly inside `x` instead of scanning every
+    // symbol in the graph per glob import — see resolve_glob_import.
+    by_parent_module: HashMap<String, Vec<SymbolEntry>>,
 }
 
 fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
     let labels = &[
-        "Function", "Method", "Struct", "Enum", "Trait",
-        "Constant", "TypeAlias", "Module", "File",
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
+        "File",
     ];
     let mut by_name: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
     let mut by_qn: HashMap<String, SymbolEntry> = HashMap::new();
+    let mut by_parent_module: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
     for label in labels {
-        let qn_col = if *label == "File" { "path" } else { "qualified_name" };
+        let qn_col = if *label == "File" {
+            "path"
+        } else {
+            "qualified_name"
+        };
         let name_col = if *label == "File" { "name" } else { "name" };
-        let cypher = format!(
-            "MATCH (n:{label}) RETURN n.id, n.{name_col}, n.{qn_col}"
-        );
+        let cypher = format!("MATCH (n:{label}) RETURN n.id, n.{name_col}, n.{qn_col}");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
             Err(_) => continue,
@@ -108,11 +124,24 @@ fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
                 label: label.to_string(),
                 qualified_name: row[2].clone(),
             };
-            by_name.entry(row[1].clone()).or_default().push(entry.clone());
+            by_name
+                .entry(row[1].clone())
+                .or_default()
+                .push(entry.clone());
+            if let Some((parent, _)) = row[2].rsplit_once("::") {
+                by_parent_module
+                    .entry(parent.to_string())
+                    .or_default()
+                    .push(entry.clone());
+            }
             by_qn.insert(row[2].clone(), entry);
         }
     }
-    Ok(SymbolIndex { by_name, by_qn })
+    Ok(SymbolIndex {
+        by_name,
+        by_qn,
+        by_parent_module,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +159,7 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
     let (imp_resolved, imp_total, imp_unresolved) = resolve_imports(store, &idx, &mut buf)?;
     let (call_resolved, call_total, call_unresolved) =
         resolve_calls(store, &idx, &file_imports, &mut buf)?;
-    let (impl_resolved, impl_total, impl_unresolved) =
-        resolve_implements(store, &idx, &mut buf)?;
+    let (impl_resolved, impl_total, impl_unresolved) = resolve_implements(store, &idx, &mut buf)?;
     let (ext_resolved, ext_total, ext_unresolved) = resolve_extends(store, &idx, &mut buf)?;
     let (uses_resolved, uses_total, uses_unresolved) =
         resolve_uses(store, &idx, &file_imports, &mut buf)?;
@@ -147,11 +175,10 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
     // unresolved) shape as every other phase; its total is folded into
     // `total_refs` below.
     let idx_ref = &idx;
-    let (macro_resolved, macro_total, macro_unresolved) = crate::resolver_layers::run_macro_expansion(
-        store,
-        &mut buf,
-        &|qn: &str| determine_caller_label(idx_ref, qn),
-    )?;
+    let (macro_resolved, macro_total, macro_unresolved) =
+        crate::resolver_layers::run_macro_expansion(store, &mut buf, &|qn: &str| {
+            determine_caller_label(idx_ref, qn)
+        })?;
 
     buf.flush(store)?;
     let call_resolved = call_resolved + macro_resolved;
@@ -242,7 +269,11 @@ pub struct EdgeBuffer {
 
 impl EdgeBuffer {
     fn new(existing: HashSet<(String, String, String)>) -> Self {
-        Self { by_table: HashMap::new(), persisted: existing, staged: HashSet::new() }
+        Self {
+            by_table: HashMap::new(),
+            persisted: existing,
+            staged: HashSet::new(),
+        }
     }
 
     /// Stages an edge for the given (rel_table, from, to) key.
@@ -261,7 +292,11 @@ impl EdgeBuffer {
         confidence: f64,
         method: &str,
     ) -> AddOutcome {
-        let key = (rel_table.to_string(), from_id.to_string(), to_id.to_string());
+        let key = (
+            rel_table.to_string(),
+            from_id.to_string(),
+            to_id.to_string(),
+        );
         if self.persisted.contains(&key) {
             return AddOutcome::AlreadyPersisted;
         }
@@ -316,9 +351,7 @@ fn load_existing_edges(store: &GraphStore) -> Result<HashSet<(String, String, St
         if !is_resolution_edge(rel) {
             continue;
         }
-        let cypher = format!(
-            "MATCH (a:{from_label})-[r:{rel}]->(b:{to_label}) RETURN a.id, b.id"
-        );
+        let cypher = format!("MATCH (a:{from_label})-[r:{rel}]->(b:{to_label}) RETURN a.id, b.id");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
             Err(_) => continue,
@@ -347,17 +380,14 @@ fn is_resolution_edge(rel: &str) -> bool {
 
 pub(crate) type PhaseResult = Result<(u64, u64, Vec<UnresolvedRef>), String>;
 
-fn resolve_imports(
-    store: &GraphStore,
-    idx: &SymbolIndex,
-    buf: &mut EdgeBuffer,
-) -> PhaseResult {
-    let qr = store.execute_query(
-        "MATCH (i:Import) RETURN i.id, i.path, i.is_glob, i.language"
-    )?;
+fn resolve_imports(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) -> PhaseResult {
+    let qr = store.execute_query("MATCH (i:Import) RETURN i.id, i.path, i.is_glob, i.language")?;
     let mut resolved = 0u64;
     let mut total = 0u64;
     let mut unresolved = Vec::new();
+    // §10.4 — Import nodes whose target was found; is_resolved is flipped to
+    // true for these (all others keep the false written at index time).
+    let mut resolved_ids: Vec<&str> = Vec::new();
 
     for row in &qr.rows {
         if row.len() < 4 {
@@ -367,8 +397,12 @@ fn resolve_imports(
         let (r, t, u) = resolve_one_import(idx, buf, provider, &row[0], &row[1], &row[2]);
         resolved += r;
         total += t;
+        if r > 0 {
+            resolved_ids.push(&row[0]);
+        }
         unresolved.extend(u);
     }
+    store.mark_nodes_resolved("Import", &resolved_ids)?;
     Ok((resolved, total, unresolved))
 }
 
@@ -387,10 +421,16 @@ fn resolve_one_import(
     is_glob_str: &str,
 ) -> (u64, u64, Vec<UnresolvedRef>) {
     if provider.is_external_import(path) {
-        return (0, 1, vec![UnresolvedRef {
-            kind: "Imports".to_string(), from_id: import_id.to_string(),
-            target_text: path.to_string(), reason: "external crate".to_string(),
-        }]);
+        return (
+            0,
+            1,
+            vec![UnresolvedRef {
+                kind: "Imports".to_string(),
+                from_id: import_id.to_string(),
+                target_text: path.to_string(),
+                reason: "external crate".to_string(),
+            }],
+        );
     }
     let file_id = extract_file_from_import_id(import_id);
     let normalized = provider.normalize_import_path(path).to_string();
@@ -402,10 +442,16 @@ fn resolve_one_import(
     }
     match resolve_single_import(idx, buf, provider, &file_id, &normalized) {
         Ok(count) => (count, 1, vec![]),
-        Err(reason) => (0, 1, vec![UnresolvedRef {
-            kind: "Imports".to_string(), from_id: import_id.to_string(),
-            target_text: path.to_string(), reason: reason.to_string(),
-        }]),
+        Err(reason) => (
+            0,
+            1,
+            vec![UnresolvedRef {
+                kind: "Imports".to_string(),
+                from_id: import_id.to_string(),
+                target_text: path.to_string(),
+                reason: reason.to_string(),
+            }],
+        ),
     }
 }
 
@@ -421,8 +467,12 @@ fn resolve_single_import(
     normalized_path: &str,
 ) -> Result<u64, &'static str> {
     let last_segment = provider.import_last_segment(normalized_path);
-    let candidates = idx.by_name.get(last_segment).ok_or("no target found in graph")?;
-    let entry = pick_best_candidate(candidates, normalized_path).ok_or("no target found in graph")?;
+    let candidates = idx
+        .by_name
+        .get(last_segment)
+        .ok_or("no target found in graph")?;
+    let entry =
+        pick_best_candidate(candidates, normalized_path).ok_or("no target found in graph")?;
     let table = format!("Imports_File_{}", entry.label);
     if !check_known_rel_table(&table, file_id, &entry.id) {
         return Err("unknown rel table for import target");
@@ -443,11 +493,24 @@ fn resolve_glob_import(
     file_id: &str,
     module_path: &str,
 ) -> u64 {
+    // Non-termination fix (2026-07-04): this used to scan idx.by_qn (every
+    // symbol in the whole graph) for EVERY glob import, i.e.
+    // O(glob_imports * total_symbols). On a repo with a vendored dependency
+    // tree (e.g. cortex-viz's 503MB .venv indexed via include_dependencies),
+    // total_symbols is huge AND Python packages commonly re-export via
+    // `from .submodule import *` inside __init__.py, so glob_imports also
+    // scales with corpus size — the product is quadratic in corpus size.
+    // Measured: 2_000 glob imports x 100_000 symbols took ~1.3s with the
+    // linear-scan version (see bench_glob_import_scaling, "before" run,
+    // commit message for the exact numbers). by_parent_module groups
+    // symbols by parent qualified-name once (O(total_symbols) at index
+    // build time), turning each glob import's cost into O(matches)
+    // instead of O(total_symbols).
+    let Some(candidates) = idx.by_parent_module.get(module_path) else {
+        return 0;
+    };
     let mut count = 0u64;
-    for (_qn, entry) in &idx.by_qn {
-        if !is_child_of_module(_qn, module_path) {
-            continue;
-        }
+    for entry in candidates {
         let table = format!("Imports_File_{}", entry.label);
         if !check_known_rel_table(&table, file_id, &entry.id) {
             continue;
@@ -469,12 +532,13 @@ fn resolve_calls(
     file_imports: &HashMap<String, Vec<String>>,
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
-    let qr = store.execute_query(
-        "MATCH (cs:CallSite) RETURN cs.id, cs.callee_name, cs.language"
-    )?;
+    let qr =
+        store.execute_query("MATCH (cs:CallSite) RETURN cs.id, cs.callee_name, cs.language")?;
     let mut resolved = 0u64;
     let mut total = 0u64;
     let mut unresolved = Vec::new();
+    // §10.4 — CallSite nodes whose callee was resolved to a graph target.
+    let mut resolved_ids: Vec<String> = Vec::new();
 
     for row in &qr.rows {
         if row.len() < 3 {
@@ -497,11 +561,27 @@ fn resolve_calls(
         let file_id = extract_file_from_qn(&caller_qn);
         let caller_label = determine_caller_label(idx, &caller_qn);
         let (r, u) = resolve_one_call_site(
-            idx, provider, file_imports, buf, cs_id, callee, &caller_qn, &file_id, &caller_label,
+            idx,
+            provider,
+            file_imports,
+            buf,
+            cs_id,
+            callee,
+            &caller_qn,
+            &file_id,
+            &caller_label,
         );
         resolved += r;
+        if r > 0 {
+            // The callee resolved to a graph target — flip the CallSite's
+            // is_resolved (§10.4). Applies to both Calls and Uses edges
+            // (both mean "target found").
+            resolved_ids.push(cs_id.clone());
+        }
         unresolved.extend(u);
     }
+    let id_refs: Vec<&str> = resolved_ids.iter().map(|s| s.as_str()).collect();
+    store.mark_nodes_resolved("CallSite", &id_refs)?;
     Ok((resolved, total, unresolved))
 }
 
@@ -525,10 +605,17 @@ fn resolve_one_call_site(
 ) -> (u64, Vec<UnresolvedRef>) {
     let target = match resolve_single_call(idx, provider, file_imports, callee, file_id) {
         Some(t) => t,
-        None => return (0, vec![UnresolvedRef {
-            kind: "Calls".to_string(), from_id: cs_id.to_string(),
-            target_text: callee.to_string(), reason: "no target found".to_string(),
-        }]),
+        None => {
+            return (
+                0,
+                vec![UnresolvedRef {
+                    kind: "Calls".to_string(),
+                    from_id: cs_id.to_string(),
+                    target_text: callee.to_string(),
+                    reason: "no target found".to_string(),
+                }],
+            )
+        }
     };
     // source: stages/stage-3b.md §2 — Calls is Function|Method ->
     // Function|Method only. Names resolving to Struct/Enum/Trait/TypeAlias
@@ -537,29 +624,46 @@ fn resolve_one_call_site(
     let conf = if callee.contains("::") { 1.0 } else { 0.9 };
     let (rel_opt, kind) = match target.label.as_str() {
         "Function" | "Method" => (
-            Some(format!("Calls_{caller_label}_{}", target.label)), "Calls",
+            Some(format!("Calls_{caller_label}_{}", target.label)),
+            "Calls",
         ),
         "Struct" | "Enum" | "Trait" | "TypeAlias"
             if caller_label == "Function" || caller_label == "Method" =>
         {
-            (Some(format!("Uses_{caller_label}_{}", target.label)), "Uses")
+            (
+                Some(format!("Uses_{caller_label}_{}", target.label)),
+                "Uses",
+            )
         }
         _ => (None, "Calls"),
     };
     let rel = match rel_opt {
         Some(r) => r,
-        None => return (0, vec![UnresolvedRef {
-            kind: kind.to_string(), from_id: cs_id.to_string(), target_text: callee.to_string(),
-            reason: format!(
-                "no rel table for {caller_label} -> {} (callsite-as-call)", target.label
-            ),
-        }]),
+        None => {
+            return (
+                0,
+                vec![UnresolvedRef {
+                    kind: kind.to_string(),
+                    from_id: cs_id.to_string(),
+                    target_text: callee.to_string(),
+                    reason: format!(
+                        "no rel table for {caller_label} -> {} (callsite-as-call)",
+                        target.label
+                    ),
+                }],
+            )
+        }
     };
     if !check_known_rel_table(&rel, caller_qn, &target.id) {
-        return (0, vec![UnresolvedRef {
-            kind: kind.to_string(), from_id: cs_id.to_string(), target_text: callee.to_string(),
-            reason: format!("unknown rel table {rel}"),
-        }]);
+        return (
+            0,
+            vec![UnresolvedRef {
+                kind: kind.to_string(),
+                from_id: cs_id.to_string(),
+                target_text: callee.to_string(),
+                reason: format!("unknown rel table {rel}"),
+            }],
+        );
     }
     buf.add(&rel, caller_qn, &target.id, conf, "import-scope-lookup");
     (1, vec![])
@@ -593,7 +697,8 @@ fn resolve_single_call(
     // Fallback: try direct name match (same-file definitions)
     let candidates = idx.by_name.get(callee)?;
     // Prefer same-file definitions
-    let same_file: Vec<_> = candidates.iter()
+    let same_file: Vec<_> = candidates
+        .iter()
         .filter(|e| e.qualified_name.starts_with(file_id))
         .collect();
     if same_file.len() == 1 {
@@ -622,11 +727,7 @@ fn resolve_single_call(
 /// with a trait method, producing false edges and missing every declared
 /// impl). Mirrors resolve_extends and finally wires the
 /// macro_expansion.emit_implements table (Debug → std::fmt::Debug, …).
-fn resolve_implements(
-    store: &GraphStore,
-    idx: &SymbolIndex,
-    buf: &mut EdgeBuffer,
-) -> PhaseResult {
+fn resolve_implements(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) -> PhaseResult {
     let mut resolved = 0u64;
     let mut total = 0u64;
     let mut unresolved = Vec::new();
@@ -656,7 +757,14 @@ fn resolve_implements(
                 }
                 total += 1;
                 if resolve_one_implements(
-                    store, idx, buf, provider, label, from_id, name, &mut created_stdlib,
+                    store,
+                    idx,
+                    buf,
+                    provider,
+                    label,
+                    from_id,
+                    name,
+                    &mut created_stdlib,
                 )? {
                     resolved += 1;
                 } else {
@@ -717,9 +825,7 @@ fn resolve_one_implements(
         let mut any = false;
         let table = format!("Implements_{label}_StdlibSymbol");
         for canonical in exp.emit_implements {
-            crate::resolver_layers::ensure_stdlib_symbol(
-                store, created_stdlib, canonical, "rust",
-            )?;
+            crate::resolver_layers::ensure_stdlib_symbol(store, created_stdlib, canonical, "rust")?;
             buf.add(&table, from_id, canonical, 0.9, "derive-macro");
             any = true;
         }
@@ -809,7 +915,7 @@ fn resolve_extends(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) 
     let mut total = 0u64;
     let mut unresolved = Vec::new();
 
-    for (label, table_self) in &[
+    for &(label, table_self) in &[
         ("Struct", "Extends_Struct_Struct"),
         ("Enum", "Extends_Enum_Enum"),
         ("Trait", "Extends_Trait_Trait"),
@@ -834,7 +940,8 @@ fn resolve_extends(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) 
                     continue;
                 }
                 total += 1;
-                let (r, u) = resolve_one_extends_base(idx, buf, label, table_self, child_qn, raw_base);
+                let (r, u) =
+                    resolve_one_extends_base(idx, buf, label, table_self, child_qn, raw_base);
                 resolved += r;
                 unresolved.extend(u);
             }
@@ -848,6 +955,8 @@ fn resolve_extends(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffer) 
 /// postcondition: `(1, vec![])` iff the base name matched a corpus symbol
 /// and a schema-known rel table exists for the (label, target.label) pair
 /// (regardless of `AddOutcome`); `(0, vec![one entry])` otherwise.
+/// Extracted from `resolve_extends` to keep that function under the §4.2
+/// size limit; behavior is identical to the pre-extraction inline loop body.
 fn resolve_one_extends_base(
     idx: &SymbolIndex,
     buf: &mut EdgeBuffer,
@@ -862,19 +971,37 @@ fn resolve_one_extends_base(
     let lookup = raw_base.rsplit('.').next().unwrap_or(raw_base);
     let candidates = match idx.by_name.get(lookup) {
         Some(v) => v,
-        None => return (0, vec![UnresolvedRef {
-            kind: "Extends".to_string(), from_id: child_qn.to_string(),
-            target_text: raw_base.to_string(), reason: "no_target_in_corpus".to_string(),
-        }]),
+        None => {
+            return (
+                0,
+                vec![UnresolvedRef {
+                    kind: "Extends".to_string(),
+                    from_id: child_qn.to_string(),
+                    target_text: raw_base.to_string(),
+                    reason: "no_target_in_corpus".to_string(),
+                }],
+            )
+        }
     };
     // Prefer same-label matches (Struct→Struct, etc.) over cross-label
     // (Struct→Trait) for symmetry with `table_self`.
-    let target = match candidates.iter().find(|c| c.label == label).or_else(|| candidates.first()) {
+    let target = match candidates
+        .iter()
+        .find(|c| c.label == label)
+        .or_else(|| candidates.first())
+    {
         Some(t) => t,
-        None => return (0, vec![UnresolvedRef {
-            kind: "Extends".to_string(), from_id: child_qn.to_string(),
-            target_text: raw_base.to_string(), reason: "no_target_in_corpus".to_string(),
-        }]),
+        None => {
+            return (
+                0,
+                vec![UnresolvedRef {
+                    kind: "Extends".to_string(),
+                    from_id: child_qn.to_string(),
+                    target_text: raw_base.to_string(),
+                    reason: "no_target_in_corpus".to_string(),
+                }],
+            )
+        }
     };
     let rel_table = if target.label == label {
         table_self.to_string()
@@ -882,13 +1009,22 @@ fn resolve_one_extends_base(
         format!("Extends_{label}_{}", target.label)
     };
     if !crate::graph_store::is_known_rel_table(&rel_table) {
-        return (0, vec![UnresolvedRef {
-            kind: "Extends".to_string(), from_id: child_qn.to_string(),
-            target_text: raw_base.to_string(),
-            reason: format!("no_rel_table_for_{label}_to_{}", target.label),
-        }]);
+        return (
+            0,
+            vec![UnresolvedRef {
+                kind: "Extends".to_string(),
+                from_id: child_qn.to_string(),
+                target_text: raw_base.to_string(),
+                reason: format!("no_rel_table_for_{label}_to_{}", target.label),
+            }],
+        );
     }
-    buf.add(&rel_table, child_qn, &target.id, 0.9, "declared-bases");
+    // Staged through EdgeBuffer like every other resolution phase
+    // (bulk_insert_edges at flush) instead of one insert_edge per base.
+    // 0.95/"declared-extends" mirrors resolve_one_implements's 0.95/
+    // "declared-implements" for the parallel `implements` CSV.
+    // source: ADR-4253701 §Decision 2 (levier 2, resolver.rs resolve_extends).
+    buf.add(&rel_table, child_qn, &target.id, 0.95, "declared-extends");
     (1, vec![])
 }
 
@@ -932,9 +1068,7 @@ fn resolve_field_type_uses(
     _file_imports: &HashMap<String, Vec<String>>,
     buf: &mut EdgeBuffer,
 ) -> PhaseResult {
-    let qr = store.execute_query(
-        "MATCH (f:Field) RETURN f.id, f.type_annotation, f.language"
-    )?;
+    let qr = store.execute_query("MATCH (f:Field) RETURN f.id, f.type_annotation, f.language")?;
     let mut resolved = 0u64;
     let mut total = 0u64;
     let mut unresolved = Vec::new();
@@ -970,18 +1104,29 @@ fn resolve_one_field_type_use(
 ) -> (u64, Vec<UnresolvedRef>) {
     let target = match find_type_target(idx, type_name) {
         Some(t) => t,
-        None => return (0, vec![UnresolvedRef {
-            kind: "Uses".to_string(), from_id: field_id.to_string(),
-            target_text: type_name.to_string(), reason: "type not found in graph".to_string(),
-        }]),
+        None => {
+            return (
+                0,
+                vec![UnresolvedRef {
+                    kind: "Uses".to_string(),
+                    from_id: field_id.to_string(),
+                    target_text: type_name.to_string(),
+                    reason: "type not found in graph".to_string(),
+                }],
+            )
+        }
     };
     let table = format!("Uses_Field_{}", target.label);
     if !check_known_rel_table(&table, field_id, &target.id) {
-        return (0, vec![UnresolvedRef {
-            kind: "Uses".to_string(), from_id: field_id.to_string(),
-            target_text: type_name.to_string(),
-            reason: format!("unknown rel table {table}"),
-        }]);
+        return (
+            0,
+            vec![UnresolvedRef {
+                kind: "Uses".to_string(),
+                from_id: field_id.to_string(),
+                target_text: type_name.to_string(),
+                reason: format!("unknown rel table {table}"),
+            }],
+        );
     }
     buf.add(&table, field_id, &target.id, 0.9, "type-annotation-parse");
     (1, vec![])
@@ -1023,7 +1168,8 @@ fn extract_type_identifiers(type_ann: &str, primitives: &[&str]) -> Vec<String> 
 fn find_type_target<'a>(idx: &'a SymbolIndex, type_name: &str) -> Option<&'a SymbolEntry> {
     let candidates = idx.by_name.get(type_name)?;
     // Filter to type-like labels only
-    let types: Vec<_> = candidates.iter()
+    let types: Vec<_> = candidates
+        .iter()
         .filter(|e| matches!(e.label.as_str(), "Struct" | "Enum" | "Trait" | "TypeAlias"))
         .collect();
     if types.len() == 1 {
@@ -1080,19 +1226,10 @@ pub(crate) fn extract_caller_from_callsite_id(cs_id: &str) -> String {
 }
 
 fn determine_caller_label(idx: &SymbolIndex, caller_qn: &str) -> String {
-    idx.by_qn.get(caller_qn)
+    idx.by_qn
+        .get(caller_qn)
         .map(|e| e.label.clone())
         .unwrap_or_else(|| "Function".to_string())
-}
-
-fn is_child_of_module(qn: &str, module_path: &str) -> bool {
-    // Check if qn is directly inside the module (one segment deeper)
-    if let Some(rest) = qn.strip_prefix(module_path) {
-        if let Some(rest) = rest.strip_prefix("::") {
-            return !rest.contains("::");
-        }
-    }
-    false
 }
 
 fn pick_best_candidate<'a>(
@@ -1120,7 +1257,11 @@ fn pick_best_candidate<'a>(
 /// Confidence: 1.0 for unique match, 0.7 for ambiguous.
 /// source: stages/stage-3b.md §2 "Confidence assignment rules"
 fn compute_import_confidence(candidate_count: usize) -> f64 {
-    if candidate_count == 1 { 1.0 } else { 0.7 }
+    if candidate_count == 1 {
+        1.0
+    } else {
+        0.7
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,7 +1277,7 @@ mod tests {
         // Use the Rust primitive set (matches the prior module-level PRIMITIVES).
         let prims = crate::language_provider::provider_for("rust").primitives();
         let cases = vec![
-            ("String", vec![]),           // primitive
+            ("String", vec![]), // primitive
             ("GraphStore", vec!["GraphStore"]),
             ("Vec<GraphStore>", vec!["GraphStore"]),
             ("&'a MyType", vec!["MyType"]),
@@ -1154,7 +1295,10 @@ mod tests {
     fn test_normalize_import_path_via_provider() {
         // normalize_import_path moved to LanguageProvider (Rust strips crate::).
         let rust = crate::language_provider::provider_for("rust");
-        assert_eq!(rust.normalize_import_path("crate::graph_store::GraphStore"), "graph_store::GraphStore");
+        assert_eq!(
+            rust.normalize_import_path("crate::graph_store::GraphStore"),
+            "graph_store::GraphStore"
+        );
         assert_eq!(rust.normalize_import_path("std::io"), "std::io");
         assert_eq!(rust.normalize_import_path("self::foo"), "self::foo");
     }
@@ -1229,8 +1373,20 @@ mod tests {
         ));
         let mut buf = EdgeBuffer::new(persisted);
         buf.add("Calls_Function_Function", "caller", "callee", 0.9, "x");
-        buf.add("Calls_Function_Function", "other_caller", "callee", 0.9, "x");
-        buf.add("Calls_Function_Function", "other_caller", "callee", 0.9, "x");
+        buf.add(
+            "Calls_Function_Function",
+            "other_caller",
+            "callee",
+            0.9,
+            "x",
+        );
+        buf.add(
+            "Calls_Function_Function",
+            "other_caller",
+            "callee",
+            0.9,
+            "x",
+        );
 
         let staged: usize = buf.by_table.values().map(|v| v.len()).sum();
         assert_eq!(
@@ -1250,16 +1406,28 @@ mod tests {
                 qualified_name: "demo::Animal".to_string(),
             }],
         );
-        let idx = SymbolIndex { by_name, by_qn: HashMap::new() };
+        let idx = SymbolIndex {
+            by_name,
+            by_qn: HashMap::new(),
+            by_parent_module: HashMap::new(),
+        };
         let mut buf = EdgeBuffer::new(HashSet::new());
 
         let (resolved, unresolved) = resolve_one_extends_base(
-            &idx, &mut buf, "Struct", "Extends_Struct_Struct", "demo::Dog", "Animal",
+            &idx,
+            &mut buf,
+            "Struct",
+            "Extends_Struct_Struct",
+            "demo::Dog",
+            "Animal",
         );
         assert_eq!(resolved, 1);
         assert!(unresolved.is_empty());
         let staged: usize = buf.by_table.values().map(|v| v.len()).sum();
-        assert_eq!(staged, 1, "a successful resolution must stage exactly one edge");
+        assert_eq!(
+            staged, 1,
+            "a successful resolution must stage exactly one edge"
+        );
     }
 
     #[test]
@@ -1276,15 +1444,99 @@ mod tests {
                 qualified_name: "demo::Weird".to_string(),
             }],
         );
-        let idx = SymbolIndex { by_name, by_qn: HashMap::new() };
+        let idx = SymbolIndex {
+            by_name,
+            by_qn: HashMap::new(),
+            by_parent_module: HashMap::new(),
+        };
         let mut buf = EdgeBuffer::new(HashSet::new());
 
         let (resolved, unresolved) = resolve_one_extends_base(
-            &idx, &mut buf, "Struct", "Extends_Struct_Struct", "demo::Dog", "Weird",
+            &idx,
+            &mut buf,
+            "Struct",
+            "Extends_Struct_Struct",
+            "demo::Dog",
+            "Weird",
         );
-        assert_eq!(resolved, 0, "no successful insert must not increment resolved");
+        assert_eq!(
+            resolved, 0,
+            "no successful insert must not increment resolved"
+        );
         assert_eq!(unresolved.len(), 1);
         let staged: usize = buf.by_table.values().map(|v| v.len()).sum();
         assert_eq!(staged, 0, "an unresolved base must not stage any edge");
+    }
+
+    // -----------------------------------------------------------------
+    // Non-termination reproduction (2026-07-04) — glob-import resolution.
+    //
+    // resolve_glob_import scanned idx.by_qn (ALL symbols in the graph)
+    // once per glob import. On a repo with a vendored dependency tree
+    // (e.g. a .venv), by_qn holds every vendored symbol too, and Python
+    // packages commonly re-export via `from .submodule import *` inside
+    // __init__.py — so glob-import count scales with the number of
+    // vendored packages/files. Cost was O(glob_imports * total_symbols):
+    // quadratic in corpus size, not just "large but linear". This test
+    // builds a synthetic index (M modules x K symbols each = total
+    // symbols) and N glob imports (one per module) and measures wall
+    // time. Run manually (ignored by default — timing, not CI-stable):
+    //   cargo test --release resolver::tests::bench_glob_import_scaling -- --ignored --nocapture
+    // source: measured on 2026-07-04 in this environment (Apple Silicon,
+    // `cargo test --release`), numbers reported in the commit message.
+    #[test]
+    #[ignore]
+    fn bench_glob_import_scaling() {
+        fn build_index(modules: usize, symbols_per_module: usize) -> SymbolIndex {
+            let mut by_name: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
+            let mut by_qn: HashMap<String, SymbolEntry> = HashMap::new();
+            let mut by_parent_module: HashMap<String, Vec<SymbolEntry>> = HashMap::new();
+            for m in 0..modules {
+                let module_path = format!("pkg{m}");
+                for s in 0..symbols_per_module {
+                    let qn = format!("{module_path}::sym{s}");
+                    let entry = SymbolEntry {
+                        id: format!("file{m}.py::sym{s}"),
+                        label: "Function".to_string(),
+                        qualified_name: qn.clone(),
+                    };
+                    by_name
+                        .entry(format!("sym{s}"))
+                        .or_default()
+                        .push(entry.clone());
+                    by_qn.insert(qn.clone(), entry.clone());
+                    by_parent_module
+                        .entry(module_path.clone())
+                        .or_default()
+                        .push(entry);
+                }
+            }
+            SymbolIndex {
+                by_name,
+                by_qn,
+                by_parent_module,
+            }
+        }
+
+        let modules = 2_000;
+        let symbols_per_module = 50; // total_symbols = 100_000
+        let idx = build_index(modules, symbols_per_module);
+        let existing: HashSet<(String, String, String)> = HashSet::new();
+        let mut buf = EdgeBuffer::new(existing);
+
+        let start = Instant::now();
+        let mut total_edges = 0u64;
+        for m in 0..modules {
+            let file_id = format!("caller{m}.py");
+            let module_path = format!("pkg{m}");
+            total_edges += resolve_glob_import(&idx, &mut buf, &file_id, &module_path);
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "glob-import scaling: modules={modules} symbols/module={symbols_per_module} \
+             total_symbols={} glob_imports={modules} edges_generated={total_edges} elapsed={elapsed:?}",
+            modules * symbols_per_module
+        );
+        assert_eq!(total_edges as usize, modules * symbols_per_module);
     }
 }

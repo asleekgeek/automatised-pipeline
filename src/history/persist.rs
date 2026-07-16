@@ -12,7 +12,11 @@ use std::collections::HashSet;
 
 pub(super) fn load_file_ids(store: &GraphStore) -> Result<HashSet<String>, String> {
     let qr = store.execute_query("MATCH (f:File) RETURN f.id")?;
-    Ok(qr.rows.into_iter().filter_map(|mut r| r.drain(..).next()).collect())
+    Ok(qr
+        .rows
+        .into_iter()
+        .filter_map(|mut r| r.drain(..).next())
+        .collect())
 }
 
 pub(super) fn persist_commits(store: &GraphStore, commits: &[CommitMeta]) -> Result<u64, String> {
@@ -60,11 +64,17 @@ pub(super) fn persist_versions(store: &GraphStore, versions: &[VersionRow]) -> R
                 ("id".to_string(), v.id.clone()),
                 ("entity_id".to_string(), v.entity.entity_id.clone()),
                 ("entity_kind".to_string(), v.entity.label.clone()),
-                ("qualified_name".to_string(), v.entity.qualified_name.clone()),
+                (
+                    "qualified_name".to_string(),
+                    v.entity.qualified_name.clone(),
+                ),
                 ("change_type".to_string(), v.entity.change_type.clone()),
                 ("commit_sha".to_string(), v.commit_sha.clone()),
                 ("committed_at".to_string(), v.committed_at.to_string()),
-                ("lines_changed".to_string(), v.entity.lines_changed.to_string()),
+                (
+                    "lines_changed".to_string(),
+                    v.entity.lines_changed.to_string(),
+                ),
             ]
         })
         .collect();

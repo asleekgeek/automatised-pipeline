@@ -6,249 +6,419 @@
   "labels": [
     {
       "query_id": "q1",
-      "input": { "query": "GraphStore", "label_filter": "Struct" },
-      "expected": { "qualified_name": "graph_store.rs::GraphStore" }
+      "input": {
+        "query": "GraphStore",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "graph_store.rs::GraphStore"
+      }
     },
     {
       "query_id": "q1",
-      "input": { "query": "ResolutionResult", "label_filter": "Struct" },
-      "expected": { "qualified_name": "resolver.rs::ResolutionResult" }
+      "input": {
+        "query": "ResolutionResult",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "resolver.rs::ResolutionResult"
+      }
     },
     {
       "query_id": "q1",
-      "input": { "query": "IndexResult", "label_filter": "Struct" },
-      "expected": { "qualified_name": "indexer.rs::IndexResult" }
+      "input": {
+        "query": "IndexResult",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "indexer/mod.rs::IndexResult"
+      }
     },
     {
       "query_id": "q1",
-      "input": { "query": "ParseResult", "label_filter": "Struct" },
-      "expected": { "qualified_name": "parser/mod.rs::ParseResult" }
+      "input": {
+        "query": "ParseResult",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "parser/mod.rs::ParseResult"
+      }
     },
     {
       "query_id": "q1",
-      "input": { "query": "ExtractedNode", "label_filter": "Struct" },
-      "expected": { "qualified_name": "parser/mod.rs::ExtractedNode" }
+      "input": {
+        "query": "ExtractedNode",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "parser/mod.rs::ExtractedNode"
+      }
     },
     {
       "query_id": "q1",
-      "input": { "query": "ExtractedRef", "label_filter": "Struct" },
-      "expected": { "qualified_name": "parser/mod.rs::ExtractedRef" }
+      "input": {
+        "query": "ExtractedRef",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "parser/mod.rs::ExtractedRef"
+      }
     },
     {
       "query_id": "q1",
-      "input": { "query": "SearchOptions", "label_filter": "Struct" },
-      "expected": { "qualified_name": "search/mod.rs::SearchOptions" }
+      "input": {
+        "query": "SearchOptions",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "search/mod.rs::SearchOptions"
+      }
     },
     {
       "query_id": "q1",
-      "input": { "query": "EntryPoint", "label_filter": "Struct" },
-      "expected": { "qualified_name": "clustering.rs::EntryPoint" }
+      "input": {
+        "query": "EntryPoint",
+        "label_filter": "Struct"
+      },
+      "expected": {
+        "qualified_name": "clustering/process.rs::EntryPoint"
+      }
     },
-
     {
       "query_id": "q2",
-      "input": { "query": "Language", "label_filter": "Enum" },
-      "expected": { "qualified_name": "parser/mod.rs::Language" }
+      "input": {
+        "query": "Language",
+        "label_filter": "Enum"
+      },
+      "expected": {
+        "qualified_name": "parser/language.rs::Language"
+      }
     },
     {
       "query_id": "q2",
-      "input": { "query": "GetContextError", "label_filter": "Enum" },
-      "expected": { "qualified_name": "search/mod.rs::GetContextError" }
-    },
-
-    {
-      "query_id": "q3",
-      "input": { "query": "parse_rust_file", "label_filter": "Function" },
-      "expected": { "qualified_name": "parser/rust.rs::parse_rust_file" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "parse_python_file", "label_filter": "Function" },
-      "expected": { "qualified_name": "parser/python.rs::parse_python_file" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "parse_typescript_file", "label_filter": "Function" },
-      "expected": { "qualified_name": "parser/typescript.rs::parse_typescript_file" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "handle_tool_call", "label_filter": "Function" },
-      "expected": { "qualified_name": "main.rs::handle_tool_call" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "handle_request", "label_filter": "Function" },
-      "expected": { "qualified_name": "main.rs::handle_request" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "resolve_graph", "label_filter": "Function" },
-      "expected": { "qualified_name": "resolver.rs::resolve_graph" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "cluster_graph", "label_filter": "Function" },
-      "expected": { "qualified_name": "clustering.rs::cluster_graph" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "search_graph", "label_filter": "Function" },
-      "expected": { "qualified_name": "search/mod.rs::search_graph" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "get_context", "label_filter": "Function" },
-      "expected": { "qualified_name": "search/mod.rs::get_context" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "build_search_index", "label_filter": "Function" },
-      "expected": { "qualified_name": "search/mod.rs::build_search_index" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "qual", "label_filter": "Function" },
-      "expected": { "qualified_name": "parser/mod.rs::qual" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "validate_graph_path_safe", "label_filter": "Function" },
-      "expected": { "qualified_name": "main.rs::validate_graph_path_safe" }
-    },
-    {
-      "query_id": "q3",
-      "input": { "query": "forbidden_cypher_keyword", "label_filter": "Function" },
-      "expected": { "qualified_name": "main.rs::forbidden_cypher_keyword" }
-    },
-
-    {
-      "query_id": "q4",
-      "input": { "qualified_name": "main.rs::do_index_codebase" },
+      "input": {
+        "query": "GetContextError",
+        "label_filter": "Enum"
+      },
       "expected": {
-        "callers": ["main.rs::run_index_codebase"]
+        "qualified_name": "search/mod.rs::GetContextError"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "parse_rust_file",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "parser/rust/mod.rs::parse_rust_file"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "parse_python_file",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "parser/python/mod.rs::parse_python_file"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "parse_typescript_file",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "parser/typescript/mod.rs::parse_typescript_file"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "handle_tool_call",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "main.rs::handle_tool_call"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "handle_request",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "main.rs::handle_request"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "resolve_graph",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "resolver.rs::resolve_graph"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "cluster_graph",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "clustering/community.rs::cluster_graph"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "search_graph",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "search/mod.rs::search_graph"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "get_context",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "search/mod.rs::get_context"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "build_search_index",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "search/mod.rs::build_search_index"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "qual",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "parser/mod.rs::qual"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "validate_graph_path_safe",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "main.rs::validate_graph_path_safe"
+      }
+    },
+    {
+      "query_id": "q3",
+      "input": {
+        "query": "forbidden_cypher_keyword",
+        "label_filter": "Function"
+      },
+      "expected": {
+        "qualified_name": "main.rs::forbidden_cypher_keyword"
       }
     },
     {
       "query_id": "q4",
-      "input": { "qualified_name": "main.rs::do_query_graph" },
+      "input": {
+        "qualified_name": "main.rs::do_index_codebase"
+      },
       "expected": {
-        "callers": ["main.rs::run_query_graph"]
+        "callers": [
+          "main.rs::run_index_codebase"
+        ]
       }
     },
     {
       "query_id": "q4",
-      "input": { "qualified_name": "main.rs::do_get_context" },
+      "input": {
+        "qualified_name": "main.rs::do_query_graph"
+      },
       "expected": {
-        "callers": ["main.rs::run_get_context"]
+        "callers": [
+          "main.rs::run_query_graph"
+        ]
       }
     },
     {
       "query_id": "q4",
-      "input": { "qualified_name": "main.rs::do_search_codebase" },
+      "input": {
+        "qualified_name": "main.rs::do_get_context"
+      },
       "expected": {
-        "callers": ["main.rs::run_search_codebase"]
+        "callers": [
+          "main.rs::run_get_context"
+        ]
       }
     },
     {
       "query_id": "q4",
-      "input": { "qualified_name": "main.rs::forbidden_cypher_keyword" },
+      "input": {
+        "qualified_name": "main.rs::do_search_codebase"
+      },
       "expected": {
-        "callers": ["main.rs::do_query_graph"]
+        "callers": [
+          "main.rs::run_search_codebase"
+        ]
       }
     },
     {
       "query_id": "q4",
-      "input": { "qualified_name": "main.rs::validate_graph_path_safe" },
+      "input": {
+        "qualified_name": "main.rs::forbidden_cypher_keyword"
+      },
       "expected": {
-        "callers": ["main.rs::do_index_codebase"]
+        "callers": [
+          "main.rs::do_query_graph"
+        ]
       }
     },
     {
       "query_id": "q4",
-      "input": { "qualified_name": "main.rs::contains_whole_word" },
+      "input": {
+        "qualified_name": "main.rs::validate_graph_path_safe"
+      },
       "expected": {
-        "callers": ["main.rs::forbidden_cypher_keyword"]
+        "callers": [
+          "main.rs::do_index_codebase"
+        ]
       }
     },
-
+    {
+      "query_id": "q4",
+      "input": {
+        "qualified_name": "main.rs::contains_whole_word"
+      },
+      "expected": {
+        "callers": [
+          "main.rs::forbidden_cypher_keyword"
+        ]
+      }
+    },
     {
       "query_id": "q5",
-      "input": { "qualified_name": "main.rs::run_index_codebase" },
+      "input": {
+        "qualified_name": "main.rs::run_index_codebase"
+      },
       "expected": {
-        "callees": ["main.rs::do_index_codebase"]
+        "callees": [
+          "main.rs::do_index_codebase"
+        ]
       }
     },
     {
       "query_id": "q5",
-      "input": { "qualified_name": "main.rs::run_query_graph" },
+      "input": {
+        "qualified_name": "main.rs::run_query_graph"
+      },
       "expected": {
-        "callees": ["main.rs::do_query_graph"]
+        "callees": [
+          "main.rs::do_query_graph"
+        ]
       }
     },
     {
       "query_id": "q5",
-      "input": { "qualified_name": "main.rs::run_get_context" },
+      "input": {
+        "qualified_name": "main.rs::run_get_context"
+      },
       "expected": {
-        "callees": ["main.rs::do_get_context"]
+        "callees": [
+          "main.rs::do_get_context"
+        ]
       }
     },
     {
       "query_id": "q5",
-      "input": { "qualified_name": "main.rs::run_search_codebase" },
+      "input": {
+        "qualified_name": "main.rs::run_search_codebase"
+      },
       "expected": {
-        "callees": ["main.rs::do_search_codebase"]
+        "callees": [
+          "main.rs::do_search_codebase"
+        ]
       }
     },
     {
       "query_id": "q5",
-      "input": { "qualified_name": "main.rs::run_get_impact" },
+      "input": {
+        "qualified_name": "main.rs::run_get_impact"
+      },
       "expected": {
-        "callees": ["main.rs::do_get_impact"]
+        "callees": [
+          "main.rs::do_get_impact"
+        ]
       }
     },
     {
       "query_id": "q5",
-      "input": { "qualified_name": "main.rs::run_get_symbol" },
+      "input": {
+        "qualified_name": "main.rs::run_get_symbol"
+      },
       "expected": {
-        "callees": ["main.rs::do_get_symbol"]
+        "callees": [
+          "main.rs::do_get_symbol"
+        ]
       }
     },
-
     {
       "query_id": "q6",
-      "input": { "qualified_name": "parser/mod.rs::Language" },
+      "input": {
+        "qualified_name": "parser/language.rs::Language"
+      },
       "expected": {
         "implementors": []
       }
     },
     {
       "query_id": "q6",
-      "input": { "qualified_name": "graph_store.rs::GraphStore" },
+      "input": {
+        "qualified_name": "graph_store.rs::GraphStore"
+      },
       "expected": {
         "implementors": []
       }
     },
-
     {
       "query_id": "q7",
-      "input": { "qualified_name": "main.rs::run_index_codebase" },
+      "input": {
+        "qualified_name": "main.rs::run_index_codebase"
+      },
       "expected": {
         "affected": []
       }
     },
     {
       "query_id": "q7",
-      "input": { "qualified_name": "main.rs::forbidden_cypher_keyword" },
+      "input": {
+        "qualified_name": "main.rs::forbidden_cypher_keyword"
+      },
       "expected": {
         "affected": []
       }
     },
-
     {
       "query_id": "q8",
       "_note": "top-level Functions defined in resolver.rs (29 top-level fns)",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'resolver.rs' RETURN n.qualified_name" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'resolver.rs' RETURN n.qualified_name"
+      },
       "expected": {
         "symbols": [
           "resolver.rs::build_symbol_index",
@@ -285,78 +455,75 @@
     },
     {
       "query_id": "q8",
-      "_note": "top-level Functions in clustering.rs (26 top-level fns after B2 fix)",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'clustering.rs' RETURN n.qualified_name" },
+      "_note": "top-level fns in clustering/community.rs (18 fns, refreshed 2026-07-05 after clustering.rs split; derived from source grep '^(pub )?fn ')",
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'clustering/community.rs' RETURN n.qualified_name"
+      },
       "expected": {
         "symbols": [
-          "clustering.rs::edge_weight",
-          "clustering.rs::extract_adjacency",
-          "clustering.rs::collect_symbol_nodes",
-          "clustering.rs::collect_weighted_edges",
-          "clustering.rs::edge_rel_tables",
-          "clustering.rs::louvain",
-          "clustering.rs::renumber_communities",
-          "clustering.rs::compute_modularity",
-          "clustering.rs::repair_c2",
-          "clustering.rs::connected_components_within",
-          "clustering.rs::persist_communities",
-          "clustering.rs::cluster_graph",
-          "clustering.rs::collect_cluster_memberships",
-          "clustering.rs::cluster_id_from_community_id",
-          "clustering.rs::detect_entry_points",
-          "clustering.rs::query_entries",
-          "clustering.rs::detect_lib_entries",
-          "clustering.rs::trace_one_process",
-          "clustering.rs::bfs_from_entry",
-          "clustering.rs::persist_process_node",
-          "clustering.rs::persist_participates_in",
-          "clustering.rs::build_call_target_labels",
-          "clustering.rs::collect_call_edges",
-          "clustering.rs::trace_processes",
-          "clustering.rs::get_processes",
-          "clustering.rs::get_impact"
+          "clustering/community.rs::collect_cluster_memberships",
+          "clustering/community.rs::sort_and_cap_memberships",
+          "clustering/community.rs::cluster_id_from_community_id",
+          "clustering/community.rs::edge_weight",
+          "clustering/community.rs::extract_adjacency",
+          "clustering/community.rs::collect_symbol_nodes",
+          "clustering/community.rs::collect_weighted_edges",
+          "clustering/community.rs::edge_rel_tables",
+          "clustering/community.rs::louvain",
+          "clustering/community.rs::one_level",
+          "clustering/community.rs::aggregate_graph",
+          "clustering/community.rs::renumber_communities",
+          "clustering/community.rs::compute_modularity",
+          "clustering/community.rs::repair_c2",
+          "clustering/community.rs::connected_components_within",
+          "clustering/community.rs::purge_prior_clustering",
+          "clustering/community.rs::persist_communities",
+          "clustering/community.rs::cluster_graph"
         ]
       }
     },
     {
       "query_id": "q8",
-      "_note": "top-level Functions in indexer.rs (26 top-level fns)",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'indexer.rs' RETURN n.qualified_name" },
+      "_note": "top-level fns in indexer/persist.rs (25 fns, refreshed 2026-07-05 after indexer.rs split; derived from source grep)",
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'indexer/persist.rs' RETURN n.qualified_name"
+      },
       "expected": {
         "symbols": [
-          "indexer.rs::index_codebase",
-          "indexer.rs::index_codebase_with_language",
-          "indexer.rs::collect_source_files",
-          "indexer.rs::walk_dir_recursive",
-          "indexer.rs::should_skip",
-          "indexer.rs::insert_ancestor_dirs",
-          "indexer.rs::insert_directory_node",
-          "indexer.rs::insert_file_node",
-          "indexer.rs::insert_dir_file_edge",
-          "indexer.rs::insert_dir_dir_edge",
-          "indexer.rs::index_single_file",
-          "indexer.rs::insert_parsed_nodes",
-          "indexer.rs::build_node_properties",
-          "indexer.rs::append_label_properties",
-          "indexer.rs::insert_parsed_edges",
-          "indexer.rs::resolve_edge_table",
-          "indexer.rs::resolve_defines_table",
-          "indexer.rs::resolve_has_method_table",
-          "indexer.rs::resolve_has_field_table",
-          "indexer.rs::lookup_label_among",
-          "indexer.rs::is_valid_rel_table",
-          "indexer.rs::relative_path",
-          "indexer.rs::has_name_col",
-          "indexer.rs::has_qualified_name_col",
-          "indexer.rs::has_line_cols",
-          "indexer.rs::has_visibility_col"
+          "indexer/persist.rs::insert_ancestor_dirs",
+          "indexer/persist.rs::insert_directory_node",
+          "indexer/persist.rs::insert_file_node",
+          "indexer/persist.rs::insert_dir_file_edge",
+          "indexer/persist.rs::index_single_file",
+          "indexer/persist.rs::set_file_parse_errors",
+          "indexer/persist.rs::accumulate_parsed_nodes",
+          "indexer/persist.rs::keep_under_public_api",
+          "indexer/persist.rs::is_visibility_declaring_label",
+          "indexer/persist.rs::is_public_symbol",
+          "indexer/persist.rs::build_node_properties",
+          "indexer/persist.rs::has_language_col",
+          "indexer/persist.rs::append_label_properties",
+          "indexer/persist.rs::accumulate_parsed_edges",
+          "indexer/persist.rs::structural_provenance_props",
+          "indexer/persist.rs::resolve_edge_table",
+          "indexer/persist.rs::resolve_defines_table",
+          "indexer/persist.rs::resolve_has_method_table",
+          "indexer/persist.rs::resolve_has_field_table",
+          "indexer/persist.rs::lookup_label_among",
+          "indexer/persist.rs::is_valid_rel_table",
+          "indexer/persist.rs::has_name_col",
+          "indexer/persist.rs::has_qualified_name_col",
+          "indexer/persist.rs::has_line_cols",
+          "indexer/persist.rs::has_visibility_col"
         ]
       }
     },
     {
       "query_id": "q8",
       "_note": "top-level Functions in search/mod.rs (25 top-level fns)",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'search/mod.rs' RETURN n.qualified_name" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'search/mod.rs' RETURN n.qualified_name"
+      },
       "expected": {
         "symbols": [
           "search/mod.rs::build_search_index",
@@ -390,7 +557,9 @@
     {
       "query_id": "q8",
       "_note": "top-level Functions in parser/mod.rs (1 pub fn + helpers)",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'parser/mod.rs' RETURN n.qualified_name" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Function]->(n:Function) WHERE f.path = 'parser/mod.rs' RETURN n.qualified_name"
+      },
       "expected": {
         "symbols": [
           "parser/mod.rs::parse_file",
@@ -400,11 +569,12 @@
         ]
       }
     },
-
     {
       "query_id": "q9",
       "_note": "imports in resolver.rs — task rule: multi-import braces count as multiple",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'resolver.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'resolver.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "crate::graph_store::GraphStore",
@@ -416,36 +586,48 @@
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'clustering.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'clustering/community.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "crate::graph_store::GraphStore",
           "std::collections::HashMap",
           "std::collections::HashSet",
           "std::collections::VecDeque",
-          "std::time::Instant"
+          "std::time::Instant",
+          "super::process::trace_processes"
         ]
       }
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'indexer.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'indexer/mod.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
-          "crate::graph_store::cypher_str",
           "crate::graph_store::GraphStore",
-          "crate::parser",
           "crate::parser::Language",
           "std::collections::HashMap",
           "std::path::Path",
           "std::path::PathBuf",
-          "std::time::Instant"
+          "std::time::Instant",
+          "walk::collect_source_files",
+          "walk::is_dependency_path",
+          "walk::WalkOptions",
+          "persist::insert_ancestor_dirs",
+          "persist::insert_dir_file_edge",
+          "persist::insert_file_node",
+          "persist::index_single_file"
         ]
       }
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'search/mod.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'search/mod.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "crate::graph_store::GraphStore",
@@ -457,7 +639,9 @@
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'graph_store.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'graph_store.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "lbug::Connection",
@@ -474,7 +658,9 @@
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'git_diff.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'git_diff.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "crate::clustering",
@@ -489,7 +675,9 @@
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'lsp_client.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'lsp_client.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "serde_json::json",
@@ -511,7 +699,9 @@
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'prd_input.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'prd_input.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "crate::graph_store::GraphStore",
@@ -526,7 +716,9 @@
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'prd_validator.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'prd_validator.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "crate::graph_store::GraphStore",
@@ -542,7 +734,9 @@
     },
     {
       "query_id": "q9",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'security_gates.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'security_gates.rs' RETURN n.path"
+      },
       "expected": {
         "imports": [
           "crate::graph_store::GraphStore",
@@ -556,192 +750,458 @@
         ]
       }
     },
-
     {
       "query_id": "q10",
-      "input": { "qualified_name": "main.rs::handle_tool_call" },
-      "expected": { "qualified_name": "main.rs::handle_tool_call" }
+      "input": {
+        "qualified_name": "main.rs::handle_tool_call"
+      },
+      "expected": {
+        "qualified_name": "main.rs::handle_tool_call"
+      }
     },
     {
       "query_id": "q10",
-      "input": { "qualified_name": "parser/rust.rs::parse_rust_file" },
-      "expected": { "qualified_name": "parser/rust.rs::parse_rust_file" }
+      "input": {
+        "qualified_name": "parser/rust/mod.rs::parse_rust_file"
+      },
+      "expected": {
+        "qualified_name": "parser/rust/mod.rs::parse_rust_file"
+      }
     },
     {
       "query_id": "q10",
-      "input": { "qualified_name": "search/mod.rs::search_graph" },
-      "expected": { "qualified_name": "search/mod.rs::search_graph" }
+      "input": {
+        "qualified_name": "search/mod.rs::search_graph"
+      },
+      "expected": {
+        "qualified_name": "search/mod.rs::search_graph"
+      }
     },
     {
       "query_id": "q10",
-      "input": { "qualified_name": "clustering.rs::cluster_graph" },
-      "expected": { "qualified_name": "clustering.rs::cluster_graph" }
+      "input": {
+        "qualified_name": "clustering/community.rs::cluster_graph"
+      },
+      "expected": {
+        "qualified_name": "clustering/community.rs::cluster_graph"
+      }
     },
-
     {
       "query_id": "q11",
       "_note": "fields of ExtractedNode struct — verified against parser/mod.rs lines 88-96",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'parser/mod.rs::ExtractedNode' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'parser/mod.rs::ExtractedNode' RETURN f.name"
+      },
       "expected": {
-        "fields": ["label", "name", "qualified_name", "start_line", "end_line", "visibility", "properties"]
+        "fields": [
+          "label",
+          "name",
+          "qualified_name",
+          "start_line",
+          "end_line",
+          "visibility",
+          "properties"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'parser/mod.rs::ExtractedRef' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'parser/mod.rs::ExtractedRef' RETURN f.name"
+      },
       "expected": {
-        "fields": ["kind", "from_qualified_name", "to_qualified_name"]
+        "fields": [
+          "kind",
+          "from_qualified_name",
+          "to_qualified_name"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'parser/mod.rs::ParseResult' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'parser/mod.rs::ParseResult' RETURN f.name"
+      },
       "expected": {
-        "fields": ["nodes", "refs"]
+        "fields": [
+          "nodes",
+          "refs"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'resolver.rs::ResolutionResult' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'resolver.rs::ResolutionResult' RETURN f.name"
+      },
       "expected": {
-        "fields": ["imports_resolved", "calls_resolved", "impls_resolved", "extends_resolved", "uses_resolved", "total_edges", "total_refs", "unresolved", "elapsed_ms"]
+        "fields": [
+          "imports_resolved",
+          "calls_resolved",
+          "impls_resolved",
+          "extends_resolved",
+          "uses_resolved",
+          "total_edges",
+          "total_refs",
+          "unresolved",
+          "elapsed_ms"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'resolver.rs::UnresolvedRef' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'resolver.rs::UnresolvedRef' RETURN f.name"
+      },
       "expected": {
-        "fields": ["kind", "from_id", "target_text", "reason"]
+        "fields": [
+          "kind",
+          "from_id",
+          "target_text",
+          "reason"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'indexer.rs::IndexResult' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'indexer/mod.rs::IndexResult' RETURN f.name"
+      },
       "expected": {
-        "fields": ["graph_path", "node_count", "edge_count", "files_indexed", "elapsed_ms"]
+        "fields": [
+          "graph_path",
+          "node_count",
+          "edge_count",
+          "files_indexed",
+          "elapsed_ms"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'clustering.rs::ClusteringResult' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'clustering/community.rs::ClusteringResult' RETURN f.name"
+      },
       "expected": {
-        "fields": ["communities", "modularity", "processes", "elapsed_ms"]
+        "fields": [
+          "communities",
+          "modularity",
+          "processes",
+          "elapsed_ms"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'clustering.rs::ProcessInfo' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'clustering/process.rs::ProcessInfo' RETURN f.name"
+      },
       "expected": {
-        "fields": ["name", "entry_point", "entry_kind", "depth", "node_count"]
+        "fields": [
+          "name",
+          "entry_point",
+          "entry_kind",
+          "depth",
+          "node_count"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'clustering.rs::ImpactResult' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'clustering/impact.rs::ImpactResult' RETURN f.name"
+      },
       "expected": {
-        "fields": ["communities", "processes"]
+        "fields": [
+          "communities",
+          "processes",
+          "callers",
+          "importers",
+          "users",
+          "implementors",
+          "epistemic",
+          "epistemic_reasons"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::SearchResult' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::SearchResult' RETURN f.name"
+      },
       "expected": {
-        "fields": ["qualified_name", "name", "label", "file_path", "score", "community_id", "process_names", "start_line", "end_line"]
+        "fields": [
+          "qualified_name",
+          "name",
+          "label",
+          "file_path",
+          "score",
+          "community_id",
+          "process_names",
+          "start_line",
+          "end_line"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::SearchOptions' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::SearchOptions' RETURN f.name"
+      },
       "expected": {
-        "fields": ["limit", "label_filter", "min_score"]
+        "fields": [
+          "limit",
+          "label_filter",
+          "min_score"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::SymbolContext' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::SymbolContext' RETURN f.name"
+      },
       "expected": {
-        "fields": ["qualified_name", "name", "label", "file_path", "start_line", "end_line", "visibility", "imports", "imported_by", "calls", "called_by", "implements", "implemented_by", "uses", "used_by", "community", "processes"]
+        "fields": [
+          "qualified_name",
+          "name",
+          "label",
+          "file_path",
+          "start_line",
+          "end_line",
+          "visibility",
+          "imports",
+          "imported_by",
+          "calls",
+          "called_by",
+          "implements",
+          "implemented_by",
+          "uses",
+          "used_by",
+          "community",
+          "processes"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::RelatedSymbol' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'search/mod.rs::RelatedSymbol' RETURN f.name"
+      },
       "expected": {
-        "fields": ["qualified_name", "name", "label"]
+        "fields": [
+          "qualified_name",
+          "name",
+          "label"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'git_diff.rs::ChangedSymbol' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'git_diff.rs::ChangedSymbol' RETURN f.name"
+      },
       "expected": {
-        "fields": ["qualified_name", "name", "label", "file_path", "start_line", "end_line", "change_ratio", "risk_score"]
+        "fields": [
+          "qualified_name",
+          "name",
+          "label",
+          "file_path",
+          "start_line",
+          "end_line",
+          "change_ratio",
+          "risk_score"
+        ]
       }
     },
     {
       "query_id": "q11",
-      "input": { "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'prd_validator.rs::ValidationFinding' RETURN f.name" },
+      "input": {
+        "query": "MATCH (s:Struct)-[:HasField_Struct_Field]->(f:Field) WHERE s.qualified_name = 'prd_validator.rs::ValidationFinding' RETURN f.name"
+      },
       "expected": {
-        "fields": ["axis", "severity", "message", "symbol", "details"]
+        "fields": [
+          "axis",
+          "severity",
+          "message",
+          "symbol",
+          "details"
+        ]
       }
     },
-
     {
       "query_id": "q12",
       "_note": "expected partition: 40 representative symbols mapped to human-partitioned communities (by directory / module). Cluster ids: 1=parser, 2=search, 3=graph (graph_store+indexer+resolver), 4=clustering, 5=git, 6=lsp, 7=stages, 8=main.",
       "input": {},
       "expected": {
         "partition": [
-          {"qn": "parser/mod.rs::parse_file", "cluster": 1},
-          {"qn": "parser/mod.rs::qual", "cluster": 1},
-          {"qn": "parser/mod.rs::Language", "cluster": 1},
-          {"qn": "parser/mod.rs::ExtractedNode", "cluster": 1},
-          {"qn": "parser/mod.rs::ExtractedRef", "cluster": 1},
-          {"qn": "parser/rust.rs::parse_rust_file", "cluster": 1},
-          {"qn": "parser/python.rs::parse_python_file", "cluster": 1},
-          {"qn": "parser/typescript.rs::parse_typescript_file", "cluster": 1},
-
-          {"qn": "search/mod.rs::search_graph", "cluster": 2},
-          {"qn": "search/mod.rs::get_context", "cluster": 2},
-          {"qn": "search/mod.rs::build_search_index", "cluster": 2},
-          {"qn": "search/mod.rs::SearchResult", "cluster": 2},
-          {"qn": "search/mod.rs::SearchOptions", "cluster": 2},
-          {"qn": "search/mod.rs::resolve_qualified_name", "cluster": 2},
-
-          {"qn": "graph_store.rs::GraphStore", "cluster": 3},
-          {"qn": "graph_store.rs::QueryResult", "cluster": 3},
-          {"qn": "graph_store.rs::cypher_str", "cluster": 3},
-          {"qn": "indexer.rs::index_codebase", "cluster": 3},
-          {"qn": "indexer.rs::IndexResult", "cluster": 3},
-          {"qn": "indexer.rs::collect_source_files", "cluster": 3},
-          {"qn": "resolver.rs::resolve_graph", "cluster": 3},
-          {"qn": "resolver.rs::ResolutionResult", "cluster": 3},
-          {"qn": "resolver.rs::resolve_imports", "cluster": 3},
-          {"qn": "resolver.rs::resolve_calls", "cluster": 3},
-
-          {"qn": "clustering.rs::cluster_graph", "cluster": 4},
-          {"qn": "clustering.rs::ClusteringResult", "cluster": 4},
-          {"qn": "clustering.rs::louvain", "cluster": 4},
-          {"qn": "clustering.rs::trace_processes", "cluster": 4},
-          {"qn": "clustering.rs::get_impact", "cluster": 4},
-
-          {"qn": "git_diff.rs::analyze_diff", "cluster": 5},
-          {"qn": "git_diff.rs::analyze_git_diff", "cluster": 5},
-          {"qn": "git_diff.rs::ChangedSymbol", "cluster": 5},
-          {"qn": "git_diff.rs::DiffAnalysis", "cluster": 5},
-
-          {"qn": "prd_input.rs::prepare", "cluster": 7},
-          {"qn": "prd_validator.rs::validate_prd", "cluster": 7},
-          {"qn": "prd_validator.rs::ValidationReport", "cluster": 7},
-          {"qn": "prd_validator.rs::ValidationFinding", "cluster": 7},
-
-          {"qn": "main.rs::handle_tool_call", "cluster": 8},
-          {"qn": "main.rs::handle_request", "cluster": 8},
-          {"qn": "main.rs::forbidden_cypher_keyword", "cluster": 8},
-          {"qn": "main.rs::validate_graph_path_safe", "cluster": 8}
+          {
+            "qn": "parser/mod.rs::parse_file",
+            "cluster": 1
+          },
+          {
+            "qn": "parser/mod.rs::qual",
+            "cluster": 1
+          },
+          {
+            "qn": "parser/language.rs::Language",
+            "cluster": 1
+          },
+          {
+            "qn": "parser/mod.rs::ExtractedNode",
+            "cluster": 1
+          },
+          {
+            "qn": "parser/mod.rs::ExtractedRef",
+            "cluster": 1
+          },
+          {
+            "qn": "parser/rust/mod.rs::parse_rust_file",
+            "cluster": 1
+          },
+          {
+            "qn": "parser/python/mod.rs::parse_python_file",
+            "cluster": 1
+          },
+          {
+            "qn": "parser/typescript/mod.rs::parse_typescript_file",
+            "cluster": 1
+          },
+          {
+            "qn": "search/mod.rs::search_graph",
+            "cluster": 2
+          },
+          {
+            "qn": "search/mod.rs::get_context",
+            "cluster": 2
+          },
+          {
+            "qn": "search/mod.rs::build_search_index",
+            "cluster": 2
+          },
+          {
+            "qn": "search/mod.rs::SearchResult",
+            "cluster": 2
+          },
+          {
+            "qn": "search/mod.rs::SearchOptions",
+            "cluster": 2
+          },
+          {
+            "qn": "search/mod.rs::resolve_qualified_name",
+            "cluster": 2
+          },
+          {
+            "qn": "graph_store.rs::GraphStore",
+            "cluster": 3
+          },
+          {
+            "qn": "graph_store.rs::QueryResult",
+            "cluster": 3
+          },
+          {
+            "qn": "graph_store.rs::cypher_str",
+            "cluster": 3
+          },
+          {
+            "qn": "indexer/mod.rs::index_codebase",
+            "cluster": 3
+          },
+          {
+            "qn": "indexer/mod.rs::IndexResult",
+            "cluster": 3
+          },
+          {
+            "qn": "indexer/walk.rs::collect_source_files",
+            "cluster": 3
+          },
+          {
+            "qn": "resolver.rs::resolve_graph",
+            "cluster": 3
+          },
+          {
+            "qn": "resolver.rs::ResolutionResult",
+            "cluster": 3
+          },
+          {
+            "qn": "resolver.rs::resolve_imports",
+            "cluster": 3
+          },
+          {
+            "qn": "resolver.rs::resolve_calls",
+            "cluster": 3
+          },
+          {
+            "qn": "clustering/community.rs::cluster_graph",
+            "cluster": 4
+          },
+          {
+            "qn": "clustering/community.rs::ClusteringResult",
+            "cluster": 4
+          },
+          {
+            "qn": "clustering/community.rs::louvain",
+            "cluster": 4
+          },
+          {
+            "qn": "clustering/process.rs::trace_processes",
+            "cluster": 4
+          },
+          {
+            "qn": "clustering/impact.rs::get_impact",
+            "cluster": 4
+          },
+          {
+            "qn": "git_diff.rs::analyze_diff",
+            "cluster": 5
+          },
+          {
+            "qn": "git_diff.rs::analyze_git_diff",
+            "cluster": 5
+          },
+          {
+            "qn": "git_diff.rs::ChangedSymbol",
+            "cluster": 5
+          },
+          {
+            "qn": "git_diff.rs::DiffAnalysis",
+            "cluster": 5
+          },
+          {
+            "qn": "prd_input.rs::prepare",
+            "cluster": 7
+          },
+          {
+            "qn": "prd_validator.rs::validate_prd",
+            "cluster": 7
+          },
+          {
+            "qn": "prd_validator.rs::ValidationReport",
+            "cluster": 7
+          },
+          {
+            "qn": "prd_validator.rs::ValidationFinding",
+            "cluster": 7
+          },
+          {
+            "qn": "main.rs::handle_tool_call",
+            "cluster": 8
+          },
+          {
+            "qn": "main.rs::handle_request",
+            "cluster": 8
+          },
+          {
+            "qn": "main.rs::forbidden_cypher_keyword",
+            "cluster": 8
+          },
+          {
+            "qn": "main.rs::validate_graph_path_safe",
+            "cluster": 8
+          }
         ]
       }
     },
-
     {
       "query_id": "q13",
       "_note": "PRD fixture 1: valid, in-scope change to an existing symbol. Expected: no findings, validation_status=ok.",
@@ -761,7 +1221,9 @@
         "affected_symbols_path": "/Users/cdeust/Developments/anthropic/ai-automatised-pipeline/benches/corpora/rust-self/prds/prd_02_hallucinated.affected_symbols.json"
       },
       "expected": {
-        "truly_present": ["symbol_hallucination"]
+        "truly_present": [
+          "symbol_hallucination"
+        ]
       }
     },
     {
@@ -772,14 +1234,17 @@
         "affected_symbols_path": "/Users/cdeust/Developments/anthropic/ai-automatised-pipeline/benches/corpora/rust-self/prds/prd_03_community_violation.affected_symbols.json"
       },
       "expected": {
-        "truly_present": ["community_consistency"]
+        "truly_present": [
+          "community_consistency"
+        ]
       }
     },
-
     {
       "query_id": "q14",
       "_note": "external (non-crate) imports in resolver.rs — should be flagged unresolved by the cross-crate resolver",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'resolver.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'resolver.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "std::collections::HashMap",
@@ -790,7 +1255,9 @@
     },
     {
       "query_id": "q14",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'clustering.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'clustering/community.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "std::collections::HashMap",
@@ -802,7 +1269,9 @@
     },
     {
       "query_id": "q14",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'indexer.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'indexer/mod.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "std::collections::HashMap",
@@ -814,7 +1283,9 @@
     },
     {
       "query_id": "q14",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'search/mod.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'search/mod.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "std::collections::HashMap",
@@ -825,7 +1296,9 @@
     },
     {
       "query_id": "q14",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'graph_store.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'graph_store.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "lbug::Connection",
@@ -842,7 +1315,9 @@
     },
     {
       "query_id": "q14",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'git_diff.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'git_diff.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "serde::Serialize",
@@ -854,7 +1329,9 @@
     },
     {
       "query_id": "q14",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'lsp_client.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'lsp_client.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "serde_json::json",
@@ -876,7 +1353,9 @@
     },
     {
       "query_id": "q14",
-      "input": { "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'prd_validator.rs' RETURN n.path" },
+      "input": {
+        "query": "MATCH (f:File)-[:Defines_File_Import]->(n:Import) WHERE f.path = 'prd_validator.rs' RETURN n.path"
+      },
       "expected": {
         "unresolved": [
           "serde_json::json",

@@ -170,7 +170,11 @@ pub fn bound_values_paged(values: Vec<Value>, offset: u64, char_budget: usize) -
         items,
         total_count,
         truncated: more_remain,
-        next_offset: if more_remain { Some(next_index as u64) } else { None },
+        next_offset: if more_remain {
+            Some(next_index as u64)
+        } else {
+            None
+        },
     }
 }
 
@@ -199,13 +203,21 @@ pub fn bound_values(values: Vec<Value>, char_budget: usize) -> Bounded {
         // Always admit the first item so the caller never gets an empty section
         // purely because one row is large; otherwise stop before overflowing.
         if !items.is_empty() && used + size > char_budget {
-            return Bounded { items, total_count, truncated: true };
+            return Bounded {
+                items,
+                total_count,
+                truncated: true,
+            };
         }
         used += size;
         items.push(v);
     }
 
-    Bounded { items, total_count, truncated: false }
+    Bounded {
+        items,
+        total_count,
+        truncated: false,
+    }
 }
 
 #[cfg(test)]
@@ -251,7 +263,9 @@ mod tests {
         assert!(b.truncated);
         assert!(b.items.len() < total);
         // Sum of kept item sizes stays within budget.
-        let used: usize = b.items.iter()
+        let used: usize = b
+            .items
+            .iter()
             .map(|v| serde_json::to_string(v).unwrap().len())
             .sum();
         assert!(used <= budget, "used {used} exceeded budget {budget}");
@@ -324,18 +338,22 @@ mod tests {
             .map(|i| json!({"id": i, "qualified_name": format!("module::func_{i}"), "label": "Function"}))
             .collect();
         let (reconstructed, _) = page_through(vals.clone(), 300);
-        assert_eq!(reconstructed, vals, "paged union must equal unpaged full list");
+        assert_eq!(
+            reconstructed, vals,
+            "paged union must equal unpaged full list"
+        );
     }
 
     #[test]
     fn paging_single_page_when_everything_fits() {
-        let vals: Vec<Value> = (0..5)
-            .map(|i| json!({"id": i}))
-            .collect();
+        let vals: Vec<Value> = (0..5).map(|i| json!({"id": i})).collect();
         let page = bound_values_paged(vals.clone(), 0, per_section_chars());
         assert_eq!(page.items.len(), 5);
         assert!(!page.truncated);
-        assert_eq!(page.next_offset, None, "no next_offset on a complete final page");
+        assert_eq!(
+            page.next_offset, None,
+            "no next_offset on a complete final page"
+        );
         assert_eq!(page.total_count, 5);
     }
 
@@ -345,8 +363,15 @@ mod tests {
             .map(|i| json!({"id": i, "qualified_name": format!("m::f{i}")}))
             .collect();
         let (_, cursors) = page_through(vals, 200);
-        assert!(cursors.len() >= 2, "tiny budget should force multiple pages");
-        assert_eq!(*cursors.last().unwrap(), None, "final page has no next_offset");
+        assert!(
+            cursors.len() >= 2,
+            "tiny budget should force multiple pages"
+        );
+        assert_eq!(
+            *cursors.last().unwrap(),
+            None,
+            "final page has no next_offset"
+        );
         // Every non-final page must carry a cursor.
         for c in &cursors[..cursors.len() - 1] {
             assert!(c.is_some(), "non-final page must advance the cursor");
@@ -396,6 +421,9 @@ mod tests {
         let chars = serde_json::to_string(&row).unwrap().len();
         // Recorded measurement on 2026-06-10: 89 chars for this representative
         // row. Allow a generous band so the test documents rather than pins.
-        assert!((80..=160).contains(&chars), "row serialized to {chars} chars");
+        assert!(
+            (80..=160).contains(&chars),
+            "row serialized to {chars} chars"
+        );
     }
 }

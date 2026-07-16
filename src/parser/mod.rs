@@ -22,91 +22,12 @@ pub mod typescript;
 // CLI (`--time-limit 5`). Parser::parse returns None when this is exceeded.
 pub(crate) const PARSE_TIMEOUT_MICROS: u64 = 5_000_000;
 
-use tree_sitter::Node;
+use std::time::{Duration, Instant};
 
-// ---------------------------------------------------------------------------
-// Supported languages
-// ---------------------------------------------------------------------------
+use tree_sitter::{Node, ParseOptions, ParseState, Parser, Tree};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Language {
-    Rust,
-    Python,
-    TypeScript,
-    Java,
-    Kotlin,
-    Swift,
-    ObjC,
-    C,
-    Cpp,
-    Go,
-}
-
-impl Language {
-    /// Detects language from file extension. Returns None for unsupported.
-    pub fn from_extension(ext: &str) -> Option<Self> {
-        match ext {
-            "rs" => Some(Language::Rust),
-            "py" => Some(Language::Python),
-            "ts" | "tsx" => Some(Language::TypeScript),
-            "java" => Some(Language::Java),
-            "kt" | "kts" => Some(Language::Kotlin),
-            "swift" => Some(Language::Swift),
-            // ``.m`` is ObjC; ``.mm`` is ObjC++ which we handle with the
-            // ObjC grammar (it supports mixed C++ constructs via embedded
-            // C++ rules; full fidelity would require a separate parser).
-            "m" | "mm" => Some(Language::ObjC),
-            // ``.h`` is ambiguous (C/C++/ObjC). Default to C to cover the
-            // majority case; projects that need C++ headers parsed as C++
-            // can pass ``language: "cpp"`` explicitly.
-            "c" | "h" => Some(Language::C),
-            "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" => Some(Language::Cpp),
-            "go" => Some(Language::Go),
-            // JavaScript family — parsed with the TypeScript grammar.
-            // JS is a subset of TS and tree-sitter is error-tolerant, so
-            // functions/classes are extracted (JSX recovers gracefully).
-            // Previously .js was light-link-only (import edges, no symbols),
-            // so the AST/impact diagram was empty for JavaScript — only
-            // Python/TS produced symbols. source: viz "AST regardless of
-            // file type" requirement, 2026-06-03.
-            "js" | "jsx" | "mjs" | "cjs" => Some(Language::TypeScript),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Language::Rust => "rust",
-            Language::Python => "python",
-            Language::TypeScript => "typescript",
-            Language::Java => "java",
-            Language::Kotlin => "kotlin",
-            Language::Swift => "swift",
-            Language::ObjC => "objc",
-            Language::C => "c",
-            Language::Cpp => "cpp",
-            Language::Go => "go",
-        }
-    }
-
-    /// Parses a language string from the tool schema.
-    pub fn from_str_opt(s: &str) -> Option<Self> {
-        match s {
-            "rust" => Some(Language::Rust),
-            "python" => Some(Language::Python),
-            "typescript" => Some(Language::TypeScript),
-            "java" => Some(Language::Java),
-            "kotlin" => Some(Language::Kotlin),
-            "swift" => Some(Language::Swift),
-            "objc" | "objective-c" => Some(Language::ObjC),
-            "c" => Some(Language::C),
-            "cpp" | "c++" => Some(Language::Cpp),
-            "go" => Some(Language::Go),
-            _ => None,
-        }
-    }
-}
+mod language;
+pub use language::Language;
 
 // ---------------------------------------------------------------------------
 // Output labels — match graph_store NODE_* constants by value, not by import.
@@ -132,6 +53,13 @@ pub const LABEL_CALL_SITE: &str = "CallSite";
 pub struct ParseResult {
     pub nodes: Vec<ExtractedNode>,
     pub refs: Vec<ExtractedRef>,
+    // source: stages/stage-3.md §6.1 (parse_errors on the parser-port output)
+    // and §10.5 ("Parse errors per file ... dropping it hides broken parses
+    // behind clean node counts"). Count of tree-sitter ERROR/MISSING nodes in
+    // the parsed tree — tree-sitter recovers from bad syntax into ERROR/MISSING
+    // nodes rather than failing, so a non-fatal parse can still be degraded.
+    // Cross-ref: GitNexus safe-parse.ts detects `root.hasError || root.isMissing`.
+    pub parse_errors: u32,
 }
 
 pub struct ExtractedNode {
@@ -192,6 +120,58 @@ pub(crate) fn qual(scope: &str, name: &str) -> String {
     format!("{scope}::{name}")
 }
 
+/// Counts tree-sitter ERROR and MISSING nodes anywhere in the tree.
+///
+/// tree-sitter never throws on malformed input — it recovers into ERROR
+/// (unparseable span) and MISSING (inserted-to-recover) nodes and returns a
+/// tree anyway. A clean `Ok(ParseResult)` with zero symbols can therefore mean
+/// either "empty file" or "the parser is keyed to the wrong grammar and every
+/// construct became an ERROR node". This count is the quality signal that
+/// distinguishes the two. source: stages/stage-3.md §10.5.
+pub(crate) fn count_parse_errors(root: Node) -> u32 {
+    let mut errors: u32 = 0;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.is_error() || node.is_missing() {
+            errors += 1;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    errors
+}
+
+/// Parses `source` under the shared per-file timeout guard and returns the tree.
+///
+/// tree-sitter 0.25 deprecated `Parser::set_timeout_micros`; the supported
+/// replacement is a progress callback supplied through `ParseOptions`. Per the
+/// tree-sitter C API (`api.h`: "Parsing was cancelled due to the progress
+/// callback returning true"), the callback returns `true` to CANCEL — so we
+/// return `true` once the wall-clock deadline of `PARSE_TIMEOUT_MICROS` passes.
+/// `parse_with_options` takes an input-reader closure; for an in-memory `&str`
+/// it hands tree-sitter the remaining byte slice from each requested offset.
+/// Returns `Err` on timeout-cancel, source rejection, or a `None` tree.
+/// source: tree-sitter v0.25 api.h TSParseOptions / ts_parser_parse_with_options.
+pub(crate) fn parse_with_timeout(parser: &mut Parser, source: &str) -> Result<Tree, String> {
+    let deadline = Instant::now() + Duration::from_micros(PARSE_TIMEOUT_MICROS);
+    let mut past_deadline = |_state: &ParseState| Instant::now() >= deadline;
+    let options = ParseOptions::new().progress_callback(&mut past_deadline);
+    let bytes = source.as_bytes();
+    parser
+        .parse_with_options(
+            &mut |offset, _pos| bytes.get(offset..).unwrap_or(&[]),
+            None,
+            Some(options),
+        )
+        .ok_or_else(|| {
+            "parse_timeout_or_none: tree-sitter returned None \
+             (parse cancelled, timeout exceeded, or source rejected)"
+                .to_string()
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -218,7 +198,10 @@ mod tests {
     fn test_language_from_str() {
         assert_eq!(Language::from_str_opt("rust"), Some(Language::Rust));
         assert_eq!(Language::from_str_opt("python"), Some(Language::Python));
-        assert_eq!(Language::from_str_opt("typescript"), Some(Language::TypeScript));
+        assert_eq!(
+            Language::from_str_opt("typescript"),
+            Some(Language::TypeScript)
+        );
         assert_eq!(Language::from_str_opt("java"), Some(Language::Java));
         assert_eq!(Language::from_str_opt("go"), Some(Language::Go));
         // "auto" is not a concrete language — detection happens by extension.

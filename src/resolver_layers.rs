@@ -54,9 +54,7 @@ fn expand_macro_calls(
     // emit CallSite nodes for macros; therefore this pass currently covers
     // the legacy path only. When the indexer learns CallsMacro, the full
     // Layer 4 will light up.
-    let qr = store.execute_query(
-        "MATCH (cs:CallSite) RETURN cs.id, cs.callee_name"
-    )?;
+    let qr = store.execute_query("MATCH (cs:CallSite) RETURN cs.id, cs.callee_name")?;
     let mut resolved = 0u64;
     let mut total = 0u64;
     let mut unresolved = Vec::new();
@@ -147,12 +145,13 @@ pub fn ensure_stdlib_symbol(
     if created.contains(canonical_path) {
         return Ok(());
     }
-    let name = canonical_path
-        .rsplit("::")
-        .next()
-        .unwrap_or(canonical_path);
+    let name = canonical_path.rsplit("::").next().unwrap_or(canonical_path);
     let receiver_type = crate::stdlib_index::get_stdlib_table(language)
-        .and_then(|t| t.symbols().iter().find(|s| s.canonical_path == canonical_path))
+        .and_then(|t| {
+            t.symbols()
+                .iter()
+                .find(|s| s.canonical_path == canonical_path)
+        })
         .map(|s| s.receiver_type)
         .unwrap_or("");
     let cypher = format!(

@@ -23,10 +23,14 @@ use std::fs;
 /// Index a set of (relative_path, source) files into a fresh graph and run
 /// the Stage-3b resolution pass. Returns the resolution result.
 fn index_and_resolve(tag: &str, files: &[(&str, &str)]) -> ResolutionResult {
-    let root = std::env::temp_dir().join(format!(
-        "multilang_{tag}_{}",
-        std::process::id()
-    ));
+    // issue #25 audit: process::id() collides across processes under PID
+    // reuse; tempfile's random suffix does not (tag is kept as a
+    // human-readable prefix for debuggability, not for uniqueness).
+    let root = tempfile::Builder::new()
+        .prefix(&format!("multilang_{tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep();
     let _ = fs::remove_dir_all(&root);
     let src = root.join("src");
     for (rel, body) in files {
@@ -62,8 +66,12 @@ fn java_cross_file_resolution_lights_up() {
 
     eprintln!(
         "java: imports={} calls={} impls={} extends={} uses={} unresolved={}",
-        res.imports_resolved, res.calls_resolved, res.impls_resolved,
-        res.extends_resolved, res.uses_resolved, res.unresolved.len()
+        res.imports_resolved,
+        res.calls_resolved,
+        res.impls_resolved,
+        res.extends_resolved,
+        res.uses_resolved,
+        res.unresolved.len()
     );
     assert!(
         resolution_total(&res) > 0,
@@ -73,7 +81,8 @@ fn java_cross_file_resolution_lights_up() {
     assert!(
         res.imports_resolved > 0 || res.uses_resolved > 0,
         "expected a resolved Java import or field-type use, got imports={} uses={}",
-        res.imports_resolved, res.uses_resolved
+        res.imports_resolved,
+        res.uses_resolved
     );
 }
 
@@ -91,8 +100,12 @@ fn go_same_package_resolution_lights_up() {
 
     eprintln!(
         "go: imports={} calls={} impls={} extends={} uses={} unresolved={}",
-        res.imports_resolved, res.calls_resolved, res.impls_resolved,
-        res.extends_resolved, res.uses_resolved, res.unresolved.len()
+        res.imports_resolved,
+        res.calls_resolved,
+        res.impls_resolved,
+        res.extends_resolved,
+        res.uses_resolved,
+        res.unresolved.len()
     );
     assert!(
         resolution_total(&res) > 0,
@@ -113,8 +126,12 @@ fn rust_resolution_unchanged() {
 
     eprintln!(
         "rust: imports={} calls={} impls={} extends={} uses={} unresolved={}",
-        res.imports_resolved, res.calls_resolved, res.impls_resolved,
-        res.extends_resolved, res.uses_resolved, res.unresolved.len()
+        res.imports_resolved,
+        res.calls_resolved,
+        res.impls_resolved,
+        res.extends_resolved,
+        res.uses_resolved,
+        res.unresolved.len()
     );
     assert!(
         resolution_total(&res) > 0,
@@ -153,10 +170,22 @@ fn file_prefix_extraction_covers_dormant_extensions() {
 #[test]
 fn registry_covers_all_ten_languages() {
     for lang in [
-        "rust", "python", "typescript", "java", "kotlin", "swift", "objc",
-        "c", "cpp", "go",
+        "rust",
+        "python",
+        "typescript",
+        "java",
+        "kotlin",
+        "swift",
+        "objc",
+        "c",
+        "cpp",
+        "go",
     ] {
-        assert_eq!(provider_for(lang).language(), lang, "tag mismatch for {lang}");
+        assert_eq!(
+            provider_for(lang).language(),
+            lang,
+            "tag mismatch for {lang}"
+        );
     }
 }
 
@@ -170,17 +199,35 @@ fn unknown_language_falls_back_to_default() {
 #[test]
 fn import_last_segment_per_separator() {
     // Rust `::`, with crate:: strip.
-    assert_eq!(provider_for("rust").import_last_segment("crate::a::Bar"), "Bar");
+    assert_eq!(
+        provider_for("rust").import_last_segment("crate::a::Bar"),
+        "Bar"
+    );
     // Java/Kotlin keep raw `.`.
-    assert_eq!(provider_for("java").import_last_segment("java.util.List"), "List");
+    assert_eq!(
+        provider_for("java").import_last_segment("java.util.List"),
+        "List"
+    );
     // Python/TS are stored `::`-normalized by their parsers.
-    assert_eq!(provider_for("python").import_last_segment("os::path"), "path");
-    assert_eq!(provider_for("typescript").import_last_segment("a::b::Mod"), "Mod");
+    assert_eq!(
+        provider_for("python").import_last_segment("os::path"),
+        "path"
+    );
+    assert_eq!(
+        provider_for("typescript").import_last_segment("a::b::Mod"),
+        "Mod"
+    );
     // Go/ObjC/C `/`.
     assert_eq!(provider_for("go").import_last_segment("net/http"), "http");
-    assert_eq!(provider_for("c").import_last_segment("sys/stat.h"), "stat.h");
+    assert_eq!(
+        provider_for("c").import_last_segment("sys/stat.h"),
+        "stat.h"
+    );
     // Swift: bare module name, no separator.
-    assert_eq!(provider_for("swift").import_last_segment("Foundation"), "Foundation");
+    assert_eq!(
+        provider_for("swift").import_last_segment("Foundation"),
+        "Foundation"
+    );
 }
 
 #[test]

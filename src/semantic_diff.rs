@@ -41,8 +41,14 @@ pub const DETAILS_TRUNCATION: usize = 100;
 // "the same symbol" across two indexing runs. File/Directory/Import are
 // content-addressed and noisy; we restrict diffing to semantic symbols.
 const DIFFABLE_LABELS: &[&str] = &[
-    "Function", "Method", "Struct", "Enum", "Trait",
-    "Module", "Constant", "TypeAlias",
+    "Function",
+    "Method",
+    "Struct",
+    "Enum",
+    "Trait",
+    "Module",
+    "Constant",
+    "TypeAlias",
 ];
 
 // ---------------------------------------------------------------------------
@@ -102,10 +108,22 @@ pub fn diff(args: &SemanticDiffArgs, verified_at: String) -> Result<SemanticDiff
     let score = regression_score(&summary);
     let verdict = classify_verdict(score);
     let report = build_report(
-        args, &verified_at, &summary, score, verdict,
-        &node_diff, &edge_diff, &dangling, &new_cycles,
+        args,
+        &verified_at,
+        &summary,
+        score,
+        verdict,
+        &node_diff,
+        &edge_diff,
+        &dangling,
+        &new_cycles,
     );
-    Ok(SemanticDiffOutcome { summary, regression_score: score, verdict, report })
+    Ok(SemanticDiffOutcome {
+        summary,
+        regression_score: score,
+        verdict,
+        report,
+    })
 }
 
 fn check_paths_exist(args: &SemanticDiffArgs) -> Result<(), String> {
@@ -151,9 +169,7 @@ type NodeSet = BTreeMap<String, BTreeSet<String>>; // label -> { qualified_name 
 fn collect_nodes(store: &GraphStore) -> NodeSet {
     let mut out: NodeSet = BTreeMap::new();
     for label in DIFFABLE_LABELS {
-        let cypher = format!(
-            "MATCH (n:{label}) RETURN n.qualified_name"
-        );
+        let cypher = format!("MATCH (n:{label}) RETURN n.qualified_name");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
             Err(_) => continue,
@@ -216,7 +232,7 @@ fn rel_kind(rel: &str) -> &str {
 // ---------------------------------------------------------------------------
 
 struct NodeDiff {
-    added: Vec<(String, String)>,   // (label, qualified_name)
+    added: Vec<(String, String)>, // (label, qualified_name)
     removed: Vec<(String, String)>,
 }
 
@@ -305,10 +321,7 @@ fn count_unresolved(store: &GraphStore) -> u64 {
 // Correctness of the canonical form (sorted qualified_name tuple) lets us
 // compare before/after cycles as plain strings.
 
-fn strongly_connected_cycles(
-    nodes: &NodeSet,
-    edges: &EdgeSet,
-) -> BTreeSet<String> {
+fn strongly_connected_cycles(nodes: &NodeSet, edges: &EdgeSet) -> BTreeSet<String> {
     let (node_list, adj, self_loops) = build_adjacency(nodes, edges);
     let sccs = tarjan_scc(&adj);
     let mut out: BTreeSet<String> = BTreeSet::new();
@@ -316,8 +329,7 @@ fn strongly_connected_cycles(
         if scc.len() < 2 {
             continue;
         }
-        let mut names: Vec<String> =
-            scc.iter().map(|&i| node_list[i].clone()).collect();
+        let mut names: Vec<String> = scc.iter().map(|&i| node_list[i].clone()).collect();
         names.sort();
         out.insert(names.join(","));
     }
@@ -380,8 +392,14 @@ fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
             continue;
         }
         dfs_iterative(
-            v, adj, &mut index, &mut lowlink, &mut on_stack,
-            &mut stack, &mut result, &mut counter,
+            v,
+            adj,
+            &mut index,
+            &mut lowlink,
+            &mut on_stack,
+            &mut stack,
+            &mut result,
+            &mut counter,
         );
     }
     result
@@ -439,12 +457,7 @@ fn visit(
     on_stack[v] = true;
 }
 
-fn pop_scc(
-    v: usize,
-    on_stack: &mut [bool],
-    stack: &mut Vec<usize>,
-    result: &mut Vec<Vec<usize>>,
-) {
+fn pop_scc(v: usize, on_stack: &mut [bool], stack: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
     let mut component = Vec::new();
     while let Some(w) = stack.pop() {
         on_stack[w] = false;
@@ -456,10 +469,7 @@ fn pop_scc(
     result.push(component);
 }
 
-fn diff_cycle_sets(
-    before: &BTreeSet<String>,
-    after: &BTreeSet<String>,
-) -> Vec<String> {
+fn diff_cycle_sets(before: &BTreeSet<String>, after: &BTreeSet<String>) -> Vec<String> {
     after.difference(before).cloned().collect()
 }
 
@@ -471,8 +481,7 @@ fn diff_cycle_sets(
 fn regression_score(s: &DiffSummary) -> f64 {
     let dangling = WEIGHT_DANGLING * s.dangling_references as f64;
     let cycles = WEIGHT_NEW_CYCLE * s.new_cycles as f64;
-    let unresolved = WEIGHT_UNRESOLVED_DELTA
-        * s.new_unresolved_delta.max(0) as f64;
+    let unresolved = WEIGHT_UNRESOLVED_DELTA * s.new_unresolved_delta.max(0) as f64;
     let unresolved = unresolved.min(UNRESOLVED_DELTA_MAX * WEIGHT_UNRESOLVED_DELTA * 10.0);
     (dangling + cycles + unresolved).min(REGRESSION_SCORE_CAP)
 }
@@ -558,8 +567,7 @@ pub fn write_report(path: &Path, report: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {:?}: {}", parent, e))?;
     }
-    let bytes = serde_json::to_vec_pretty(report)
-        .map_err(|e| format!("serialize: {}", e))?;
+    let bytes = serde_json::to_vec_pretty(report).map_err(|e| format!("serialize: {}", e))?;
     fs::write(path, bytes).map_err(|e| format!("write: {}", e))?;
     Ok(())
 }
@@ -645,7 +653,9 @@ mod tests {
         edges.insert(("b".into(), "Calls".into(), "a".into()));
         let cycles = strongly_connected_cycles(&nodes, &edges);
         assert_eq!(cycles.len(), 1);
-        assert!(cycles.iter().any(|c| c.contains("a,b") || c.contains("b,a")));
+        assert!(cycles
+            .iter()
+            .any(|c| c.contains("a,b") || c.contains("b,a")));
     }
 
     #[test]

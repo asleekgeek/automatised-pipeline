@@ -1,0 +1,39 @@
+# .mcpbignore — files excluded from the .mcpb bundle.
+# The bundle only needs: manifest.json, icon.png, README.md, LICENSE,
+# PRIVACY.md, launch.sh, and the pre-built binaries under bin/.
+# Everything else is build-time, development, or documentation artefact.
+
+target/
+tests/
+benches/
+stages/
+crates/
+docs/
+tools/
+.git/
+.github/
+.claude/
+.claude-plugin/
+src/
+
+Cargo.toml
+Cargo.lock
+*.tar.gz
+*.mcpb
+*.sha256
+
+CHANGELOG.md
+NOTES.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+
+# MCP registry / distribution metadata (not needed at runtime)
+server.json
+glama.json
+.mcpbignore
+
+# Editor / tool artefacts
+.DS_Store
+*.swp
+*.swo

@@ -17,7 +17,7 @@
 // source: stages/stage-8.md §4 (gate definitions), §6 (severity ladder),
 //         §7 (tool schema).
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{cypher_str, GraphStore};
 use crate::search;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -27,8 +27,18 @@ use std::path::{Path, PathBuf};
 // source: stages/stage-8.md §4 S1 — auth-critical name patterns for
 // Leiden community proximity detection.
 const AUTH_CRITICAL_PATTERNS: &[&str] = &[
-    "auth", "password", "token", "permission", "role",
-    "crypto", "encrypt", "decrypt", "verify", "jwt", "oauth", "session",
+    "auth",
+    "password",
+    "token",
+    "permission",
+    "role",
+    "crypto",
+    "encrypt",
+    "decrypt",
+    "verify",
+    "jwt",
+    "oauth",
+    "session",
 ];
 
 // source: stages/stage-8.md §6 — security artifact filename.
@@ -130,12 +140,21 @@ struct Resolved {
 }
 
 fn resolve_all(store: &GraphStore, inputs: &[String]) -> Vec<Resolved> {
-    inputs.iter().map(|input| {
-        match search::resolve_qualified_name(store, input) {
-            Ok(qn) => Resolved { input: input.clone(), resolved_qn: Some(qn), did_you_mean: Vec::new() },
-            Err(nf) => Resolved { input: input.clone(), resolved_qn: None, did_you_mean: nf.did_you_mean },
-        }
-    }).collect()
+    inputs
+        .iter()
+        .map(|input| match search::resolve_qualified_name(store, input) {
+            Ok(qn) => Resolved {
+                input: input.clone(),
+                resolved_qn: Some(qn),
+                did_you_mean: Vec::new(),
+            },
+            Err(nf) => Resolved {
+                input: input.clone(),
+                resolved_qn: None,
+                did_you_mean: nf.did_you_mean,
+            },
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -159,16 +178,21 @@ fn find_auth_communities(store: &GraphStore) -> BTreeSet<String> {
     // source: stages/stage-8.md §4 S1 patterns are lowercase; we normalize
     // in-memory rather than rely on an engine-specific `toLower()` Cypher fn.
     for (label, rel) in labels {
-        let cypher = format!(
-            "MATCH (s:{label})-[:{rel}]->(c:Community) RETURN s.name, c.id"
-        );
+        let cypher = format!("MATCH (s:{label})-[:{rel}]->(c:Community) RETURN s.name, c.id");
         if let Ok(qr) = store.execute_query(&cypher) {
             for row in &qr.rows {
-                if row.len() < 2 { continue; }
+                if row.len() < 2 {
+                    continue;
+                }
                 let name_lower = row[0].to_ascii_lowercase();
-                if AUTH_CRITICAL_PATTERNS.iter().any(|p| name_lower.contains(p)) {
+                if AUTH_CRITICAL_PATTERNS
+                    .iter()
+                    .any(|p| name_lower.contains(p))
+                {
                     let cid = &row[1];
-                    if !cid.is_empty() { out.insert(cid.clone()); }
+                    if !cid.is_empty() {
+                        out.insert(cid.clone());
+                    }
                 }
             }
         }
@@ -182,12 +206,16 @@ fn run_s1(
     auth_communities: &BTreeSet<String>,
     flags: &mut Vec<SecurityFlag>,
 ) {
-    if auth_communities.is_empty() { return; }
+    if auth_communities.is_empty() {
+        return;
+    }
     let cid = match community_of(store, qualified_name) {
         Some(c) => c,
         None => return,
     };
-    if !auth_communities.contains(&cid) { return; }
+    if !auth_communities.contains(&cid) {
+        return;
+    }
     flags.push(SecurityFlag {
         gate: "auth_critical_touch".into(),
         severity: "critical".into(),
@@ -203,19 +231,29 @@ fn run_s1(
 fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
     // Mirrors search/mod.rs::lookup_community — per-label iteration for
     // lbug dialect compatibility (no rel-type alternation).
-    let escaped = qualified_name.replace('\'', "\\'");
-    for label in ["Function", "Method", "Struct", "Enum", "Trait",
-                  "Constant", "TypeAlias", "Module"] {
+    let escaped = cypher_str(qualified_name);
+    for label in [
+        "Function",
+        "Method",
+        "Struct",
+        "Enum",
+        "Trait",
+        "Constant",
+        "TypeAlias",
+        "Module",
+    ] {
         let rel = format!("MemberOf_{label}_Community");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(c:Community) \
-             WHERE n.qualified_name = '{escaped}' \
+             WHERE n.qualified_name = {escaped} \
              RETURN c.id LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
                 if let Some(cid) = row.first() {
-                    if !cid.is_empty() { return Some(cid.clone()); }
+                    if !cid.is_empty() {
+                        return Some(cid.clone());
+                    }
                 }
             }
         }
@@ -240,7 +278,8 @@ fn run_s2(_store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFla
         severity: "info".into(),
         symbol: qualified_name.into(),
         message: "unsafe detection unavailable: rust_parser does not record is_unsafe \
-                  (see stages/stage-8.md §7 Q1; unblocks when stage 3a-v2 ships)".into(),
+                  (see stages/stage-8.md §7 Q1; unblocks when stage 3a-v2 ships)"
+            .into(),
         details: json!({ "skipped": true, "reason": "parser_missing_is_unsafe" }),
     });
 }
@@ -254,8 +293,12 @@ fn run_s3(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
         Some(m) => m,
         None => return,
     };
-    if meta.visibility.as_deref() != Some("pub") { return; }
-    if !meta.parent_is_file { return; }
+    if meta.visibility.as_deref() != Some("pub") {
+        return;
+    }
+    if !meta.parent_is_file {
+        return;
+    }
     // severity: warning on modify (default); caller supplies change_kind only
     // through the batch list. We can't distinguish remove/rename without it,
     // so this gate stays at "warning". Callers who want critical escalation
@@ -281,7 +324,7 @@ struct SymbolMeta {
 }
 
 fn symbol_visibility_and_parent(store: &GraphStore, qualified_name: &str) -> Option<SymbolMeta> {
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     // 1) pull the symbol's visibility (labels that carry it).
     let vis = fetch_visibility(store, &escaped)?;
     // 2) Is the symbol defined directly by a File (not via a Module)?
@@ -290,7 +333,11 @@ fn symbol_visibility_and_parent(store: &GraphStore, qualified_name: &str) -> Opt
     Some(SymbolMeta {
         visibility: vis,
         parent_is_file: file_defined,
-        parent_label: if file_defined { "File".into() } else { "Module".into() },
+        parent_label: if file_defined {
+            "File".into()
+        } else {
+            "Module".into()
+        },
         file_path,
     })
 }
@@ -300,14 +347,18 @@ fn fetch_visibility(store: &GraphStore, escaped_qn: &str) -> Option<Option<Strin
     // Struct, Enum, Trait, Field. Method receiver_type is irrelevant here.
     for label in ["Function", "Method", "Struct", "Enum", "Trait"] {
         let cypher = format!(
-            "MATCH (n:{label}) WHERE n.qualified_name = '{escaped_qn}' \
+            "MATCH (n:{label}) WHERE n.qualified_name = {escaped_qn} \
              RETURN n.visibility LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
                 if let Some(v) = row.first() {
                     let s = v.trim();
-                    return Some(if s.is_empty() { None } else { Some(s.to_string()) });
+                    return Some(if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.to_string())
+                    });
                 }
             }
         }
@@ -319,11 +370,15 @@ fn has_file_parent(store: &GraphStore, escaped_qn: &str) -> bool {
     // Defines_File_* edges go from File to the symbol; crate-root pubs live
     // directly under the File (no intermediate Module).
     for rel in [
-        "Defines_File_Function", "Defines_File_Struct", "Defines_File_Enum",
-        "Defines_File_Trait", "Defines_File_Constant", "Defines_File_TypeAlias",
+        "Defines_File_Function",
+        "Defines_File_Struct",
+        "Defines_File_Enum",
+        "Defines_File_Trait",
+        "Defines_File_Constant",
+        "Defines_File_TypeAlias",
     ] {
         let cypher = format!(
-            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = '{escaped_qn}' \
+            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = {escaped_qn} \
              RETURN f.path LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -337,17 +392,23 @@ fn has_file_parent(store: &GraphStore, escaped_qn: &str) -> bool {
 
 fn lookup_file_path(store: &GraphStore, escaped_qn: &str) -> Option<String> {
     for rel in [
-        "Defines_File_Function", "Defines_File_Struct", "Defines_File_Enum",
-        "Defines_File_Trait", "Defines_File_Constant", "Defines_File_TypeAlias",
+        "Defines_File_Function",
+        "Defines_File_Struct",
+        "Defines_File_Enum",
+        "Defines_File_Trait",
+        "Defines_File_Constant",
+        "Defines_File_TypeAlias",
     ] {
         let cypher = format!(
-            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = '{escaped_qn}' \
+            "MATCH (f:File)-[:{rel}]->(n) WHERE n.qualified_name = {escaped_qn} \
              RETURN f.path LIMIT 1"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
             if let Some(row) = qr.rows.first() {
                 if let Some(p) = row.first() {
-                    if !p.is_empty() { return Some(p.clone()); }
+                    if !p.is_empty() {
+                        return Some(p.clone());
+                    }
                 }
             }
         }
@@ -366,7 +427,7 @@ fn run_s4(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
     // Since the schema has no File->Import edge, we scope by qualified_name
     // prefix: Import nodes live under the file's scope (parser/rust.rs §
     // handle_use_declaration — qualified_name = qual(scope, display_name)).
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     let file_path = match lookup_file_path(store, &escaped) {
         Some(p) => p,
         None => return,
@@ -375,17 +436,23 @@ fn run_s4(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
     // any leading path component the resolver removes (search::strip_leading
     // mirrors this), then match qualified_name prefix.
     let scope = file_scope_from_path(&file_path);
-    let escaped_scope = scope.replace('\'', "\\'");
+    let escaped_scope_prefix = cypher_str(&format!("{scope}::"));
     let cypher = format!(
-        "MATCH (i:Import) WHERE i.qualified_name STARTS WITH '{escaped_scope}::' \
+        "MATCH (i:Import) WHERE i.qualified_name STARTS WITH {escaped_scope_prefix} \
          RETURN count(i)"
     );
     let count: u64 = match store.execute_query(&cypher) {
-        Ok(qr) => qr.rows.first().and_then(|r| r.first())
-            .and_then(|s| s.parse::<u64>().ok()).unwrap_or(0),
+        Ok(qr) => qr
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0),
         Err(_) => 0,
     };
-    if count == 0 { return; }
+    if count == 0 {
+        return;
+    }
     let severity = if count >= 2 { "critical" } else { "warning" };
     flags.push(SecurityFlag {
         gate: "unresolved_imports".into(),
@@ -413,13 +480,13 @@ fn file_scope_from_path(file_path: &str) -> String {
 // ---------------------------------------------------------------------------
 
 fn run_s5(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag>) {
-    let escaped = qualified_name.replace('\'', "\\'");
+    let escaped = cypher_str(qualified_name);
     let mut reached = 0u64;
     for label in ["Function", "Method"] {
         let rel = format!("ParticipatesIn_{label}_Process");
         let cypher = format!(
             "MATCH (n:{label})-[:{rel}]->(p:Process) \
-             WHERE n.qualified_name = '{escaped}' AND p.entry_kind = 'test' \
+             WHERE n.qualified_name = {escaped} AND p.entry_kind = 'test' \
              RETURN count(p)"
         );
         if let Ok(qr) = store.execute_query(&cypher) {
@@ -430,12 +497,15 @@ fn run_s5(store: &GraphStore, qualified_name: &str, flags: &mut Vec<SecurityFlag
             }
         }
     }
-    if reached > 0 { return; }
+    if reached > 0 {
+        return;
+    }
     flags.push(SecurityFlag {
         gate: "test_coverage_gap".into(),
         severity: "warning".into(),
         symbol: qualified_name.into(),
-        message: "no ParticipatesIn path from any test-entry process — structural coverage gap".into(),
+        message: "no ParticipatesIn path from any test-entry process — structural coverage gap"
+            .into(),
         details: json!({ "test_processes_reaching_symbol": 0 }),
     });
 }
@@ -452,10 +522,16 @@ pub fn report_to_json(
     changed_symbols: &[String],
     checked_at: &str,
 ) -> Value {
-    let flags: Vec<Value> = report.flags.iter().map(|f| json!({
-        "gate": f.gate, "severity": f.severity, "symbol": f.symbol,
-        "message": f.message, "details": f.details,
-    })).collect();
+    let flags: Vec<Value> = report
+        .flags
+        .iter()
+        .map(|f| {
+            json!({
+                "gate": f.gate, "severity": f.severity, "symbol": f.symbol,
+                "message": f.message, "details": f.details,
+            })
+        })
+        .collect();
     json!({
         "run_id": run_id,
         "finding_id": finding_id,
@@ -489,6 +565,84 @@ pub fn write_security(path: &Path, value: &Value) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph_store::{NODE_COMMUNITY, NODE_FUNCTION};
+
+    // source: issue #16 — the naive single-quote-only `String::replace`
+    // escape (the exact pattern this file used before this fix, and the
+    // SECOND reintroduction of the vulnerability git_diff.rs's "M1 fix"
+    // comment already documented) is defeated by a `\'` payload: the escape turns
+    // `\'` into `\\'` — an escaped backslash followed by an UNescaped
+    // closing quote — which closes the Cypher string literal early and lets
+    // the attacker-controlled remainder execute as live Cypher (e.g.
+    // `DETACH DELETE n`). `qualified_name` reaching `community_of` /
+    // `run_s1` originates from the changed-symbol list the security gates
+    // are handed for a diff — untrusted content in the same sense as the
+    // LLM-generated PRD claims covered by
+    // prd_validator::verdict_tests::test_file_has_graph_node_escapes_adversarial_path
+    // and graph_store::tests::test_cypher_injection_rejected. This test
+    // proves S1 (`community_of`) round-trips the adversarial qualified_name
+    // as ordinary string data instead of executing the injected Cypher.
+    #[test]
+    fn test_community_of_escapes_adversarial_qualified_name() {
+        let dir = tempfile::Builder::new()
+            .prefix("security_gates_cypher_inject_test")
+            .tempdir()
+            .expect("create temp dir");
+        let db_path = dir.path().join("testdb");
+        let store = GraphStore::open_or_create(&db_path).expect("open_or_create");
+        store.create_schema().expect("create_schema");
+
+        let evil_qn = r"evil\'::fn() -> () DETACH DELETE n //";
+        let safe_qn = "safe::fn";
+        let community_id = "community::0";
+
+        store
+            .insert_node(
+                NODE_COMMUNITY,
+                &[
+                    ("id", &cypher_str(community_id)),
+                    ("name", &cypher_str("community_0")),
+                    ("algorithm", &cypher_str("louvain+c2")),
+                    ("resolution_param", "1.0"),
+                    ("member_count", "2"),
+                    ("modularity_contribution", "0.0"),
+                ],
+            )
+            .expect("insert community node");
+        for qn in [evil_qn, safe_qn] {
+            store
+                .insert_node(
+                    NODE_FUNCTION,
+                    &[
+                        ("id", &cypher_str(qn)),
+                        ("name", &cypher_str(qn)),
+                        ("qualified_name", &cypher_str(qn)),
+                        ("start_line", "1"),
+                        ("end_line", "1"),
+                        ("visibility", &cypher_str("pub")),
+                        ("is_async", "false"),
+                        ("language", &cypher_str("rust")),
+                    ],
+                )
+                .expect("insert function node");
+            store
+                .insert_edge("MemberOf_Function_Community", qn, community_id, &[])
+                .expect("insert MemberOf edge");
+        }
+
+        assert_eq!(
+            community_of(&store, evil_qn),
+            Some(community_id.to_string()),
+            "the adversarial qualified_name must round-trip as ordinary string data \
+             and still resolve to its own community"
+        );
+        assert_eq!(
+            community_of(&store, safe_qn),
+            Some(community_id.to_string()),
+            "the benign function node must survive — the adversarial qualified_name \
+             must not have executed DETACH DELETE"
+        );
+    }
 
     #[test]
     fn test_auth_patterns_lowercase() {
@@ -500,14 +654,34 @@ mod tests {
     #[test]
     fn test_tally_counts() {
         let flags = vec![
-            SecurityFlag { gate: "g".into(), severity: "critical".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
-            SecurityFlag { gate: "g".into(), severity: "warning".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
-            SecurityFlag { gate: "g".into(), severity: "info".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
-            SecurityFlag { gate: "g".into(), severity: "info".into(),
-                symbol: "s".into(), message: "".into(), details: json!({}) },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "critical".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "warning".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "info".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
+            SecurityFlag {
+                gate: "g".into(),
+                severity: "info".into(),
+                symbol: "s".into(),
+                message: "".into(),
+                details: json!({}),
+            },
         ];
         let s = tally(&flags, 5);
         assert_eq!(s.critical_count, 1);
@@ -522,8 +696,10 @@ mod tests {
             gates_passed: true,
             flags: Vec::new(),
             summary: SecuritySummary {
-                changed_symbols: 1, critical_count: 0,
-                warning_count: 5, info_count: 3,
+                changed_symbols: 1,
+                critical_count: 0,
+                warning_count: 5,
+                info_count: 3,
             },
         };
         // with only warnings, should pass

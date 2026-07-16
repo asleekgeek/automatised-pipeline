@@ -127,3 +127,69 @@ jobs:
             automatised-pipeline-${{ matrix.target_tag }}.tar.gz
             automatised-pipeline-${{ matrix.target_tag }}.tar.gz.sha256
           fail_on_unmatched_files: true
+
+  # Pack and publish the .mcpb bundle after all three platform binaries
+  # are available on the GitHub Release.
+  package_mcpb:
+    name: package .mcpb bundle
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download platform binaries from release
+        run: |
+          TAG="${{ github.ref_name }}"
+          BASE="https://github.com/cdeust/automatised-pipeline/releases/download/${TAG}"
+          for TARGET in macos-aarch64 linux-x86_64 linux-aarch64; do
+            curl -fsSL "${BASE}/automatised-pipeline-${TARGET}.tar.gz" \
+              -o "automatised-pipeline-${TARGET}.tar.gz"
+          done
+
+      - name: Assemble staging directory
+        run: |
+          STAGING="$(mktemp -d)/bundle"
+          mkdir -p "$STAGING"
+
+          # Static bundle files
+          cp manifest.json "$STAGING/"
+          cp README.md     "$STAGING/"
+          cp LICENSE       "$STAGING/"
+          cp PRIVACY.md    "$STAGING/"
+          cp launch.sh     "$STAGING/"
+          chmod +x "$STAGING/launch.sh"
+
+          # icon.png — copy if present (maintainer replaces placeholder)
+          if [ -f icon.png ]; then cp icon.png "$STAGING/"; fi
+
+          # Extract platform binaries into bin/<platform>/
+          for TARGET in macos-aarch64 linux-x86_64 linux-aarch64; do
+            mkdir -p "$STAGING/bin/${TARGET}"
+            tar -xzf "automatised-pipeline-${TARGET}.tar.gz" \
+              -C "$STAGING/bin/${TARGET}/"
+            chmod +x "$STAGING/bin/${TARGET}/automatised-pipeline"
+          done
+
+          echo "STAGING=$STAGING" >> "$GITHUB_ENV"
+
+      - name: Pack .mcpb bundle
+        run: |
+          # .mcpb is a ZIP archive with manifest.json at root.
+          # Try the official packer first; fall back to zip.
+          if npx -y @anthropic-ai/mcpb@latest pack "$STAGING" automatised-pipeline.mcpb 2>/dev/null; then
+            echo "Packed via @anthropic-ai/mcpb"
+          else
+            cd "$STAGING" && zip -r "$OLDPWD/automatised-pipeline.mcpb" . && cd "$OLDPWD"
+            echo "Packed via zip (mcpb CLI unavailable)"
+          fi
+          shasum -a 256 automatised-pipeline.mcpb | tee automatised-pipeline.mcpb.sha256
+          ls -la automatised-pipeline.mcpb automatised-pipeline.mcpb.sha256
+
+      - name: Upload .mcpb to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            automatised-pipeline.mcpb
+            automatised-pipeline.mcpb.sha256
+          fail_on_unmatched_files: true

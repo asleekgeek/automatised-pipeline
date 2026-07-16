@@ -198,7 +198,10 @@ pub fn hello(state: &GraphState, req: &HelloRequest) -> HelloResponse {
     // Serialize once to measure size, then re-attach the measured size
     // so the manifest is self-describing.
     let approx = serde_json::to_vec(&resp).map(|v| v.len()).unwrap_or(0);
-    HelloResponse { manifest_bytes: approx, ..resp }
+    HelloResponse {
+        manifest_bytes: approx,
+        ..resp
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -225,8 +228,14 @@ mod tests {
 
     fn sample() -> GraphState {
         let nodes = vec![
-            NodeRef { id: "a".into(), label: "File".into() },
-            NodeRef { id: "b".into(), label: "Function".into() },
+            NodeRef {
+                id: "a".into(),
+                label: "File".into(),
+            },
+            NodeRef {
+                id: "b".into(),
+                label: "Function".into(),
+            },
         ];
         let edges = vec![EdgeRef {
             from: "a".into(),
@@ -240,15 +249,27 @@ mod tests {
     fn content_hash_is_stable_across_input_order() {
         let g1 = GraphState::new(
             vec![
-                NodeRef { id: "a".into(), label: "File".into() },
-                NodeRef { id: "b".into(), label: "Function".into() },
+                NodeRef {
+                    id: "a".into(),
+                    label: "File".into(),
+                },
+                NodeRef {
+                    id: "b".into(),
+                    label: "Function".into(),
+                },
             ],
             vec![],
         );
         let g2 = GraphState::new(
             vec![
-                NodeRef { id: "b".into(), label: "Function".into() },
-                NodeRef { id: "a".into(), label: "File".into() },
+                NodeRef {
+                    id: "b".into(),
+                    label: "Function".into(),
+                },
+                NodeRef {
+                    id: "a".into(),
+                    label: "File".into(),
+                },
             ],
             vec![],
         );
@@ -269,7 +290,9 @@ mod tests {
     fn content_id_is_64_lowercase_hex() {
         let id = sample().content_id();
         assert_eq!(id.len(), 64);
-        assert!(id.chars().all(|c| c.is_ascii_hexdigit() && (c.is_ascii_digit() || c.is_ascii_lowercase())));
+        assert!(id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && (c.is_ascii_digit() || c.is_ascii_lowercase())));
     }
 
     #[test]
@@ -278,13 +301,22 @@ mod tests {
         // different upstream-dedup behaviour would hash differently.
         let g1 = GraphState::new(
             vec![
-                NodeRef { id: "a".into(), label: "File".into() },
-                NodeRef { id: "a".into(), label: "File".into() },
+                NodeRef {
+                    id: "a".into(),
+                    label: "File".into(),
+                },
+                NodeRef {
+                    id: "a".into(),
+                    label: "File".into(),
+                },
             ],
             vec![],
         );
         let g2 = GraphState::new(
-            vec![NodeRef { id: "a".into(), label: "File".into() }],
+            vec![NodeRef {
+                id: "a".into(),
+                label: "File".into(),
+            }],
             vec![],
         );
         assert_eq!(g1.nodes.len(), 1);
