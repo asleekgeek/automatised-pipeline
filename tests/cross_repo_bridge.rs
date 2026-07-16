@@ -137,3 +137,57 @@ fn cross_repo_forward_reverse_and_homonym() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #31, defense 2 — the cross-repo bridge candidate input must exclude
+// refs already classified external, regardless of whether the classifying
+// provider's prefix list caught them (the two defenses must fail
+// independently). Mirrors the filter applied in main.rs's do_resolve_graph
+// before calling bridge::count_cross_repo_resolvable.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kotlin_external_unresolveds_produce_empty_cross_repo_candidates() {
+    let root = std::env::temp_dir().join(format!("cross_repo_kotlin_ext_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+
+    // Single-repo Kotlin fixture: only JVM/Android ecosystem imports, no
+    // real cross-repo siblings define any of these symbols.
+    let consumer_src = "import androidx.lifecycle.ViewModel\nimport retrofit2.Retrofit\n\nclass MainViewModel : ViewModel() {\n    val retrofit: Retrofit? = null\n}\n";
+    let consumer_src_dir = root.join("consumer").join("src");
+    let consumer_graph_dir = root.join("consumer").join("graph");
+    fs::create_dir_all(&consumer_src_dir).expect("create src");
+    fs::write(consumer_src_dir.join("MainViewModel.kt"), consumer_src).expect("write fixture");
+    indexer::index_codebase(&consumer_src_dir, &consumer_graph_dir).expect("index_codebase");
+    let consumer_store = GraphStore::open_or_create(&consumer_graph_dir).expect("open graph");
+    let result = resolver::resolve_graph(&consumer_store).expect("resolve_graph");
+
+    // An unrelated sibling repo that defines unrelated symbols — proves an
+    // empty result comes from the filter, not from an empty sibling set.
+    let provider = build_graph(&root, "provider", "lib.rs", PROVIDER_LIB);
+
+    let targets: Vec<String> = result
+        .unresolved
+        .iter()
+        .filter(|u| u.reason != resolver::EXTERNAL_UNRESOLVED_REASON)
+        .map(|u| u.target_text.clone())
+        .collect();
+    assert!(
+        targets.is_empty(),
+        "single-repo Kotlin fixture with only ecosystem imports must yield no cross-repo \
+         candidate targets after filtering; got {:?}",
+        targets
+    );
+
+    let args = json!({ "sibling_graphs": [provider.to_str().unwrap()] });
+    let siblings = SiblingGraphs::from_arg(&args, &consumer_graph_dir);
+    let (resolvable, sample) = bridge::count_cross_repo_resolvable(&siblings, &targets);
+    assert_eq!(
+        resolvable, 0,
+        "cross-repo candidate count must be zero for an all-external unresolved set; got sample={:?}",
+        sample
+    );
+    assert!(sample.is_empty());
+
+    let _ = fs::remove_dir_all(&root);
+}

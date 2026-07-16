@@ -249,3 +249,85 @@ fn external_detection_per_language() {
     assert!(provider_for("swift").is_external_import("Foundation"));
     assert!(!provider_for("swift").is_external_import("MyAppModule"));
 }
+
+// ---------------------------------------------------------------------------
+// Issue #31 — Kotlin external-prefix allowlist was missing the JVM/Android
+// ecosystem (androidx.*, retrofit2.*, com.google.*, ...), so those refs fell
+// through to "no target found in graph" instead of being classified
+// external. Covers both single-segment prefixes (retrofit2, junit, dagger)
+// and compound dotted prefixes (com.google, org.jetbrains, timber.log).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kotlin_external_detection_covers_jvm_android_ecosystem() {
+    let kotlin = provider_for("kotlin");
+    for path in [
+        "androidx.lifecycle.ViewModel",
+        "android.content.Context",
+        "retrofit2.Retrofit",
+        "com.google.gson.Gson",
+        "com.squareup.okhttp3.OkHttpClient",
+        "io.reactivex.Observable",
+        "org.reactivestreams.Publisher",
+        "org.jetbrains.annotations.NotNull",
+        "org.intellij.lang.annotations.Language",
+        "junit.framework.TestCase",
+        "org.junit.Test",
+        "org.mockito.Mockito",
+        "io.mockk.mockk",
+        "org.koin.core.Koin",
+        "dagger.Module",
+        "org.slf4j.Logger",
+        "org.apache.commons.lang3.StringUtils",
+        "com.fasterxml.jackson.databind.ObjectMapper",
+        "timber.log.Timber",
+    ] {
+        assert!(
+            kotlin.is_external_import(path),
+            "{path} should be classified external"
+        );
+    }
+
+    // Segment-boundary precision: a compound prefix must match whole path
+    // segments, not just a string prefix — otherwise `com.googlex.*` (an
+    // in-corpus package that merely starts with the same characters) would
+    // be misclassified external.
+    assert!(!kotlin.is_external_import("com.googlex.MyOwnPackage.Foo"));
+    assert!(!kotlin.is_external_import("comgoogle.MyOwnPackage.Foo"));
+    assert!(!kotlin.is_external_import("myapp.feature.Repository"));
+}
+
+#[test]
+fn kotlin_jvm_android_ecosystem_imports_classified_external_end_to_end() {
+    let main = "import androidx.lifecycle.ViewModel\n\
+                import retrofit2.Retrofit\n\
+                import com.google.gson.Gson\n\n\
+                class MainViewModel : ViewModel() {\n    \
+                    val retrofit: Retrofit? = null\n    \
+                    val gson: Gson? = null\n\
+                }\n";
+    let res = index_and_resolve("kotlin_ext", &[("MainViewModel.kt", main)]);
+
+    let ecosystem_targets = [
+        "androidx.lifecycle.ViewModel",
+        "retrofit2.Retrofit",
+        "com.google.gson.Gson",
+    ];
+    for expect in ecosystem_targets {
+        let hit = res.unresolved.iter().find(|u| u.target_text == expect);
+        assert!(
+            hit.is_some(),
+            "expected an unresolved import entry for {expect}; got {:?}",
+            res.unresolved
+                .iter()
+                .map(|u| &u.target_text)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            hit.unwrap().reason,
+            resolver::EXTERNAL_UNRESOLVED_REASON,
+            "{expect} must carry the external classification (issue #31), not a generic \
+             'no target found in graph' fallback"
+        );
+    }
+}

@@ -2542,9 +2542,17 @@ fn do_resolve_graph(arguments: &Value) -> Result<Value, String> {
     // Absent the arg this is a no-op. source: cross-repo bridge spec.
     let siblings = bridge::SiblingGraphs::from_arg(arguments, graph_path);
     if !siblings.is_empty() {
+        // Exclude refs already classified external (stdlib/framework/
+        // third-party root, e.g. androidx.*, retrofit2.*) from the
+        // candidate pool: those are known-external by construction, not
+        // potential cross-repo bridges, regardless of whether the
+        // classifying provider's prefix list caught them. This filter and
+        // the prefix-list widening in language_provider.rs are independent
+        // defenses — issue #31.
         let targets: Vec<String> = result
             .unresolved
             .iter()
+            .filter(|u| u.reason != resolver::EXTERNAL_UNRESOLVED_REASON)
             .map(|u| u.target_text.clone())
             .collect();
         let (resolvable, sample) = bridge::count_cross_repo_resolvable(&siblings, &targets);

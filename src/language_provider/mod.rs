@@ -27,6 +27,8 @@
 // source: stages/stage-3b.md §5 (phase contract); per-constant sources cited
 // at each provider. Registered in BOTH lib.rs and main.rs (lib+bin crate).
 
+mod kotlin_prefixes;
+
 // ---------------------------------------------------------------------------
 // Trait
 // ---------------------------------------------------------------------------
@@ -91,17 +93,31 @@ pub trait LanguageProvider: Send + Sync {
         p.rsplit(self.import_separator()).next().unwrap_or(p)
     }
 
-    /// True when the first path segment is a known external root. Provided.
+    /// pre: `path` uses this provider's `import_separator`. post: true iff
+    /// `path` starts, segment-by-segment, with an `external_prefixes()`
+    /// entry. A `.`-containing entry (e.g. `"com.google"`) matches as a
+    /// compound root only when the separator is also `.` (Java/Kotlin);
+    /// otherwise it matches atomically (preserves C's `"stdio.h"`).
     fn is_external_import(&self, path: &str) -> bool {
+        let sep = self.import_separator();
         // crate/self/super and leading-dot relatives are always internal.
-        let first = path.split(self.import_separator()).next().unwrap_or(path);
+        let first = path.split(sep).next().unwrap_or(path);
         if first == "crate" || first == "self" || first == "super" {
             return false;
         }
         if first.starts_with('.') {
             return false;
         }
-        self.external_prefixes().iter().any(|p| first == *p)
+        let path_segments: Vec<&str> = path.split(sep).collect();
+        self.external_prefixes().iter().any(|prefix| {
+            if sep == "." && prefix.contains('.') {
+                let prefix_segments: Vec<&str> = prefix.split('.').collect();
+                path_segments.len() >= prefix_segments.len()
+                    && path_segments[..prefix_segments.len()] == prefix_segments[..]
+            } else {
+                first == *prefix
+            }
+        })
     }
 }
 
@@ -312,8 +328,9 @@ impl LanguageProvider for JavaProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Kotlin — source: kotlinlang.org/api/latest/jvm/stdlib (package roots,
-// basic types). Interops with the JVM, so Java roots are external too.
+// Kotlin — source: kotlinlang.org/api/latest/jvm/stdlib. Interops with the
+// JVM, so Java roots are external too. Ecosystem prefix data lives in
+// kotlin_prefixes.rs (concern split; keeps this file under 500 lines).
 // ---------------------------------------------------------------------------
 
 pub struct KotlinProvider;
@@ -325,8 +342,7 @@ impl LanguageProvider for KotlinProvider {
         "." // `kotlin.collections.List` — parser/kotlin/extract/g2.rs rsplit('.')
     }
     fn external_prefixes(&self) -> &'static [&'static str] {
-        // source: kotlinlang.org stdlib + JVM interop (Java roots).
-        &["kotlin", "kotlinx", "java", "javax", "jakarta"]
+        kotlin_prefixes::KOTLIN_JVM_ANDROID_EXTERNAL_PREFIXES
     }
     fn primitives(&self) -> &'static [&'static str] {
         // source: kotlinlang.org/docs/basic-types.html.

@@ -44,6 +44,14 @@ fn check_known_rel_table(table: &str, from_id: &str, to_id: &str) -> bool {
 // Public types
 // ---------------------------------------------------------------------------
 
+/// Reason string recorded on an `UnresolvedRef` whose target matched a
+/// language provider's `external_prefixes` (a known stdlib/framework/
+/// third-party root, not a corpus symbol). Public so callers that must
+/// distinguish genuine externals from other unresolved reasons (e.g. the
+/// cross-repo bridge candidate filter in main.rs) key off this constant
+/// instead of duplicating the literal.
+pub const EXTERNAL_UNRESOLVED_REASON: &str = "external crate";
+
 pub struct ResolutionResult {
     pub imports_resolved: u64,
     pub calls_resolved: u64,
@@ -435,7 +443,7 @@ fn resolve_one_import(
                 kind: "Imports".to_string(),
                 from_id: import_id.to_string(),
                 target_text: path.to_string(),
-                reason: "external crate".to_string(),
+                reason: EXTERNAL_UNRESOLVED_REASON.to_string(),
             }],
         );
     }
