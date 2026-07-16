@@ -6,6 +6,7 @@
 //
 // source: stages/stage-3b.md §4, §5
 
+use crate::ambiguity_policy::{self, Context as PolicyContext, Resolution as PolicyResolution};
 use crate::graph_store::{is_known_rel_table, GraphStore};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,6 +76,12 @@ struct SymbolEntry {
     id: String,
     label: String,
     qualified_name: String,
+}
+
+impl ambiguity_policy::Candidate for SymbolEntry {
+    fn qualified_name(&self) -> &str {
+        &self.qualified_name
+    }
 }
 
 struct SymbolIndex {
@@ -471,14 +478,40 @@ fn resolve_single_import(
         .by_name
         .get(last_segment)
         .ok_or("no target found in graph")?;
-    let entry =
-        pick_best_candidate(candidates, normalized_path).ok_or("no target found in graph")?;
+    // The import path itself is the disambiguating evidence: it plays the
+    // role of an "import in scope" whose suffix should match exactly one
+    // candidate's qualified name. source: issue #30 — single ambiguity
+    // policy shared with resolve_single_call's qualified path.
+    let import_hint = [normalized_path.to_string()];
+    let ctx = PolicyContext {
+        imports_in_scope: &import_hint,
+        caller_file: file_id,
+        caller_package: None,
+    };
+    // resolve() (not resolve_deterministic): a genuinely ambiguous import
+    // (no evidence distinguishes the candidates) is left unresolved rather
+    // than guessed — see resolve_single_call's doc comment for why.
+    let (entry, evidence, conf) = match ambiguity_policy::resolve(candidates, &ctx) {
+        PolicyResolution::Resolved {
+            target,
+            evidence,
+            confidence,
+        } => (target, evidence, confidence),
+        PolicyResolution::NotFound | PolicyResolution::Ambiguous { .. } => {
+            return Err("no target found in graph")
+        }
+    };
     let table = format!("Imports_File_{}", entry.label);
     if !check_known_rel_table(&table, file_id, &entry.id) {
         return Err("unknown rel table for import target");
     }
-    let conf = compute_import_confidence(candidates.len());
-    buf.add(&table, file_id, &entry.id, conf, "import-scope-lookup");
+    buf.add(
+        &table,
+        file_id,
+        &entry.id,
+        conf,
+        ambiguity_policy::resolution_label(evidence),
+    );
     Ok(1)
 }
 
@@ -560,154 +593,216 @@ fn resolve_calls(
         let caller_qn = extract_caller_from_callsite_id(cs_id);
         let file_id = extract_file_from_qn(&caller_qn);
         let caller_label = determine_caller_label(idx, &caller_qn);
-        let (r, u) = resolve_one_call_site(
-            idx,
-            provider,
-            file_imports,
-            buf,
+
+        let site = CallSite {
             cs_id,
             callee,
-            &caller_qn,
-            &file_id,
-            &caller_label,
-        );
-        resolved += r;
-        if r > 0 {
+            caller_qn: &caller_qn,
+            caller_label: &caller_label,
+        };
+        let resolved_before = resolved;
+        let mut tally = CallTally {
+            resolved: &mut resolved,
+            unresolved: &mut unresolved,
+        };
+        match resolve_single_call(idx, provider, file_imports, callee, &file_id) {
+            PolicyResolution::Resolved {
+                target,
+                evidence,
+                confidence,
+            } => {
+                let matched = MatchedCall {
+                    target: &target,
+                    evidence,
+                    confidence,
+                };
+                stage_call_edge(buf, &site, &matched, &mut tally);
+            }
+            // Genuinely ambiguous (no evidence tier discriminates the
+            // candidates): labeled and dropped rather than guessed — see
+            // resolve_single_call's doc comment for why this beats a
+            // deterministic tiebreak here (issue #30).
+            PolicyResolution::Ambiguous { candidates } => record_call_unresolved(
+                &site,
+                &mut tally,
+                format!("ambiguous ({} candidates)", candidates.len()),
+            ),
+            PolicyResolution::NotFound => {
+                record_call_unresolved(&site, &mut tally, "no target found".to_string())
+            }
+        }
+        if resolved > resolved_before {
             // The callee resolved to a graph target — flip the CallSite's
             // is_resolved (§10.4). Applies to both Calls and Uses edges
             // (both mean "target found").
             resolved_ids.push(cs_id.clone());
         }
-        unresolved.extend(u);
     }
     let id_refs: Vec<&str> = resolved_ids.iter().map(|s| s.as_str()).collect();
     store.mark_nodes_resolved("CallSite", &id_refs)?;
     Ok((resolved, total, unresolved))
 }
 
-/// Resolves one non-macro CallSite to a target and stages the edge.
-/// postcondition: returns `(1, vec![])` iff a target was found and mapped
-/// to a schema-known rel table (regardless of `AddOutcome` — the ref
-/// resolved whether or not the edge is new); returns `(0, vec![one entry])`
-/// otherwise. Never returns `(1, non-empty)` or `(0, empty)` — every call
-/// produces exactly one resolved-or-unresolved outcome (Move 2 invariant).
-#[allow(clippy::too_many_arguments)]
-fn resolve_one_call_site(
-    idx: &SymbolIndex,
-    provider: &dyn crate::language_provider::LanguageProvider,
-    file_imports: &HashMap<String, Vec<String>>,
+/// Records one unresolved `Calls` reference with the given reason.
+fn record_call_unresolved(site: &CallSite, tally: &mut CallTally, reason: String) {
+    tally.unresolved.push(UnresolvedRef {
+        kind: "Calls".to_string(),
+        from_id: site.cs_id.to_string(),
+        target_text: site.callee.to_string(),
+        reason,
+    });
+}
+
+/// One row from the `CallSite` scan, grouped so downstream helpers take a
+/// single reference instead of four loose string parameters.
+struct CallSite<'a> {
+    cs_id: &'a str,
+    callee: &'a str,
+    caller_qn: &'a str,
+    caller_label: &'a str,
+}
+
+/// A resolved callee plus the evidence/confidence the policy attached to it.
+struct MatchedCall<'a> {
+    target: &'a SymbolEntry,
+    evidence: ambiguity_policy::Evidence,
+    confidence: f64,
+}
+
+/// Running counters for `resolve_calls`, grouped so helpers take one
+/// reference instead of two separate mutable accumulator parameters.
+struct CallTally<'a> {
+    resolved: &'a mut u64,
+    unresolved: &'a mut Vec<UnresolvedRef>,
+}
+
+/// Stages the Calls/Uses edge for one resolved callee, or records why it
+/// couldn't be staged (unknown rel table / wrong label combination).
+/// source: stages/stage-3b.md §2 — Calls is Function|Method ->
+/// Function|Method only. Names resolving to Struct/Enum/Trait/TypeAlias are
+/// tuple-struct ctors / enum-variant calls / type uses — preserved as
+/// Uses_* edges so the full dependency chain remains queryable; dropping
+/// them would hide real dependencies from change_impact/navigate.
+fn stage_call_edge(
     buf: &mut EdgeBuffer,
-    cs_id: &str,
-    callee: &str,
-    caller_qn: &str,
-    file_id: &str,
-    caller_label: &str,
-) -> (u64, Vec<UnresolvedRef>) {
-    let target = match resolve_single_call(idx, provider, file_imports, callee, file_id) {
-        Some(t) => t,
-        None => {
-            return (
-                0,
-                vec![UnresolvedRef {
-                    kind: "Calls".to_string(),
-                    from_id: cs_id.to_string(),
-                    target_text: callee.to_string(),
-                    reason: "no target found".to_string(),
-                }],
-            )
-        }
-    };
-    // source: stages/stage-3b.md §2 — Calls is Function|Method ->
-    // Function|Method only. Names resolving to Struct/Enum/Trait/TypeAlias
-    // are tuple-struct ctors / enum-variant calls / type uses — preserve
-    // them as Uses_* edges so the full dependency chain stays queryable.
-    let conf = if callee.contains("::") { 1.0 } else { 0.9 };
+    site: &CallSite,
+    matched: &MatchedCall,
+    tally: &mut CallTally,
+) {
+    let target = matched.target;
     let (rel_opt, kind) = match target.label.as_str() {
         "Function" | "Method" => (
-            Some(format!("Calls_{caller_label}_{}", target.label)),
+            Some(format!("Calls_{}_{}", site.caller_label, target.label)),
             "Calls",
         ),
         "Struct" | "Enum" | "Trait" | "TypeAlias"
-            if caller_label == "Function" || caller_label == "Method" =>
+            if site.caller_label == "Function" || site.caller_label == "Method" =>
         {
             (
-                Some(format!("Uses_{caller_label}_{}", target.label)),
+                Some(format!("Uses_{}_{}", site.caller_label, target.label)),
                 "Uses",
             )
         }
         _ => (None, "Calls"),
     };
-    let rel = match rel_opt {
-        Some(r) => r,
-        None => {
-            return (
-                0,
-                vec![UnresolvedRef {
-                    kind: kind.to_string(),
-                    from_id: cs_id.to_string(),
-                    target_text: callee.to_string(),
-                    reason: format!(
-                        "no rel table for {caller_label} -> {} (callsite-as-call)",
-                        target.label
-                    ),
-                }],
-            )
+    match rel_opt {
+        Some(rel) => {
+            if !check_known_rel_table(&rel, site.caller_qn, &target.id) {
+                // Schema doesn't declare this label combination — already
+                // logged by check_known_rel_table. Nothing more to do.
+            } else {
+                // All three `AddOutcome` variants mean the reference
+                // resolved to a real target (see `AddOutcome` doc comment);
+                // they differ only in whether a DB write is queued.
+                buf.add(
+                    &rel,
+                    site.caller_qn,
+                    &target.id,
+                    matched.confidence,
+                    ambiguity_policy::resolution_label(matched.evidence),
+                );
+                *tally.resolved += 1;
+            }
         }
-    };
-    if !check_known_rel_table(&rel, caller_qn, &target.id) {
-        return (
-            0,
-            vec![UnresolvedRef {
-                kind: kind.to_string(),
-                from_id: cs_id.to_string(),
-                target_text: callee.to_string(),
-                reason: format!("unknown rel table {rel}"),
-            }],
-        );
+        None => tally.unresolved.push(UnresolvedRef {
+            kind: kind.to_string(),
+            from_id: site.cs_id.to_string(),
+            target_text: site.callee.to_string(),
+            reason: format!(
+                "no rel table for {} -> {} (callsite-as-call)",
+                site.caller_label, target.label
+            ),
+        }),
     }
-    buf.add(&rel, caller_qn, &target.id, conf, "import-scope-lookup");
-    (1, vec![])
 }
 
+/// Resolves one callee reference via the shared ambiguity policy (issue
+/// #30). Both the qualified/import-matched path and the unqualified path
+/// build a `Context` from the evidence available at the call site and
+/// delegate to `ambiguity_policy::resolve` — this is the ONLY place that
+/// decides ambiguity/confidence for call resolution.
+///
+/// Deliberately uses `resolve`, not `resolve_deterministic`: a genuinely
+/// ambiguous reference (no evidence tier discriminates the candidates) is
+/// left unresolved (`Ambiguous`) rather than guessed. This is stricter than
+/// the issue's suggested "deterministic tiebreak to preserve recall" —
+/// tested against `tests/graph_accuracy.rs` (the repo's ground-truth
+/// gate), the deterministic tiebreak measurably regressed precision: e.g.
+/// `infrastructure/pg_store.py` has a bare `_now_iso()` call inside a
+/// method, name-ambiguous between the module-level function and an
+/// unrelated same-named method; Python's own scoping resolves it to the
+/// function, but neither candidate carries evidence our tiers model, so
+/// tiebreaking picked the wrong (method) target and introduced 2 false
+/// Calls edges (Calls F1 dropped 1.0 -> 0.5). Dropping the edge (labeled
+/// `ambiguous (N candidates)`) matches the pre-issue-#30 unqualified
+/// behavior exactly, so no real edges are lost — only the mislabeling and
+/// the qualified-path's arbitrary-`candidates[0]` guess are fixed.
+/// `resolve_deterministic` remains available (and tested) in
+/// ambiguity_policy for a future caller that prefers recall over
+/// precision for its own ambiguity class.
+///
+/// precondition: `callee` is the raw callee spelling as parsed; `file_id`
+/// is the caller's file path.
+/// postcondition: the returned `Resolution` depends only on the candidate
+/// set and the evidence context — never directly on whether `callee` was
+/// spelled qualified or unqualified.
 fn resolve_single_call(
     idx: &SymbolIndex,
     provider: &dyn crate::language_provider::LanguageProvider,
     file_imports: &HashMap<String, Vec<String>>,
     callee: &str,
     file_id: &str,
-) -> Option<SymbolEntry> {
-    // Fully qualified: resolve directly. QNs are uniformly `::`-separated;
-    // a callee carrying the language separator is treated as qualified.
+) -> PolicyResolution<SymbolEntry> {
+    // Fully qualified: the callee's own spelling is the import-match
+    // evidence (its qualified-name suffix should identify at most one
+    // candidate uniquely).
     if callee.contains("::") || callee.contains(provider.import_separator()) {
         let last = provider.import_last_segment(callee);
-        let candidates = idx.by_name.get(last)?;
-        return pick_best_candidate(candidates, callee).cloned();
+        let candidates = match idx.by_name.get(last) {
+            Some(c) => c,
+            None => return PolicyResolution::NotFound,
+        };
+        let import_hint = [callee.to_string()];
+        let ctx = PolicyContext {
+            imports_in_scope: &import_hint,
+            caller_file: file_id,
+            caller_package: None,
+        };
+        return ambiguity_policy::resolve(candidates, &ctx);
     }
-    // Unqualified: check imports for this file
-    if let Some(imports) = file_imports.get(file_id) {
-        for imp_path in imports {
-            let last = provider.import_last_segment(imp_path);
-            if last == callee {
-                if let Some(candidates) = idx.by_name.get(callee) {
-                    return pick_best_candidate(candidates, imp_path).cloned();
-                }
-            }
-        }
-    }
-    // Fallback: try direct name match (same-file definitions)
-    let candidates = idx.by_name.get(callee)?;
-    // Prefer same-file definitions
-    let same_file: Vec<_> = candidates
-        .iter()
-        .filter(|e| e.qualified_name.starts_with(file_id))
-        .collect();
-    if same_file.len() == 1 {
-        return Some(same_file[0].clone());
-    }
-    if candidates.len() == 1 {
-        return Some(candidates[0].clone());
-    }
-    None
+    // Unqualified: evidence is the file's own import list plus same-file
+    // definitions, both handled by the shared policy's evidence tiers.
+    let candidates = match idx.by_name.get(callee) {
+        Some(c) => c,
+        None => return PolicyResolution::NotFound,
+    };
+    let imports = file_imports.get(file_id).cloned().unwrap_or_default();
+    let ctx = PolicyContext {
+        imports_in_scope: &imports,
+        caller_file: file_id,
+        caller_package: None,
+    };
+    ambiguity_policy::resolve(candidates, &ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -1230,38 +1325,6 @@ fn determine_caller_label(idx: &SymbolIndex, caller_qn: &str) -> String {
         .get(caller_qn)
         .map(|e| e.label.clone())
         .unwrap_or_else(|| "Function".to_string())
-}
-
-fn pick_best_candidate<'a>(
-    candidates: &'a [SymbolEntry],
-    path_hint: &str,
-) -> Option<&'a SymbolEntry> {
-    if candidates.is_empty() {
-        return None;
-    }
-    if candidates.len() == 1 {
-        return Some(&candidates[0]);
-    }
-    // Try matching the path hint against qualified names
-    let last_segments = path_hint.replace("::", "/");
-    for c in candidates {
-        let c_segments = c.qualified_name.replace("::", "/");
-        if c_segments.ends_with(&last_segments) {
-            return Some(c);
-        }
-    }
-    // Fallback: return first candidate
-    Some(&candidates[0])
-}
-
-/// Confidence: 1.0 for unique match, 0.7 for ambiguous.
-/// source: stages/stage-3b.md §2 "Confidence assignment rules"
-fn compute_import_confidence(candidate_count: usize) -> f64 {
-    if candidate_count == 1 {
-        1.0
-    } else {
-        0.7
-    }
 }
 
 // ---------------------------------------------------------------------------

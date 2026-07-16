@@ -4,6 +4,7 @@
 // point remains src/main.rs. Cargo discovers this automatically via
 // convention (src/lib.rs + src/main.rs coexist in the same crate).
 
+pub mod ambiguity_policy;
 pub mod bridge;
 pub mod clustering;
 pub mod epistemic;
