@@ -6,7 +6,66 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — Resolver correctness overhaul
+
+Five defect clusters in the resolution pipeline, found by auditing an
+anomalously low `resolution_rate` (0.23) on a large Kotlin/Android codebase
+and filed as issues #28–#32; fixed in PRs #33, #34, #35, #37, #41 (plus
+cleanups #38, #39).
+
 ### Fixed
+
+- **`resolution_rate` is now arithmetically sound and idempotent (issue
+  #28, PR #33).** Previously it could exceed 1.0 (macro resolutions entered
+  the numerator but never the denominator; the Uses phase counted Field
+  rows against per-type-identifier edges), collapsed toward 0 on a second
+  `resolve_graph` run over the same graph (already-persisted edges were
+  skipped as duplicates instead of counted as resolved), and
+  `resolve_extends` counted failed inserts as successes. Every phase now
+  reports through a uniform counting contract (`resolved + unresolved ==
+  total_refs`, enforced by a debug assertion), `EdgeBuffer` distinguishes
+  inserted / already-persisted / duplicate-in-run, and extends edges route
+  through the shared buffer. **Rates reported by earlier versions are not
+  comparable to 0.7.0 rates.**
+- **One evidence-based ambiguity policy for all resolution paths (issue
+  #30, PR #34).** Whether a callee resolved — and with what confidence —
+  used to depend on its surface spelling: unqualified ambiguous callees
+  were dropped as `"no target found"` while qualified ones silently took
+  `candidates[0]` (indexing-order-dependent) with confidence 1.0. The new
+  `ambiguity_policy` module is the single decision point, with confidence
+  monotone in evidence strength (UniqueGlobal 0.95 > ImportMatch 0.90 >
+  SameFileUnique 0.85 > PackageProximity 0.70). Genuinely ambiguous
+  references are recorded as `ambiguous (N candidates)` — never guessed,
+  never mislabeled. A deterministic-tiebreak variant was measured against
+  the ground-truth accuracy fixtures, found to regress Python Calls F1
+  (1.0 → 0.5), and removed (PR #38).
+- **Kotlin import extraction actually works (issues #29/#31, PRs #35/#37).**
+  The parser queried a tree-sitter node kind (`import_header`) that does
+  not exist in the pinned `tree-sitter-kotlin-ng` v1.1.0 grammar (real
+  kind: `import`), so no Kotlin import had ever been extracted — graphs
+  built by earlier versions have no Kotlin import edges at all.
+- **Kotlin ambiguous unqualified calls resolve via import and package
+  evidence (issue #29, PR #37).** The parser now preserves real
+  package/object qualifiers (`com.foo.bar.process`, `Utils.process`) while
+  discarding value receivers (`viewModel.load`) so they structurally cannot
+  false-match; a two-pass evidence strategy (package-keyed, then
+  file-based) feeds the ambiguity policy without touching File-node
+  linkage.
+- **JVM/Android ecosystem imports classify as external (issue #31, PR
+  #35).** The Kotlin external-prefix list covered only
+  `kotlin/kotlinx/java/javax/jakarta`; `androidx.*`, `com.google.*`,
+  `retrofit2.*`, `okhttp3.*` and the rest of the well-known ecosystem were
+  mislabeled `"no target found in graph"`. Externally-classified references
+  are also now filtered out of cross-repo bridge candidate counting (two
+  independent defenses).
+
+### Changed
+
+- **`resolve_calls` decomposed along its concerns (issue #32, PR #41)** —
+  resolution, edge-kind reclassification, validation, and metric counting
+  are separately readable/testable stages instead of one 80-line loop.
+
+### Fixed — infrastructure and `prepare_prd_input` grounding
 
 - **Production `GraphStore` opens no longer reserve lbug's unbounded 8 TiB
   default per instance (issue #25).** PR #24 (issue #21) bounded

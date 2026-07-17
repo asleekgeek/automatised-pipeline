@@ -3,13 +3,13 @@
   "name": "io.github.cdeust/automatised-pipeline",
   "description": "Codebase intelligence MCP server — index any repo into a property graph; 24 tools for agents.",
   "repository": { "url": "https://github.com/cdeust/automatised-pipeline", "source": "github" },
-  "version": "0.5.0",
+  "version": "0.7.0",
   "website_url": "https://github.com/cdeust/automatised-pipeline#readme",
   "packages": [
     {
       "registry_type": "mcpb",
-      "identifier": "https://github.com/cdeust/automatised-pipeline/releases/download/v0.5.0/automatised-pipeline.mcpb",
-      "version": "0.5.0",
+      "identifier": "https://github.com/cdeust/automatised-pipeline/releases/download/v0.7.0/automatised-pipeline.mcpb",
+      "version": "0.7.0",
       "file_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "transport": { "type": "stdio" }
     }
