@@ -170,7 +170,7 @@ fn parse_hunk_header(line: &str) -> Option<u64> {
     // Format: @@ -old_start[,old_count] +new_start[,new_count] @@
     let plus_pos = line.find('+')?;
     let rest = &line[plus_pos + 1..];
-    let end = rest.find(|c: char| c == ',' || c == ' ')?;
+    let end = rest.find([',', ' '])?;
     rest[..end].parse::<u64>().ok()
 }
 

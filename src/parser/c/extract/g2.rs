@@ -106,7 +106,7 @@ pub(crate) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
             let callee = node_field_text(ctx.source, n, "function");
             // For ``a.b(c)`` we keep the tail; for ``foo(c)`` we keep foo.
             let tail = callee
-                .rsplit(|c: char| c == '.' || c == '>' || c == ':')
+                .rsplit(['.', '>', ':'])
                 .next()
                 .unwrap_or("")
                 .trim_end_matches('(')

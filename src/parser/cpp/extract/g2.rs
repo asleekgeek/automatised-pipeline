@@ -149,7 +149,7 @@ pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
         if n.kind() == TS_CALL {
             let callee = node_field_text(ctx.source, n, "function");
             let tail = callee
-                .rsplit(|c: char| c == '.' || c == '>' || c == ':')
+                .rsplit(['.', '>', ':'])
                 .next()
                 .unwrap_or("")
                 .trim_end_matches('(')
