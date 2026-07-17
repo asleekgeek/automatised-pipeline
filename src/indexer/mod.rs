@@ -4,7 +4,7 @@
 // that processes a full directory of source files. Supports Rust, Python,
 // and TypeScript. Zero dependency on main.rs.
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{GraphStore, PropEdgeList};
 use crate::parser::Language;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -81,7 +81,7 @@ const SYMBOL_FLUSH_THRESHOLD: usize = 5_000;
 #[derive(Default)]
 struct SymbolBatch {
     nodes: HashMap<String, Vec<Vec<(String, String)>>>,
-    edges: HashMap<String, Vec<(String, String, Vec<(String, String)>)>>,
+    edges: HashMap<String, PropEdgeList>,
     node_row_count: usize,
 }
 

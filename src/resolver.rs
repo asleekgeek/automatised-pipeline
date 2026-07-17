@@ -7,7 +7,7 @@
 // source: stages/stage-3b.md §4, §5
 
 use crate::ambiguity_policy::{self, Context as PolicyContext, Resolution as PolicyResolution};
-use crate::graph_store::{is_known_rel_table, GraphStore};
+use crate::graph_store::{is_known_rel_table, GraphStore, PropEdgeList};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -272,7 +272,7 @@ pub enum AddOutcome {
 }
 
 pub struct EdgeBuffer {
-    by_table: HashMap<String, Vec<(String, String, Vec<(String, String)>)>>,
+    by_table: HashMap<String, PropEdgeList>,
     /// Edges that existed in the store before this run started. Read-only
     /// after construction — never mutated by `add`.
     persisted: HashSet<(String, String, String)>,

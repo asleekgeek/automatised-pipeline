@@ -6,7 +6,7 @@
 // edges. Separated from mapping/git so each file owns one concern.
 
 use super::{CommitMeta, VersionRow};
-use crate::graph_store::GraphStore;
+use crate::graph_store::{GraphStore, PropEdgeList};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -43,7 +43,7 @@ pub(super) fn persist_commit_lineage(
     let shas: HashSet<&str> = commits.iter().map(|c| c.sha.as_str()).collect();
     // Link to the first parent only — the mainline ancestry. Parents outside
     // the fetched window have no Commit node, so skip them (no dangling edge).
-    let edges: Vec<(String, String, Vec<(String, String)>)> = commits
+    let edges: PropEdgeList = commits
         .iter()
         .filter_map(|c| {
             let parent = c.parents.first()?;
@@ -110,7 +110,7 @@ pub(super) fn persist_prev_version(
     store.bulk_insert_edges("PreviousVersion_Version_Version", &edges)
 }
 
-fn to_propless_edges(pairs: &[(String, String)]) -> Vec<(String, String, Vec<(String, String)>)> {
+fn to_propless_edges(pairs: &[(String, String)]) -> PropEdgeList {
     pairs
         .iter()
         .map(|(from, to)| (from.clone(), to.clone(), Vec::new()))

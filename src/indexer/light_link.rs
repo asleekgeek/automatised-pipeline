@@ -14,7 +14,7 @@
 // edges for the same reason). Best-effort: an unresolved specifier is skipped,
 // never an error. source: all-file indexing follow-through.
 
-use crate::graph_store::GraphStore;
+use crate::graph_store::{GraphStore, PropEdgeList};
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
@@ -44,7 +44,7 @@ pub(super) fn link_loose_file_imports(
     // Staged per rel_table and bulk-inserted once at the end instead of one
     // insert_edge round-trip per specifier — same edge set as before, just
     // batched. source: ADR-4253701 §Decision 2 (levier 2, light_link.rs:93).
-    let mut edges_by_table: HashMap<&'static str, Vec<(String, String, Vec<(String, String)>)>> =
+    let mut edges_by_table: HashMap<&'static str, PropEdgeList> =
         HashMap::new();
 
     for file_path in files {
