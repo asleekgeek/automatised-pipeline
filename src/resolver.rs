@@ -1290,7 +1290,7 @@ fn extract_type_identifiers(type_ann: &str, primitives: &[&str]) -> Vec<String> 
             continue;
         }
         // Must start with uppercase to be a type name (convention)
-        if token.chars().next().map_or(false, |c| c.is_uppercase()) {
+        if token.chars().next().is_some_and(|c| c.is_uppercase()) {
             result.push(token.to_string());
         }
     }

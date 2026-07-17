@@ -124,7 +124,7 @@ pub(super) fn emit_call(ctx: &mut Ctx, n: Node, caller_qn: &str, callee: &str) {
         || !callee
             .chars()
             .next()
-            .map_or(false, |c| c.is_alphabetic() || c == '_')
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
     {
         return;
     }

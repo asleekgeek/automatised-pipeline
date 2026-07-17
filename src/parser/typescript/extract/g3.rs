@@ -156,7 +156,7 @@ pub(super) fn extract_variable_declarator(
     }
 
     let value = node.child_by_field_name("value");
-    let is_arrow = value.map_or(false, |v| v.kind() == TS_ARROW_FUNC);
+    let is_arrow = value.is_some_and(|v| v.kind() == TS_ARROW_FUNC);
 
     if is_arrow {
         // const foo = () => {} — extract as Function

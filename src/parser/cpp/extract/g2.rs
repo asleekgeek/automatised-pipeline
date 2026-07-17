@@ -159,7 +159,7 @@ pub(super) fn extract_calls(ctx: &mut Ctx, root: Node, caller_qn: &str) {
                 && tail
                     .chars()
                     .next()
-                    .map_or(false, |c| c.is_alphabetic() || c == '_')
+                    .is_some_and(|c| c.is_alphabetic() || c == '_')
             {
                 let seq = {
                     ctx.next_seq += 1;
