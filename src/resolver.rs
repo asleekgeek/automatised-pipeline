@@ -585,7 +585,6 @@ fn resolve_calls(
         if row.len() < 3 {
             continue;
         }
-        let cs_id = &row[0];
         let callee = &row[1];
         // Macro invocations (`name!(...)`) are a distinct reference kind,
         // resolved exclusively by resolver_layers::run_macro_expansion.
@@ -597,58 +596,84 @@ fn resolve_calls(
             continue;
         }
         total += 1;
-        let provider = crate::language_provider::provider_for(&row[2]);
-        let caller_qn = extract_caller_from_callsite_id(cs_id);
-        let file_id = extract_file_from_qn(&caller_qn);
-        let caller_label = determine_caller_label(idx, &caller_qn);
-
-        let site = CallSite {
-            cs_id,
-            callee,
-            caller_qn: &caller_qn,
-            caller_label: &caller_label,
-        };
-        let resolved_before = resolved;
         let mut tally = CallTally {
             resolved: &mut resolved,
             unresolved: &mut unresolved,
         };
-        match resolve_single_call(idx, provider, file_imports, callee, &file_id) {
-            PolicyResolution::Resolved {
-                target,
-                evidence,
-                confidence,
-            } => {
-                let matched = MatchedCall {
-                    target: &target,
-                    evidence,
-                    confidence,
-                };
-                stage_call_edge(buf, &site, &matched, &mut tally);
-            }
-            // Genuinely ambiguous (no evidence tier discriminates the
-            // candidates): labeled and dropped rather than guessed — see
-            // resolve_single_call's doc comment for why this beats a
-            // deterministic tiebreak here (issue #30).
-            PolicyResolution::Ambiguous { candidates } => record_call_unresolved(
-                &site,
-                &mut tally,
-                format!("ambiguous ({} candidates)", candidates.len()),
-            ),
-            PolicyResolution::NotFound => {
-                record_call_unresolved(&site, &mut tally, "no target found".to_string())
-            }
-        }
-        if resolved > resolved_before {
-            // The callee resolved to a graph target — flip the CallSite's
-            // is_resolved (§10.4). Applies to both Calls and Uses edges
-            // (both mean "target found").
-            resolved_ids.push(cs_id.clone());
+        if resolve_one_call_site(idx, file_imports, buf, &row[0], callee, &row[2], &mut tally) {
+            resolved_ids.push(row[0].clone());
         }
     }
     let id_refs: Vec<&str> = resolved_ids.iter().map(|s| s.as_str()).collect();
     store.mark_nodes_resolved("CallSite", &id_refs)?;
     Ok((resolved, total, unresolved))
+}
+
+/// Resolves one CallSite row: gathers the caller-side evidence, delegates
+/// ambiguity/confidence entirely to `resolve_single_call` (which in turn
+/// delegates to the single `ambiguity_policy` module — issue #30), then
+/// stages or records the outcome. Extracted from `resolve_calls` to keep
+/// that function an orchestration loop (scan + accumulate) — resolution,
+/// edge-kind reclassification, schema validation, and metric counting are
+/// each owned by a single downstream helper (`resolve_single_call`,
+/// `stage_call_edge`, `check_known_rel_table` inside it, and `CallTally`
+/// respectively) instead of being interleaved inline. source: issue #32.
+///
+/// postcondition: returns `true` iff the callee resolved to a real graph
+/// target (mirrors the former inline `resolved > resolved_before` check) —
+/// the caller uses this to flip `CallSite.is_resolved` (§10.4). Behavior is
+/// identical to the pre-extraction inline loop body.
+fn resolve_one_call_site(
+    idx: &SymbolIndex,
+    file_imports: &HashMap<String, Vec<String>>,
+    buf: &mut EdgeBuffer,
+    cs_id: &str,
+    callee: &str,
+    language: &str,
+    tally: &mut CallTally,
+) -> bool {
+    let provider = crate::language_provider::provider_for(language);
+    let caller_qn = extract_caller_from_callsite_id(cs_id);
+    let file_id = extract_file_from_qn(&caller_qn);
+    let caller_label = determine_caller_label(idx, &caller_qn);
+
+    let site = CallSite {
+        cs_id,
+        callee,
+        caller_qn: &caller_qn,
+        caller_label: &caller_label,
+    };
+    let resolved_before = *tally.resolved;
+    match resolve_single_call(idx, provider, file_imports, callee, &file_id) {
+        PolicyResolution::Resolved {
+            target,
+            evidence,
+            confidence,
+        } => {
+            let matched = MatchedCall {
+                target: &target,
+                evidence,
+                confidence,
+            };
+            stage_call_edge(buf, &site, &matched, tally);
+        }
+        // Genuinely ambiguous (no evidence tier discriminates the
+        // candidates): labeled and dropped rather than guessed — see
+        // resolve_single_call's doc comment for why this beats a
+        // deterministic tiebreak here (issue #30).
+        PolicyResolution::Ambiguous { candidates } => record_call_unresolved(
+            &site,
+            tally,
+            format!("ambiguous ({} candidates)", candidates.len()),
+        ),
+        PolicyResolution::NotFound => {
+            record_call_unresolved(&site, tally, "no target found".to_string())
+        }
+    }
+    // The callee resolved to a graph target — flip the CallSite's
+    // is_resolved (§10.4). Applies to both Calls and Uses edges (both mean
+    // "target found").
+    *tally.resolved > resolved_before
 }
 
 /// Records one unresolved `Calls` reference with the given reason.
