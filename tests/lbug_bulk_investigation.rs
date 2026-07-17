@@ -103,11 +103,11 @@ fn probe_3_unwind_parallel_lists_for_edges() {
 
     let ids: Vec<Value> = (0..10).map(|i| Value::String(format!("n{i}"))).collect();
     let list = Value::List(LogicalType::String, ids);
-    let mut r = conn
+    let r = conn
         .execute(&mut stmt, vec![("ids", list)])
         .expect("execute");
     let mut count = 0;
-    while let Some(_) = r.next() {
+    for _ in r {
         count += 1;
     }
     assert_eq!(count, 10, "UNWIND primitive list WORKED");

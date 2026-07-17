@@ -52,7 +52,7 @@ fn calls_edge(store: &GraphStore, callee_contains: &str) -> Vec<Vec<String>> {
         .expect("query Calls_Function_Function");
     qr.rows
         .into_iter()
-        .filter(|row| row.get(1).map_or(false, |qn| qn.contains(callee_contains)))
+        .filter(|row| row.get(1).is_some_and(|qn| qn.contains(callee_contains)))
         .collect()
 }
 

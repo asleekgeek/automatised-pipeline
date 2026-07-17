@@ -580,8 +580,10 @@ fn score_edges_by_kind(
         if kind == "Contains_Dir_File" || kind == "Contains_Dir_Dir" || kind == "Contains" {
             continue;
         }
-        let mut s = Score::default();
-        s.fp = set.len();
+        let s = Score {
+            fp: set.len(),
+            ..Default::default()
+        };
         by_kind.insert(kind.clone(), s);
     }
 
