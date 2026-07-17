@@ -887,16 +887,14 @@ fn resolve_implements(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffe
                     continue;
                 }
                 total += 1;
-                if resolve_one_implements(
-                    store,
-                    idx,
-                    buf,
+                let ctx = ResolveContext { store, idx };
+                let candidate = ImplementsCandidate {
                     provider,
                     label,
                     from_id,
                     name,
-                    &mut created_stdlib,
-                )? {
+                };
+                if resolve_one_implements(&ctx, buf, &candidate, &mut created_stdlib)? {
                     resolved += 1;
                 } else {
                     unresolved.push(UnresolvedRef {
@@ -926,18 +924,39 @@ fn resolve_implements(store: &GraphStore, idx: &SymbolIndex, buf: &mut EdgeBuffe
 /// postcondition: returns `Ok(true)` iff a target trait was found — staging
 /// outcome (`AddOutcome`) does not gate this; a ref whose edge is already
 /// persisted or duplicated within this run still resolved to a real trait.
+///
+/// Read-only lookup context shared by resolve_one_implements — bundles the
+/// two params it only ever reads together, per coding-standards.md §4.4
+/// (>4 params is a missing data type).
+struct ResolveContext<'a> {
+    store: &'a GraphStore,
+    idx: &'a SymbolIndex,
+}
+
+/// One implemented-trait-name candidate being resolved: which Struct/Enum
+/// declared it, in what language, and the raw trait name text.
+struct ImplementsCandidate<'a> {
+    provider: &'a dyn crate::language_provider::LanguageProvider,
+    label: &'a str,
+    from_id: &'a str,
+    name: &'a str,
+}
+
 fn resolve_one_implements(
-    store: &GraphStore,
-    idx: &SymbolIndex,
+    ctx: &ResolveContext,
     buf: &mut EdgeBuffer,
-    provider: &dyn crate::language_provider::LanguageProvider,
-    label: &str,
-    from_id: &str,
-    name: &str,
+    candidate: &ImplementsCandidate,
     created_stdlib: &mut HashSet<String>,
 ) -> Result<bool, String> {
+    let ImplementsCandidate {
+        provider,
+        label,
+        from_id,
+        name,
+    } = *candidate;
     let lookup = provider.import_last_segment(name);
-    if let Some(t) = idx
+    if let Some(t) = ctx
+        .idx
         .by_name
         .get(lookup)
         .and_then(|c| c.iter().find(|e| e.label == "Trait"))
@@ -956,7 +975,12 @@ fn resolve_one_implements(
         let mut any = false;
         let table = format!("Implements_{label}_StdlibSymbol");
         for canonical in exp.emit_implements {
-            crate::resolver_layers::ensure_stdlib_symbol(store, created_stdlib, canonical, "rust")?;
+            crate::resolver_layers::ensure_stdlib_symbol(
+                ctx.store,
+                created_stdlib,
+                canonical,
+                "rust",
+            )?;
             buf.add(&table, from_id, canonical, 0.9, "derive-macro");
             any = true;
         }
