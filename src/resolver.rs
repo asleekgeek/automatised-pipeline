@@ -124,8 +124,7 @@ fn build_symbol_index(store: &GraphStore) -> Result<SymbolIndex, String> {
         } else {
             "qualified_name"
         };
-        let name_col = if *label == "File" { "name" } else { "name" };
-        let cypher = format!("MATCH (n:{label}) RETURN n.id, n.{name_col}, n.{qn_col}");
+        let cypher = format!("MATCH (n:{label}) RETURN n.id, n.name, n.{qn_col}");
         let qr = match store.execute_query(&cypher) {
             Ok(q) => q,
             Err(_) => continue,
