@@ -393,11 +393,7 @@ impl GraphStore {
     /// statement covers every edge of a given kind.
     ///
     /// source: dba probe_4 + probe_9 in tests/lbug_bulk_investigation.rs.
-    pub fn bulk_insert_edges(
-        &self,
-        rel_table: &str,
-        edges: &[PropEdge],
-    ) -> Result<u64, String> {
+    pub fn bulk_insert_edges(&self, rel_table: &str, edges: &[PropEdge]) -> Result<u64, String> {
         if edges.is_empty() {
             return Ok(0);
         }
@@ -1188,10 +1184,7 @@ fn node_prop_order(
 }
 
 /// Edge prop order — schema-driven, only bind columns present in data.
-fn edge_prop_order(
-    edges: &[PropEdge],
-    schema: ColTypes,
-) -> Vec<(&'static str, LogicalType)> {
+fn edge_prop_order(edges: &[PropEdge], schema: ColTypes) -> Vec<(&'static str, LogicalType)> {
     let mut present: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for e in edges {
         for (k, _) in &e.2 {
