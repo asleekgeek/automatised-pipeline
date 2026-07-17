@@ -1270,16 +1270,7 @@ fn resolve_one_field_type_use(
 /// convention below.
 fn extract_type_identifiers(type_ann: &str, primitives: &[&str]) -> Vec<String> {
     let mut result = Vec::new();
-    let cleaned = type_ann
-        .replace('&', " ")
-        .replace('*', " ")
-        .replace('<', " ")
-        .replace('>', " ")
-        .replace(',', " ")
-        .replace('(', " ")
-        .replace(')', " ")
-        .replace('[', " ")
-        .replace(']', " ");
+    let cleaned = type_ann.replace(['&', '*', '<', '>', ',', '(', ')', '[', ']'], " ");
     for token in cleaned.split_whitespace() {
         // Skip lifetimes, keywords, primitives
         if token.starts_with('\'') || token == "mut" || token == "dyn" || token == "impl" {
