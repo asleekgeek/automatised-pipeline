@@ -333,7 +333,7 @@ fn civil_from_unix(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     // Shift so day 0 is 0000-03-01 (Hinnant's "era" anchor).
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as i64; // [0, 146096]
+    let doe = z - era * 146_097; // [0, 146096]
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
@@ -547,12 +547,13 @@ fn write_json_atomic<T: Serialize>(target: &Path, value: &T) -> Result<usize, St
 // Stage 1 — finding resolution (spec §3.3 form 1 + form 2)
 // ---------------------------------------------------------------------------
 
-// Returns (finding, source_form, source_path, source_bytes_verbatim).
-// `source_bytes_verbatim` is the canonical JSON bytes to write into
-// stage-1.source.json — after normalization to the §3.2 schema, per §4.4.
-fn resolve_finding(
-    finding_arg: &Value,
-) -> Result<(Finding, &'static str, Option<String>, Vec<u8>), String> {
+/// (finding, source_form, source_path, source_bytes_verbatim).
+/// `source_bytes_verbatim` is the canonical JSON bytes to write into
+/// stage-1.source.json — after normalization to the §3.2 schema, per §4.4.
+/// clippy::type_complexity.
+type ResolvedFinding = (Finding, &'static str, Option<String>, Vec<u8>);
+
+fn resolve_finding(finding_arg: &Value) -> Result<ResolvedFinding, String> {
     match finding_arg {
         Value::Object(_) => {
             let finding: Finding = serde_json::from_value(finding_arg.clone()).map_err(|e| {
@@ -1992,12 +1993,10 @@ const FORBIDDEN_CYPHER_KEYWORDS: &[&str] = &[
 /// a read query must restructure it (reading doesn't require mutation words).
 fn forbidden_cypher_keyword(query: &str) -> Option<&'static str> {
     let upper = query.to_ascii_uppercase();
-    for &kw in FORBIDDEN_CYPHER_KEYWORDS {
-        if contains_whole_word(&upper, kw) {
-            return Some(kw);
-        }
-    }
-    None
+    FORBIDDEN_CYPHER_KEYWORDS
+        .iter()
+        .find(|&&kw| contains_whole_word(&upper, kw))
+        .copied()
 }
 
 /// Whole-word contains: `needle` must be bordered by non-alphanumeric chars
@@ -3345,16 +3344,15 @@ fn do_analyze_codebase(arguments: &Value) -> Result<Value, String> {
             Some(lang) => lang.as_str().to_string(),
             None => detect_dominant_language(&codebase),
         };
-        match lsp_resolver::resolve_with_lsp(
+        // graceful fallback: any LSP error is silently ignored below
+        lsp_resolver::resolve_with_lsp(
             &store,
             &codebase,
             &effective_lang,
             None,
             std::time::Duration::from_secs(30),
-        ) {
-            Ok(r) => Some(r),
-            Err(_) => None, // graceful fallback
-        }
+        )
+        .ok()
     } else {
         None
     };
@@ -3902,9 +3900,11 @@ fn do_validate_prd_against_graph(arguments: &Value) -> Result<Value, String> {
     }))
 }
 
-fn extract_optional_ids(
-    args: &Map<String, Value>,
-) -> Result<(Option<String>, Option<String>, Option<PathBuf>), String> {
+/// (run_id, feature_id, graph_path), all optional/independently-present.
+/// clippy::type_complexity.
+type OptionalRunIds = (Option<String>, Option<String>, Option<PathBuf>);
+
+fn extract_optional_ids(args: &Map<String, Value>) -> Result<OptionalRunIds, String> {
     let run_id = args
         .get("run_id")
         .and_then(|v| v.as_str())

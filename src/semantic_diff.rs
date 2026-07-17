@@ -107,17 +107,17 @@ pub fn diff(args: &SemanticDiffArgs, verified_at: String) -> Result<SemanticDiff
     };
     let score = regression_score(&summary);
     let verdict = classify_verdict(score);
-    let report = build_report(
+    let report = build_report(&DiffReportInput {
         args,
-        &verified_at,
-        &summary,
+        verified_at: &verified_at,
+        summary: &summary,
         score,
         verdict,
-        &node_diff,
-        &edge_diff,
-        &dangling,
-        &new_cycles,
-    );
+        node_diff: &node_diff,
+        edge_diff: &edge_diff,
+        dangling: &dangling,
+        new_cycles: &new_cycles,
+    });
     Ok(SemanticDiffOutcome {
         summary,
         regression_score: score,
@@ -378,6 +378,20 @@ fn build_adjacency(
 /// Strongly Connected Components of a Directed Graph", Technical
 /// Report, Victoria University of Wellington (2005). Iterative variant
 /// avoids Rust's default-small recursion stack on deep call graphs.
+/// Tarjan's algorithm mutable working state, bundled per
+/// coding-standards.md §4.4 (>4 params is a missing data type) -
+/// clippy::too_many_arguments. `index`/`lowlink`/`on_stack` are index-aligned
+/// with the node list; `stack` is the DFS-order visitation stack; `result`
+/// accumulates completed SCCs; `counter` is the monotonic visit-order clock.
+struct TarjanState<'a> {
+    index: &'a mut [i64],
+    lowlink: &'a mut [i64],
+    on_stack: &'a mut [bool],
+    stack: &'a mut Vec<usize>,
+    result: &'a mut Vec<Vec<usize>>,
+    counter: &'a mut i64,
+}
+
 fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let n = adj.len();
     let mut index: Vec<i64> = vec![-1; n];
@@ -386,87 +400,70 @@ fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let mut stack: Vec<usize> = Vec::new();
     let mut result: Vec<Vec<usize>> = Vec::new();
     let mut counter: i64 = 0;
+    let mut state = TarjanState {
+        index: &mut index,
+        lowlink: &mut lowlink,
+        on_stack: &mut on_stack,
+        stack: &mut stack,
+        result: &mut result,
+        counter: &mut counter,
+    };
 
     for v in 0..n {
-        if index[v] != -1 {
+        if state.index[v] != -1 {
             continue;
         }
-        dfs_iterative(
-            v,
-            adj,
-            &mut index,
-            &mut lowlink,
-            &mut on_stack,
-            &mut stack,
-            &mut result,
-            &mut counter,
-        );
+        dfs_iterative(v, adj, &mut state);
     }
     result
 }
 
-fn dfs_iterative(
-    start: usize,
-    adj: &[Vec<usize>],
-    index: &mut [i64],
-    lowlink: &mut [i64],
-    on_stack: &mut [bool],
-    stack: &mut Vec<usize>,
-    result: &mut Vec<Vec<usize>>,
-    counter: &mut i64,
-) {
+fn dfs_iterative(start: usize, adj: &[Vec<usize>], state: &mut TarjanState) {
     // Work stack: (node, next_neighbor_idx).
     let mut work: Vec<(usize, usize)> = Vec::new();
-    visit(start, index, lowlink, on_stack, stack, counter);
+    visit(start, state);
     work.push((start, 0));
 
     while let Some(&(v, i)) = work.last() {
         if i < adj[v].len() {
             let w = adj[v][i];
             work.last_mut().unwrap().1 += 1;
-            if index[w] == -1 {
-                visit(w, index, lowlink, on_stack, stack, counter);
+            if state.index[w] == -1 {
+                visit(w, state);
                 work.push((w, 0));
-            } else if on_stack[w] {
-                lowlink[v] = lowlink[v].min(index[w]);
+            } else if state.on_stack[w] {
+                state.lowlink[v] = state.lowlink[v].min(state.index[w]);
             }
         } else {
             work.pop();
-            if lowlink[v] == index[v] {
-                pop_scc(v, on_stack, stack, result);
+            if state.lowlink[v] == state.index[v] {
+                pop_scc(v, state);
             }
             if let Some(&(parent, _)) = work.last() {
-                lowlink[parent] = lowlink[parent].min(lowlink[v]);
+                state.lowlink[parent] = state.lowlink[parent].min(state.lowlink[v]);
             }
         }
     }
 }
 
-fn visit(
-    v: usize,
-    index: &mut [i64],
-    lowlink: &mut [i64],
-    on_stack: &mut [bool],
-    stack: &mut Vec<usize>,
-    counter: &mut i64,
-) {
-    index[v] = *counter;
-    lowlink[v] = *counter;
-    *counter += 1;
-    stack.push(v);
-    on_stack[v] = true;
+fn visit(v: usize, state: &mut TarjanState) {
+    state.index[v] = *state.counter;
+    state.lowlink[v] = *state.counter;
+    *state.counter += 1;
+    state.stack.push(v);
+    state.on_stack[v] = true;
 }
 
-fn pop_scc(v: usize, on_stack: &mut [bool], stack: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+fn pop_scc(v: usize, state: &mut TarjanState) {
     let mut component = Vec::new();
-    while let Some(w) = stack.pop() {
-        on_stack[w] = false;
+    while let Some(w) = state.stack.pop() {
+        state.on_stack[w] = false;
         component.push(w);
         if w == v {
             break;
         }
     }
-    result.push(component);
+    state.result.push(component);
 }
 
 fn diff_cycle_sets(before: &BTreeSet<String>, after: &BTreeSet<String>) -> Vec<String> {
@@ -500,17 +497,34 @@ fn classify_verdict(score: f64) -> &'static str {
 // Report builder
 // ---------------------------------------------------------------------------
 
-fn build_report(
-    args: &SemanticDiffArgs,
-    verified_at: &str,
-    summary: &DiffSummary,
+/// All inputs `build_report` needs to render the final JSON report - bundled
+/// per coding-standards.md §4.4 (>4 params is a missing data type).
+/// clippy::too_many_arguments.
+#[derive(Clone, Copy)]
+struct DiffReportInput<'a> {
+    args: &'a SemanticDiffArgs,
+    verified_at: &'a str,
+    summary: &'a DiffSummary,
     score: f64,
-    verdict: &str,
-    node_diff: &NodeDiff,
-    edge_diff: &EdgeDiff,
-    dangling: &[EdgeTriple],
-    new_cycles: &[String],
-) -> Value {
+    verdict: &'a str,
+    node_diff: &'a NodeDiff,
+    edge_diff: &'a EdgeDiff,
+    dangling: &'a [EdgeTriple],
+    new_cycles: &'a [String],
+}
+
+fn build_report(input: &DiffReportInput) -> Value {
+    let DiffReportInput {
+        args,
+        verified_at,
+        summary,
+        score,
+        verdict,
+        node_diff,
+        edge_diff,
+        dangling,
+        new_cycles,
+    } = *input;
     json!({
         "verified_at": verified_at,
         "before_graph_path": args.before_graph_path.to_string_lossy(),

@@ -117,15 +117,15 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> Result<Vec<FileHunk>, Strin
             }
             is_new = false;
             is_deleted = false;
-        } else if line.starts_with("--- a/") {
+        } else if let Some(stripped) = line.strip_prefix("--- a/") {
             // For deleted files, this is the only place we get the path
             if current_file.is_none() {
-                current_file = Some(line[6..].to_string());
+                current_file = Some(stripped.to_string());
             }
         } else if line.starts_with("--- /dev/null") {
             is_new = true;
-        } else if line.starts_with("+++ b/") {
-            current_file = Some(line[6..].to_string());
+        } else if let Some(stripped) = line.strip_prefix("+++ b/") {
+            current_file = Some(stripped.to_string());
         } else if line.starts_with("+++ /dev/null") {
             is_deleted = true;
         } else if line.starts_with("@@ ") {
@@ -170,7 +170,7 @@ fn parse_hunk_header(line: &str) -> Option<u64> {
     // Format: @@ -old_start[,old_count] +new_start[,new_count] @@
     let plus_pos = line.find('+')?;
     let rest = &line[plus_pos + 1..];
-    let end = rest.find(|c: char| c == ',' || c == ' ')?;
+    let end = rest.find([',', ' '])?;
     rest[..end].parse::<u64>().ok()
 }
 
@@ -558,7 +558,7 @@ diff --git a/src/b.rs b/src/b.rs
             processes: vec!["p1".into(), "p2".into()],
         };
         let score = compute_risk_score(&[sym], 2);
-        assert!(score >= 0.0 && score <= 1.0, "score out of range: {score}");
+        assert!((0.0..=1.0).contains(&score), "score out of range: {score}");
     }
 
     #[test]

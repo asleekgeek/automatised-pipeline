@@ -931,20 +931,19 @@ fn lookup_processes(store: &GraphStore, label: &str, node_id: &str) -> Vec<Strin
 // Internal: context helpers (unchanged from v1)
 // ---------------------------------------------------------------------------
 
-fn find_node_details(
-    store: &GraphStore,
-    escaped: &str,
-) -> Result<
-    (
-        String,
-        String,
-        String,
-        Option<u64>,
-        Option<u64>,
-        Option<String>,
-    ),
+/// (label, name, file_path, start_line, end_line, visibility) for a resolved
+/// symbol node. `Module`/`Constant`/`TypeAlias` labels have no line range,
+/// so start_line/end_line/visibility are None for those. clippy::type_complexity.
+type NodeDetails = (
     String,
-> {
+    String,
+    String,
+    Option<u64>,
+    Option<u64>,
+    Option<String>,
+);
+
+fn find_node_details(store: &GraphStore, escaped: &str) -> Result<NodeDetails, String> {
     let labels_with_lines = ["Function", "Method", "Struct", "Enum", "Trait"];
     for label in labels_with_lines {
         let cypher = format!(

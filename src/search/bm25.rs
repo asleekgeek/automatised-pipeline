@@ -212,7 +212,7 @@ fn extract_file_path(qualified_name: &str) -> String {
 pub fn tokenize_symbol(s: &str) -> String {
     let mut tokens = Vec::new();
     // First split on :: / _ . /
-    for part in s.split(|c: char| c == ':' || c == '_' || c == '/' || c == '.') {
+    for part in s.split([':', '_', '/', '.']) {
         if part.is_empty() {
             continue;
         }

@@ -11,6 +11,23 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
+// Shared edge types — a bulk-insertable graph edge is (from_id, to_id,
+// properties). Named here (the module that owns `bulk_insert_edges`) so
+// every caller across the crate shares one definition instead of repeating
+// the nested-tuple shape (clippy::type_complexity, coding-standards.md §3.1).
+// ---------------------------------------------------------------------------
+
+/// A single edge's key-value property list, e.g. `[("weight", "0.4")]`.
+pub type EdgeProps = Vec<(String, String)>;
+
+/// One bulk-insertable edge: `(from_id, to_id, properties)`.
+pub type PropEdge = (String, String, EdgeProps);
+
+/// A batch of edges of the same relationship table, ready for
+/// `GraphStore::bulk_insert_edges`.
+pub type PropEdgeList = Vec<PropEdge>;
+
+// ---------------------------------------------------------------------------
 // Node labels — source: stages/stage-3.md §schema (Shannon spec, 3a subset)
 // ---------------------------------------------------------------------------
 
@@ -376,11 +393,7 @@ impl GraphStore {
     /// statement covers every edge of a given kind.
     ///
     /// source: dba probe_4 + probe_9 in tests/lbug_bulk_investigation.rs.
-    pub fn bulk_insert_edges(
-        &self,
-        rel_table: &str,
-        edges: &[(String, String, Vec<(String, String)>)],
-    ) -> Result<u64, String> {
+    pub fn bulk_insert_edges(&self, rel_table: &str, edges: &[PropEdge]) -> Result<u64, String> {
         if edges.is_empty() {
             return Ok(0);
         }
@@ -1171,10 +1184,7 @@ fn node_prop_order(
 }
 
 /// Edge prop order — schema-driven, only bind columns present in data.
-fn edge_prop_order(
-    edges: &[(String, String, Vec<(String, String)>)],
-    schema: ColTypes,
-) -> Vec<(&'static str, LogicalType)> {
+fn edge_prop_order(edges: &[PropEdge], schema: ColTypes) -> Vec<(&'static str, LogicalType)> {
     let mut present: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for e in edges {
         for (k, _) in &e.2 {
@@ -1262,7 +1272,7 @@ fn build_struct_rows(
 }
 
 fn build_edge_struct_rows(
-    edges: &[(String, String, Vec<(String, String)>)],
+    edges: &[PropEdge],
     prop_order: &[(&'static str, LogicalType)],
 ) -> Result<Vec<Value>, String> {
     let mut out = Vec::with_capacity(edges.len());
@@ -1454,7 +1464,7 @@ mod tests {
         let n = store.bulk_insert_nodes("File", &files).expect("bulk nodes");
         assert_eq!(n, 7);
 
-        let mut edges: Vec<(String, String, Vec<(String, String)>)> = Vec::new();
+        let mut edges: PropEdgeList = Vec::new();
         for i in 0..6 {
             edges.push((format!("f{i}.rs"), format!("f{}.rs", i + 1), Vec::new()));
         }

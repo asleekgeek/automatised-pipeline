@@ -552,7 +552,7 @@ fn lookup_label_among(
     candidates: &[&str],
 ) -> Option<String> {
     let lbl = label_by_qn.get(id)?;
-    if candidates.iter().any(|c| *c == lbl.as_str()) {
+    if candidates.contains(&lbl.as_str()) {
         Some(lbl.clone())
     } else {
         None

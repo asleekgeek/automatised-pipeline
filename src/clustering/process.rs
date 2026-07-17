@@ -1,4 +1,4 @@
-use crate::graph_store::{cypher_str, GraphStore};
+use crate::graph_store::{cypher_str, GraphStore, PropEdgeList};
 use std::collections::{HashMap, VecDeque};
 
 pub struct ProcessInfo {
@@ -330,7 +330,7 @@ fn persist_participates_in(
     // Group edges by rel table, bulk-insert per group.
     // source: Fermi audit April 2026 — was 2 probe queries per visited node
     //         plus a per-row CREATE; now zero probes and one bulk call per rel.
-    let mut by_rel: HashMap<String, Vec<(String, String, Vec<(String, String)>)>> = HashMap::new();
+    let mut by_rel: HashMap<String, PropEdgeList> = HashMap::new();
     for (node_id, depth) in depths {
         let lbl = match id_to_label.get(node_id) {
             Some(l) => l,

@@ -1,4 +1,4 @@
-use crate::graph_store::{cypher_str, GraphStore};
+use crate::graph_store::{cypher_str, GraphStore, PropEdgeList};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
@@ -139,6 +139,16 @@ fn edge_weight(rel_name: &str) -> f64 {
 // Adjacency extraction — source: stages/stage-3c.md §2.4
 // ---------------------------------------------------------------------------
 
+/// Collected cluster-eligible node identity: (ids, labels, id-to-adjacency-
+/// index map), all index-aligned. clippy::type_complexity — named so the
+/// shape is documented once instead of repeated at every call site.
+type SymbolNodeCollection = (Vec<String>, Vec<String>, HashMap<String, usize>);
+
+/// Per-node weighted neighbor lists (adjacency[i] = [(neighbor_idx, weight)])
+/// plus the total edge weight summed across the whole adjacency.
+/// clippy::type_complexity.
+type WeightedAdjacency = (Vec<Vec<(usize, f64)>>, f64);
+
 struct Adjacency {
     node_ids: Vec<String>,
     node_labels: Vec<String>,
@@ -181,9 +191,7 @@ fn extract_adjacency(store: &GraphStore) -> Result<Adjacency, String> {
     })
 }
 
-fn collect_symbol_nodes(
-    store: &GraphStore,
-) -> Result<(Vec<String>, Vec<String>, HashMap<String, usize>), String> {
+fn collect_symbol_nodes(store: &GraphStore) -> Result<SymbolNodeCollection, String> {
     let mut ids = Vec::new();
     let mut labels = Vec::new();
     let mut map: HashMap<String, usize> = HashMap::new();
@@ -212,7 +220,7 @@ fn collect_weighted_edges(
     store: &GraphStore,
     id_to_idx: &HashMap<String, usize>,
     n: usize,
-) -> Result<(Vec<Vec<(usize, f64)>>, f64), String> {
+) -> Result<WeightedAdjacency, String> {
     let mut neighbors: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     let mut total_weight = 0.0;
     for &(rel, from_label, to_label) in edge_rel_tables() {
@@ -585,7 +593,7 @@ fn persist_communities(
     // MemberOf_<Label>_Community table are persisted — File nodes take part
     // in the Louvain adjacency as containment carriers but have no
     // membership table (and q12 scoring keys on symbol qualified names).
-    let mut by_rel: HashMap<String, Vec<(String, String, Vec<(String, String)>)>> = HashMap::new();
+    let mut by_rel: HashMap<String, PropEdgeList> = HashMap::new();
     for (idx, &c) in comm.iter().enumerate() {
         let node_id = &adj.node_ids[idx];
         let label = &adj.node_labels[idx];

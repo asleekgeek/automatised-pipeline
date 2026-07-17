@@ -37,6 +37,7 @@
 //!   - ASCII (U+0000..U+007F):        1 UTF-8 byte  >= 1 UTF-16 unit.
 //!   - BMP non-ASCII (U+0080..U+FFFF): 2 or 3 bytes  >= 1 UTF-16 unit.
 //!   - Astral / non-BMP (U+10000..):   4 bytes       >= 2 UTF-16 units (surrogate pair).
+//!
 //! Summing over any string, `utf8_bytes >= utf16_units`. Therefore the byte
 //! budget enforced by `bound_values` can NEVER overshoot the host's UTF-16-unit
 //! count — it only ever under-fills relative to the host estimate, which is the

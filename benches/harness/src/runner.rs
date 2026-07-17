@@ -112,7 +112,7 @@ pub fn run_corpus(corpus: &CorpusConfig, binary: &Path) -> CorpusRun {
         };
         let start = Instant::now();
         let score =
-            match dispatch_label(&mut client, &graph_path, &spec.tool, spec.score_type, label) {
+            match dispatch_label(&mut client, &graph_path, spec.tool, spec.score_type, label) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!(

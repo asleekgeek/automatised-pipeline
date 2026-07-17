@@ -62,7 +62,7 @@ fn test_multilang_auto_index() {
         )
         .unwrap();
     assert!(
-        rust_structs.rows.len() >= 1,
+        !rust_structs.rows.is_empty(),
         "should find Rust struct Config, got {:?}",
         rust_structs.rows
     );
@@ -85,7 +85,7 @@ fn test_multilang_auto_index() {
         )
         .unwrap();
     assert!(
-        py_classes.rows.len() >= 1,
+        !py_classes.rows.is_empty(),
         "should find Python class Config (as Struct), got {:?}",
         py_classes.rows
     );
@@ -97,7 +97,7 @@ fn test_multilang_auto_index() {
         )
         .unwrap();
     assert!(
-        ts_fns.rows.len() >= 1,
+        !ts_fns.rows.is_empty(),
         "should find TypeScript functions, got {:?}",
         ts_fns.rows
     );
@@ -108,7 +108,7 @@ fn test_multilang_auto_index() {
         )
         .unwrap();
     assert!(
-        ts_traits.rows.len() >= 1,
+        !ts_traits.rows.is_empty(),
         "should find TypeScript interface (as Trait), got {:?}",
         ts_traits.rows
     );

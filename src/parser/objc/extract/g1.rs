@@ -151,11 +151,9 @@ pub(super) fn method_selector(source: &str, node: Node) -> String {
                     parts.push(format!("{kw}:"));
                 }
             }
-            "identifier" => {
-                // Unary selector — the method name with no keyword args.
-                if parts.is_empty() {
-                    parts.push(node_text(source, child));
-                }
+            // Unary selector — the method name with no keyword args.
+            "identifier" if parts.is_empty() => {
+                parts.push(node_text(source, child));
             }
             _ => {}
         }

@@ -10,7 +10,7 @@
 
 use ai_architect_mcp::indexer;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Instant;
 
 /// Number of synthetic Rust files generated for the benchmark.
@@ -75,9 +75,10 @@ fn test_index_500_file_synthetic_fixture() {
 ///   - 1 enum with 2 variants,
 ///   - 1 trait with 1 method,
 ///   - 2 free functions, one of which calls the other.
+///
 /// This exercises every node label the indexer extracts, plus ExtractedRef
 /// edges of Defines, HasMethod, HasField, HasVariant, and CallSite.
-fn generate_fixture(src_dir: &PathBuf) {
+fn generate_fixture(src_dir: &Path) {
     for i in 0..NUM_FILES {
         let path = src_dir.join(format!("mod_{i:04}.rs"));
         fs::write(&path, synthesize_file(i)).expect("write synthetic file");
