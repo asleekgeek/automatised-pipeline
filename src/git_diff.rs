@@ -117,15 +117,15 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> Result<Vec<FileHunk>, Strin
             }
             is_new = false;
             is_deleted = false;
-        } else if line.starts_with("--- a/") {
+        } else if let Some(stripped) = line.strip_prefix("--- a/") {
             // For deleted files, this is the only place we get the path
             if current_file.is_none() {
-                current_file = Some(line[6..].to_string());
+                current_file = Some(stripped.to_string());
             }
         } else if line.starts_with("--- /dev/null") {
             is_new = true;
-        } else if line.starts_with("+++ b/") {
-            current_file = Some(line[6..].to_string());
+        } else if let Some(stripped) = line.strip_prefix("+++ b/") {
+            current_file = Some(stripped.to_string());
         } else if line.starts_with("+++ /dev/null") {
             is_deleted = true;
         } else if line.starts_with("@@ ") {
