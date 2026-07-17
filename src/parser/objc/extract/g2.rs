@@ -52,7 +52,8 @@ pub(super) fn extract_function(ctx: &mut Ctx, node: Node, scope: &str, enclosing
 
 pub(super) fn node_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     let mut cursor = node.walk();
-    node.children(&mut cursor).find(|c| c.kind() == kind)
+    let found = node.children(&mut cursor).find(|c| c.kind() == kind);
+    found
 }
 
 /// Emits a C `struct`/`union` declared in an ObjC file as a Struct plus its
