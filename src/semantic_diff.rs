@@ -107,17 +107,17 @@ pub fn diff(args: &SemanticDiffArgs, verified_at: String) -> Result<SemanticDiff
     };
     let score = regression_score(&summary);
     let verdict = classify_verdict(score);
-    let report = build_report(
+    let report = build_report(&DiffReportInput {
         args,
-        &verified_at,
-        &summary,
+        verified_at: &verified_at,
+        summary: &summary,
         score,
         verdict,
-        &node_diff,
-        &edge_diff,
-        &dangling,
-        &new_cycles,
-    );
+        node_diff: &node_diff,
+        edge_diff: &edge_diff,
+        dangling: &dangling,
+        new_cycles: &new_cycles,
+    });
     Ok(SemanticDiffOutcome {
         summary,
         regression_score: score,
@@ -497,17 +497,34 @@ fn classify_verdict(score: f64) -> &'static str {
 // Report builder
 // ---------------------------------------------------------------------------
 
-fn build_report(
-    args: &SemanticDiffArgs,
-    verified_at: &str,
-    summary: &DiffSummary,
+/// All inputs `build_report` needs to render the final JSON report - bundled
+/// per coding-standards.md §4.4 (>4 params is a missing data type).
+/// clippy::too_many_arguments.
+#[derive(Clone, Copy)]
+struct DiffReportInput<'a> {
+    args: &'a SemanticDiffArgs,
+    verified_at: &'a str,
+    summary: &'a DiffSummary,
     score: f64,
-    verdict: &str,
-    node_diff: &NodeDiff,
-    edge_diff: &EdgeDiff,
-    dangling: &[EdgeTriple],
-    new_cycles: &[String],
-) -> Value {
+    verdict: &'a str,
+    node_diff: &'a NodeDiff,
+    edge_diff: &'a EdgeDiff,
+    dangling: &'a [EdgeTriple],
+    new_cycles: &'a [String],
+}
+
+fn build_report(input: &DiffReportInput) -> Value {
+    let DiffReportInput {
+        args,
+        verified_at,
+        summary,
+        score,
+        verdict,
+        node_diff,
+        edge_diff,
+        dangling,
+        new_cycles,
+    } = *input;
     json!({
         "verified_at": verified_at,
         "before_graph_path": args.before_graph_path.to_string_lossy(),
