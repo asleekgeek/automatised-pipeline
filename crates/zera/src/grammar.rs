@@ -95,8 +95,8 @@ impl Grammar {
         let symmetric_kinds: Vec<&Vec<String>> = self
             .rules
             .iter()
-            .filter_map(|r| match r {
-                Rule::SymmetricClosure { kinds } => Some(kinds),
+            .map(|r| match r {
+                Rule::SymmetricClosure { kinds } => kinds,
             })
             .collect();
 
