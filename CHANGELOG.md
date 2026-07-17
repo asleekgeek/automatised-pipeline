@@ -11,7 +11,20 @@ adheres to [Semantic Versioning](https://semver.org/).
 Five defect clusters in the resolution pipeline, found by auditing an
 anomalously low `resolution_rate` (0.23) on a large Kotlin/Android codebase
 and filed as issues #28–#32; fixed in PRs #33, #34, #35, #37, #41 (plus
-cleanups #38, #39).
+cleanups #38, #39). Also ships the workspace-wide clippy cleanup and its CI
+enforcement gate (issues #40, #42; PRs #43, #45).
+
+### Changed
+
+- Workspace-wide `cargo clippy --all-targets -- -D warnings` is now clean —
+  38 pre-existing violations fixed across `ai-architect-mcp` (lib, bin, test
+  binaries) and `benches/harness`, including parameter-object extractions for
+  `dfs_iterative`/`build_report`/`resolve_one_implements` and named type
+  aliases replacing nested-tuple soups; behavior-preserving, zero test
+  assertions modified (#40, #42, PRs #43, #45).
+- New CI job enforces clippy `-D warnings` (workspace-wide) + `cargo fmt
+  --check` on every PR, closing the enforcement gap that let the backlog
+  accumulate (#42, PR #45).
 
 ### Fixed
 
