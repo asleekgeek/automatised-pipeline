@@ -558,7 +558,7 @@ diff --git a/src/b.rs b/src/b.rs
             processes: vec!["p1".into(), "p2".into()],
         };
         let score = compute_risk_score(&[sym], 2);
-        assert!(score >= 0.0 && score <= 1.0, "score out of range: {score}");
+        assert!((0.0..=1.0).contains(&score), "score out of range: {score}");
     }
 
     #[test]
