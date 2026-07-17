@@ -29,11 +29,9 @@ pub(crate) fn extract_top_level(
             // implicitly __future__), so extract_future_import hardcodes it.
             TS_FUTURE_IMPORT => extract_future_import(ctx, child, scope),
             TS_DECORATED_DEF => extract_decorated(ctx, child, scope, enclosing_class),
-            TS_EXPRESSION_STMT => {
-                // Check for module-level constant assignments
-                if enclosing_class.is_none() {
-                    extract_module_constant(ctx, child, scope);
-                }
+            // Check for module-level constant assignments
+            TS_EXPRESSION_STMT if enclosing_class.is_none() => {
+                extract_module_constant(ctx, child, scope);
             }
             _ => {}
         }
