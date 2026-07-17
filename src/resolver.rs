@@ -228,7 +228,7 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
         calls_resolved: call_resolved,
         impls_resolved: impl_resolved,
         extends_resolved: ext_resolved,
-        uses_resolved: uses_resolved,
+        uses_resolved,
         total_edges,
         total_refs,
         unresolved,
