@@ -1,6 +1,6 @@
 {
   "name": "ai-architect",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Codebase-intelligence MCP server: tree-sitter code graph, cross-file resolution, community detection, hybrid search, and impact analysis. Requires the binary from `cargo install ai-architect-mcp` on PATH.",
   "mcpServers": {
     "ai-architect": {

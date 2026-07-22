@@ -6,6 +6,57 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — Distribution: core tool profile, crates.io, cross-host installs
+
+A distribution-focused release (PRs #47, #48): the server now ships a
+lean 8-tool profile for outside agents, publishes to crates.io as
+`ai-architect-mcp`, adds an experimental Windows release build, and
+documents installation on every major MCP host.
+
+### Added
+
+- **`core|full` tool profiles — 8 agent-facing tools behind `--profile
+  core` (PR #48).** The server registers 24 MCP tools, but half are
+  internal pipeline stages (finding → PRD vocabulary) that only the
+  ai-architect orchestrator calls. The `core` profile exposes the 8 an
+  outside agent needs: `health_check`, `analyze_codebase`,
+  `search_codebase`, `get_context`, `get_symbol`, `get_impact`,
+  `query_graph`, `detect_changes`. Selection: `--profile core|full` flag
+  beats the `AP_PROFILE` env var; the default remains `full` (shrinking
+  the default tool surface is a breaking change reserved for the next
+  major bump). A tool hidden by the profile is indistinguishable from a
+  nonexistent tool, and `health_check` derives its tool count from the
+  active profile's registry.
+- **crates.io publication as `ai-architect-mcp` (PR #48).** Adds the
+  registry metadata (license, repository, homepage, readme, 5 keywords,
+  categories) and whitelist packaging (`/src/**`, `Cargo.toml`,
+  `README.md`, `LICENSE` — anchored patterns keep benches/corpora,
+  stages/, test fixtures, and CI config out: 110 files, 310 KiB
+  compressed). The installed binary stays `automatised-pipeline`;
+  `cargo install ai-architect-mcp` is now the cross-host install path.
+- **Experimental `windows-x86_64` leg in the release build matrix
+  (PR #48).** Marked `continue-on-error` so a Windows toolchain breakage
+  never blocks the macOS/Linux release; not bundled into the `.mcpb`
+  (Claude Desktop's installer contract only resolves macos/linux
+  layouts). Promote to a required leg once a tagged release produces a
+  working artifact.
+- **Cross-host install docs.** README section covering Gemini CLI
+  (including extension install via the new `gemini-extension.json`),
+  OpenAI Codex CLI, Cursor, Windsurf, and VS Code, all on the `core`
+  profile. The registry-ownership line (`mcp-name:
+  io.github.cdeust/automatised-pipeline`) is now visible README text in
+  a Registry section, not an HTML comment only.
+
+### Fixed
+
+- **Registry metadata (PR #47).** LICENSE is verbatim MIT again — the
+  descriptive preamble and algorithm-attribution note moved to the README
+  license section, so GitHub licensee (and every directory reading the
+  GitHub license API) detects MIT instead of NOASSERTION. `server.json`
+  migrated to the 2025-12-11 registry schema
+  (`registryType`/`fileSha256`/`websiteUrl`) required by mcp-publisher,
+  and now carries the real `.mcpb` sha256 instead of a placeholder.
+
 ## [0.7.0] — Resolver correctness overhaul
 
 Five defect clusters in the resolution pipeline, found by auditing an
