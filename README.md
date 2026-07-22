@@ -448,6 +448,21 @@ Public repo, MIT licensed. Security audit fixes are in, correctness fixes are in
 
 MIT — see [LICENSE](LICENSE).
 
+This software is the independent work of Clément Deust. It was developed
+outside any employment relationship and is not affiliated with, endorsed by,
+or owned by any past or present employer. It is part of the ai-architect
+ecosystem ([Cortex](https://github.com/cdeust/Cortex),
+[zetetic-team-subagents](https://github.com/cdeust/zetetic-team-subagents),
+[prd-spec-generator](https://github.com/cdeust/prd-spec-generator)).
+
+The graph-theoretic and information-retrieval algorithms used here (Louvain
+community detection with C2 repair, BM25, RRF rank fusion, tree-sitter AST
+parsing, Tarjan strongly-connected-components) are sourced from published
+research; citations are documented inline via `// source:` annotations and in
+`docs/`. The MIT license covers this implementation; it does not assert
+ownership over the underlying algorithms, which remain attributable to their
+original authors.
+
 ---
 
 <p align="center"><sub>Built by <a href="https://github.com/cdeust">cdeust</a>. Every stage designed by a genius agent. Every constant sourced.</sub></p>
