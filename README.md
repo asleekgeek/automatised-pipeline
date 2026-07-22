@@ -147,6 +147,83 @@ printf '%s\n' \
   | ./target/release/automatised-pipeline
 ```
 
+### Use with other MCP hosts
+
+The server is a self-contained stdio binary — any MCP host can launch it. Install once:
+
+```bash
+cargo install ai-architect-mcp   # installs the `automatised-pipeline` binary into ~/.cargo/bin
+```
+
+The CLI commands below assume `~/.cargo/bin` is on your `PATH`. GUI hosts (Cursor, Windsurf, VS Code) may not inherit your shell `PATH` — in the JSON configs, replace `automatised-pipeline` with the output of `which automatised-pipeline`. Use the `core` profile (8 read-only tools) for agent hosts.
+
+**Gemini CLI**
+
+```bash
+gemini mcp add -e AP_PROFILE=core ai-architect automatised-pipeline
+```
+
+Or install as an extension (this repo ships a `gemini-extension.json`):
+
+```bash
+gemini extensions install https://github.com/cdeust/automatised-pipeline
+```
+
+**OpenAI Codex CLI** (also picked up by the ChatGPT desktop app and Codex IDE extension — they share `~/.codex/config.toml`)
+
+```bash
+codex mcp add ai-architect -- automatised-pipeline --profile core
+```
+
+Or in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.ai-architect]
+command = "automatised-pipeline"
+args = ["--profile", "core"]
+```
+
+**Cursor** — `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "ai-architect": {
+      "command": "automatised-pipeline",
+      "args": ["--profile", "core"]
+    }
+  }
+}
+```
+
+**Windsurf** — `~/.codeium/windsurf/mcp_config.json`: same `mcpServers` block as Cursor.
+
+**VS Code** — `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "ai-architect": {
+      "type": "stdio",
+      "command": "automatised-pipeline",
+      "args": ["--profile", "core"]
+    }
+  }
+}
+```
+
+**OpenAI Agents SDK (Python)**
+
+```python
+from agents.mcp import MCPServerStdio
+
+async with MCPServerStdio(
+    name="ai-architect",
+    params={"command": "automatised-pipeline", "args": ["--profile", "core"]},
+) as server:
+    agent = Agent(name="Assistant", mcp_servers=[server])
+```
+
 ---
 
 ## The pipeline
@@ -462,6 +539,14 @@ Public repo, MIT licensed. Security audit fixes are in, correctness fixes are in
 - LSP-based deep method resolution on inferred types
 - Multi-repo / workgroup operations (GitNexus `group_*`)
 - Rename / refactor tools (we are read-only by design)
+
+---
+
+## Registry
+
+Published on crates.io as [`ai-architect-mcp`](https://crates.io/crates/ai-architect-mcp) and listed in the [MCP Registry](https://registry.modelcontextprotocol.io) under the name below (this line doubles as the registry's package-ownership proof):
+
+mcp-name: io.github.cdeust/automatised-pipeline
 
 ---
 
