@@ -111,21 +111,21 @@ The repo ships a `.mcp.json` that Claude Code picks up automatically when you op
 Or register globally:
 
 ```bash
-claude mcp add ai-architect -- /absolute/path/to/target/release/ai-architect-mcp
+claude mcp add ai-architect -- /absolute/path/to/target/release/automatised-pipeline
 ```
 
 ### First run
 
 ```bash
 # Run the binary directly to verify the handshake
-./target/release/ai-architect-mcp
+./target/release/automatised-pipeline
 
 # Or exercise it via stdio JSON-RPC:
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"health_check","arguments":{}}}' \
-  | ./target/release/ai-architect-mcp
+  | ./target/release/automatised-pipeline
 ```
 
 ---
@@ -431,7 +431,7 @@ Agents are spawned via [zetetic-team-subagents](https://github.com/cdeust/zeteti
 
 ## Status
 
-Private repo by design. Not ready for public release until the full hardening pass is done — security audit fixes are in, correctness fixes are in, scale fixes are in, stages 4/6/8/9 are live, but every capability marked "live" above has been verified end-to-end on this machine, not yet in a production context.
+Public repo, MIT licensed. Security audit fixes are in, correctness fixes are in, scale fixes are in, stages 4/6/8/9 are live, but every capability marked "live" above has been verified end-to-end on this machine, not yet in a production context.
 
 **What works today**: indexing Rust, Python, TypeScript, Java, Kotlin, Swift, Objective-C, C, C++, and Go codebases end-to-end, resolving cross-file relationships, clustering into communities, tracing processes from entry points, hybrid search, PRD input preparation, PRD claim validation, security gate checking, before/after regression detection.
 
@@ -447,6 +447,21 @@ Private repo by design. Not ready for public release until the full hardening pa
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+This software is the independent work of Clément Deust. It was developed
+outside any employment relationship and is not affiliated with, endorsed by,
+or owned by any past or present employer. It is part of the ai-architect
+ecosystem ([Cortex](https://github.com/cdeust/Cortex),
+[zetetic-team-subagents](https://github.com/cdeust/zetetic-team-subagents),
+[prd-spec-generator](https://github.com/cdeust/prd-spec-generator)).
+
+The graph-theoretic and information-retrieval algorithms used here (Louvain
+community detection with C2 repair, BM25, RRF rank fusion, tree-sitter AST
+parsing, Tarjan strongly-connected-components) are sourced from published
+research; citations are documented inline via `// source:` annotations and in
+`docs/`. The MIT license covers this implementation; it does not assert
+ownership over the underlying algorithms, which remain attributable to their
+original authors.
 
 ---
 
