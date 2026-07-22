@@ -1,10 +1,11 @@
 name: Release binaries
 
 # Triggered when the maintainer pushes a tag matching v*. Builds the
-# automatised-pipeline binary for three platforms Cortex's installer
+# automatised-pipeline binary for the three platforms Cortex's installer
 # fast-path knows how to consume (macos-aarch64, linux-x86_64,
-# linux-aarch64), tarballs each, computes a SHA256 companion, and
-# attaches everything to the GitHub Release.
+# linux-aarch64) plus an experimental windows-x86_64 leg, tarballs each,
+# computes a SHA256 companion, and attaches everything to the GitHub
+# Release.
 #
 # macos-x86_64 is intentionally omitted — Apple-silicon dominance
 # in 2026 + macos-13 runner deprecation makes the cost/value ratio
@@ -14,8 +15,11 @@ name: Release binaries
 # Asset naming convention (Cortex installer contract):
 #   automatised-pipeline-{os}-{arch}.tar.gz
 #   automatised-pipeline-{os}-{arch}.tar.gz.sha256
-# where {os} ∈ {macos, linux}, {arch} ∈ {x86_64, aarch64}.
-# The tar archive root must contain ``automatised-pipeline`` (no nested dir).
+# where {os} ∈ {macos, linux, windows}, {arch} ∈ {x86_64, aarch64}.
+# The tar archive root must contain ``automatised-pipeline`` (no nested
+# dir); the windows archive contains ``automatised-pipeline.exe``.
+# Cortex's installer contract only consumes the macos/linux assets —
+# windows is a direct-download convenience, not part of that contract.
 
 on:
   push:
@@ -59,7 +63,28 @@ jobs:
           - target_tag: linux-aarch64
             rust_target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm  # native ARM runner — no cross
+          # EXPERIMENTAL: lbug (LadybugDB/Kuzu) compiles its C++ core via
+          # CMake, and that build is unverified under MSVC — the zstd
+          # static-link workaround below is Linux-specific, and Windows may
+          # hit its own toolchain/link failures. `experimental: true` maps
+          # to continue-on-error so a Windows breakage never blocks the
+          # macOS/Linux release. Promote to a required leg once a tagged
+          # release has produced a working artifact.
+          - target_tag: windows-x86_64
+            rust_target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            bin_suffix: .exe
+            experimental: true
     runs-on: ${{ matrix.runner }}
+    # Only the experimental windows leg is allowed to fail (see matrix).
+    continue-on-error: ${{ matrix.experimental == true }}
+
+    # Git Bash on the windows runner — keeps every run step (mktemp, tar,
+    # shasum) identical across all four platforms. No-op on macOS/Linux
+    # where bash is already the default shell.
+    defaults:
+      run:
+        shell: bash
 
     # zstd-sys + lbug both statically link libzstd, producing duplicate
     # symbols on Linux (rust-lld is strict; macOS ld64 silently dedupes).
@@ -100,19 +125,23 @@ jobs:
 
       - name: Strip binary (best-effort)
         run: |
-          BIN=target/${{ matrix.rust_target }}/release/automatised-pipeline
+          # matrix.bin_suffix is `.exe` on windows, empty (undefined)
+          # elsewhere — GitHub renders undefined matrix keys as "".
+          BIN=target/${{ matrix.rust_target }}/release/automatised-pipeline${{ matrix.bin_suffix }}
           # GNU strip on Linux, llvm-strip on macOS — both ignore unknown.
+          # No strip for MSVC binaries; the `|| true` covers windows too.
           strip "$BIN" 2>/dev/null || true
           ls -la "$BIN"
 
       - name: Package tarball + sha256
         run: |
           ASSET="automatised-pipeline-${{ matrix.target_tag }}.tar.gz"
-          BIN=target/${{ matrix.rust_target }}/release/automatised-pipeline
+          BIN=target/${{ matrix.rust_target }}/release/automatised-pipeline${{ matrix.bin_suffix }}
           STAGING=$(mktemp -d)
-          cp "$BIN" "$STAGING/automatised-pipeline"
-          tar -C "$STAGING" -czf "$ASSET" automatised-pipeline
-          # shasum is present on every macOS + Linux GitHub runner.
+          cp "$BIN" "$STAGING/automatised-pipeline${{ matrix.bin_suffix }}"
+          tar -C "$STAGING" -czf "$ASSET" automatised-pipeline${{ matrix.bin_suffix }}
+          # shasum is present on every macOS + Linux GitHub runner, and
+          # ships with Git Bash (perl) on the windows runner.
           shasum -a 256 "$ASSET" | tee "$ASSET.sha256"
           ls -la "$ASSET" "$ASSET.sha256"
 
@@ -129,7 +158,9 @@ jobs:
           fail_on_unmatched_files: true
 
   # Pack and publish the .mcpb bundle after all three platform binaries
-  # are available on the GitHub Release.
+  # are available on the GitHub Release. The experimental windows binary
+  # is deliberately NOT bundled: .mcpb consumers (Claude Desktop installer
+  # contract) only resolve the macos/linux bin/<platform>/ layout today.
   package_mcpb:
     name: package .mcpb bundle
     needs: build
