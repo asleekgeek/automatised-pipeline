@@ -8,10 +8,27 @@
 members = [".", "benches/harness", "crates/zera"]
 
 [package]
+# Published as `ai-architect-mcp` (both this and `automatised-pipeline`
+# were unregistered on crates.io as of 2026-07-22; keeping the existing
+# package name avoids a rename, matches the MCP server identity
+# `ai-architect`, and carries the discoverable `-mcp` suffix). The binary
+# stays `automatised-pipeline` — cargo install installs it by [[bin]] name.
 name = "ai-architect-mcp"
 version = "0.7.0"
 edition = "2021"
-description = "Stage-by-stage rewrite of the ai-architect pipeline as an MCP server. One tool per stage. Grown by zetetic + genius agents."
+description = "Codebase-intelligence MCP server: tree-sitter parsing into a LadybugDB code graph, cross-file resolution, community detection, hybrid search, and impact analysis for AI agents."
+license = "MIT"
+repository = "https://github.com/cdeust/automatised-pipeline"
+homepage = "https://github.com/cdeust/automatised-pipeline"
+readme = "README.md"
+# crates.io caps keywords at 5; category slugs from https://crates.io/categories
+keywords = ["mcp", "code-intelligence", "tree-sitter", "code-graph", "static-analysis"]
+categories = ["development-tools", "command-line-utilities"]
+# Whitelist packaging: the repo carries benches/corpora, stage specs,
+# test fixtures, and CI config that would bloat the .crate file. Only
+# what `cargo build` needs (plus README/LICENSE) ships. Patterns are
+# gitignore-style — the leading `/` anchors them to the package root.
+include = ["/src/**", "/Cargo.toml", "/README.md", "/LICENSE"]
 
 [[bin]]
 name = "automatised-pipeline"

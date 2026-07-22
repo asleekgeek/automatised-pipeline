@@ -42,6 +42,7 @@ mod search;
 mod security_gates;
 mod semantic_diff;
 mod stdlib_index;
+mod tool_profile;
 mod tool_schemas;
 
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tool_profile::ToolProfile;
 
 // ---------------------------------------------------------------------------
 // Protocol / server identity
@@ -286,8 +288,8 @@ struct Index {
 // Tool registry — one entry per pipeline stage.
 // ---------------------------------------------------------------------------
 
-fn tools_list() -> Value {
-    tool_schemas::tools_list()
+fn tools_list(profile: ToolProfile) -> Value {
+    profile.filter_tools_list(tool_schemas::tools_list())
 }
 
 // ---------------------------------------------------------------------------
@@ -4150,19 +4152,36 @@ fn rel_table_triples() -> &'static [(&'static str, &'static str, &'static str)] 
 // Tool dispatch
 // ---------------------------------------------------------------------------
 
-fn handle_tool_call(params: &Value) -> Value {
+fn handle_tool_call(params: &Value, profile: ToolProfile) -> Value {
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let arguments = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
 
+    // A tool the active profile does not register must behave exactly like
+    // a tool that does not exist — the profile IS the registry.
+    if !profile.allows(name) {
+        return json!({
+            "isError": true,
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "Unknown tool: {} (not registered under the '{}' profile; \
+                     restart with --profile full to expose every tool)",
+                    name,
+                    profile.name()
+                )
+            }]
+        });
+    }
+
     let payload = match name {
         "health_check" => {
             // source: C-correctness bug 3 — the count was a hardcoded `19`
             // that silently lied if a new tool was added without bumping it.
             // Derive from tools_list() so the count can never drift.
-            let tools_count = tools_list()
+            let tools_count = tools_list(profile)
                 .get("tools")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len())
@@ -4226,7 +4245,7 @@ fn handle_tool_call(params: &Value) -> Value {
 // Request dispatch
 // ---------------------------------------------------------------------------
 
-fn handle_request(req: Request) {
+fn handle_request(req: Request, profile: ToolProfile) {
     let id = req.id.clone().unwrap_or(Value::Null);
 
     match req.method.as_str() {
@@ -4241,8 +4260,8 @@ fn handle_request(req: Request) {
         "notifications/initialized" => {
             // JSON-RPC notification: no response
         }
-        "tools/list" => send_response(id, tools_list()),
-        "tools/call" => send_response(id, handle_tool_call(&req.params)),
+        "tools/list" => send_response(id, tools_list(profile)),
+        "tools/call" => send_response(id, handle_tool_call(&req.params, profile)),
         other => send_error(id, -32601, &format!("Method not found: {}", other)),
     }
 }
@@ -4380,17 +4399,20 @@ mod security_tests {
         // the count from `tools_list()` dynamically. If a new tool is added
         // to `tool_schemas::tools_list` without touching main.rs, the count
         // must still be correct.
-        let tools = tools_list();
+        let tools = tools_list(ToolProfile::Full);
         let expected = tools
             .get("tools")
             .and_then(|v| v.as_array())
             .expect("tools_list must return a `tools` array")
             .len();
 
-        let health = handle_tool_call(&json!({
-            "name": "health_check",
-            "arguments": {}
-        }));
+        let health = handle_tool_call(
+            &json!({
+                "name": "health_check",
+                "arguments": {}
+            }),
+            ToolProfile::Full,
+        );
 
         // handle_tool_call wraps the payload in a content/text envelope.
         // Find the JSON text inside.
@@ -4415,6 +4437,56 @@ mod security_tests {
             .and_then(|v| v.as_u64())
             .expect("stages_registered field must stay for back-compat");
         assert_eq!(legacy as usize, expected, "stages_registered drift");
+    }
+
+    #[test]
+    fn test_health_check_count_reflects_core_profile() {
+        // health_check derives its count from the ACTIVE profile's registry,
+        // so a core-profile server reports the core tool count, not 24.
+        let health = handle_tool_call(
+            &json!({
+                "name": "health_check",
+                "arguments": {}
+            }),
+            ToolProfile::Core,
+        );
+        let text = health
+            .get("content")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|e| e.get("text"))
+            .and_then(|v| v.as_str())
+            .expect("health_check must return content[0].text");
+        let payload: serde_json::Value =
+            serde_json::from_str(text).expect("content[0].text must be JSON");
+        assert_eq!(
+            payload.get("tools_count").and_then(|v| v.as_u64()),
+            Some(tool_profile::CORE_TOOL_NAMES.len() as u64),
+            "core profile must report exactly the core tool count"
+        );
+    }
+
+    #[test]
+    fn test_core_profile_rejects_unregistered_tool_call() {
+        // A tool hidden by the profile must be indistinguishable from a tool
+        // that does not exist — callable-but-unlisted would defeat the point.
+        let response = handle_tool_call(
+            &json!({
+                "name": "prepare_prd_input",
+                "arguments": {}
+            }),
+            ToolProfile::Core,
+        );
+        assert_eq!(response.get("isError"), Some(&json!(true)));
+        let text = response
+            .get("content")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|e| e.get("text"))
+            .and_then(|v| v.as_str())
+            .expect("rejection must carry content[0].text");
+        assert!(text.contains("Unknown tool"), "got: {text}");
+        assert!(text.contains("'core' profile"), "got: {text}");
     }
 
     #[test]
@@ -4779,9 +4851,24 @@ pub fn sanitize(input: &str) -> String { input.trim().to_string() }
 }
 
 fn main() {
+    // Read-once-at-startup configuration: `--profile` flag beats `AP_PROFILE`
+    // env var; absent both, every tool is registered (see tool_profile.rs).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let env_profile = std::env::var(tool_profile::PROFILE_ENV_VAR).ok();
+    let profile = match ToolProfile::resolve(&args, env_profile.as_deref()) {
+        Ok(profile) => profile,
+        Err(message) => {
+            eprintln!("[automatised-pipeline] {}", message);
+            // source: POSIX utility convention (e.g. grep(1)) — exit status 2
+            // signals a usage error, distinct from runtime failure (1).
+            process::exit(2);
+        }
+    };
+
     eprintln!(
-        "[automatised-pipeline] stage 0-3d up (Rust {})",
-        SERVER_VERSION
+        "[automatised-pipeline] stage 0-3d up (Rust {}, profile '{}')",
+        SERVER_VERSION,
+        profile.name()
     );
 
     let stdin = io::stdin();
@@ -4799,7 +4886,7 @@ fn main() {
             continue;
         }
         match serde_json::from_str::<Request>(trimmed) {
-            Ok(req) => handle_request(req),
+            Ok(req) => handle_request(req, profile),
             Err(e) => eprintln!("[automatised-pipeline] parse error: {}", e),
         }
     }
