@@ -102,17 +102,36 @@ The repo ships a `.mcp.json` that Claude Code picks up automatically when you op
   "mcpServers": {
     "ai-architect": {
       "command": "cargo",
-      "args": ["run", "--quiet", "--release", "--manifest-path", "Cargo.toml"]
+      "args": ["run", "--quiet", "--release", "--manifest-path", "Cargo.toml", "--", "--profile", "core"]
     }
   }
 }
 ```
 
-Or register globally:
+Or register globally (recommended agent setup — the `core` profile):
 
 ```bash
-claude mcp add ai-architect -- /absolute/path/to/target/release/automatised-pipeline
+claude mcp add ai-architect -- /absolute/path/to/target/release/automatised-pipeline --profile core
 ```
+
+### Tool profiles
+
+The server registers one of two tool sets, chosen once at startup:
+
+| Profile | Tools | Who it's for |
+|---|---|---|
+| `core` | 8 — `health_check` · `analyze_codebase` · `search_codebase` · `get_context` · `get_symbol` · `get_impact` · `query_graph` · `detect_changes` | **Recommended for agents.** The read-only code-intelligence surface: analyze once, then search, inspect symbols, and measure blast radius. |
+| `full` | all 24 | The ai-architect pipeline orchestrator — adds the internal finding → PRD stages (1/2/4/6/8/9) and the manual graph passes (`index_codebase`, `resolve_graph`, `cluster_graph`, `lsp_resolve`, `get_processes`, `index_history`). |
+
+Select with the `--profile` flag or the `AP_PROFILE` environment variable (the flag wins):
+
+```bash
+automatised-pipeline --profile core   # agent-facing 8
+AP_PROFILE=core automatised-pipeline  # same, via env
+automatised-pipeline                  # default: full (all 24)
+```
+
+The default stays `full` until the next major version — shrinking the default tool surface is a breaking change. New agent installations should opt into `core`: `analyze_codebase` already runs index + resolve + cluster in one call, so the 16 hidden tools are pipeline plumbing an agent never needs, and hiding them keeps the tool prompt small.
 
 ### First run
 
@@ -172,6 +191,8 @@ Stage 9:  verify_semantic_diff
 ```
 
 Each tool has a JSON Schema enforced at the wire, reason codes on error (no cryptic protocol errors), and a receipt-style response with timing and counts.
+
+> Agent installs rarely need all 24 — the `core` profile (see [Tool profiles](#tool-profiles)) registers just the 8 code-intelligence tools.
 
 ---
 
