@@ -111,21 +111,21 @@ The repo ships a `.mcp.json` that Claude Code picks up automatically when you op
 Or register globally:
 
 ```bash
-claude mcp add ai-architect -- /absolute/path/to/target/release/ai-architect-mcp
+claude mcp add ai-architect -- /absolute/path/to/target/release/automatised-pipeline
 ```
 
 ### First run
 
 ```bash
 # Run the binary directly to verify the handshake
-./target/release/ai-architect-mcp
+./target/release/automatised-pipeline
 
 # Or exercise it via stdio JSON-RPC:
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"health_check","arguments":{}}}' \
-  | ./target/release/ai-architect-mcp
+  | ./target/release/automatised-pipeline
 ```
 
 ---
@@ -431,7 +431,7 @@ Agents are spawned via [zetetic-team-subagents](https://github.com/cdeust/zeteti
 
 ## Status
 
-Private repo by design. Not ready for public release until the full hardening pass is done — security audit fixes are in, correctness fixes are in, scale fixes are in, stages 4/6/8/9 are live, but every capability marked "live" above has been verified end-to-end on this machine, not yet in a production context.
+Public repo, MIT licensed. Security audit fixes are in, correctness fixes are in, scale fixes are in, stages 4/6/8/9 are live, but every capability marked "live" above has been verified end-to-end on this machine, not yet in a production context.
 
 **What works today**: indexing Rust, Python, TypeScript, Java, Kotlin, Swift, Objective-C, C, C++, and Go codebases end-to-end, resolving cross-file relationships, clustering into communities, tracing processes from entry points, hybrid search, PRD input preparation, PRD claim validation, security gate checking, before/after regression detection.
 

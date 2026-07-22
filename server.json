@@ -10,7 +10,7 @@
       "registry_type": "mcpb",
       "identifier": "https://github.com/cdeust/automatised-pipeline/releases/download/v0.7.0/automatised-pipeline.mcpb",
       "version": "0.7.0",
-      "file_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "file_sha256": "400d936e2515615ece5a6e1f535c7252d9bb3679380bd07b93c10b7bf9704542",
       "transport": { "type": "stdio" }
     }
   ]
