@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] — Fix: Windows release build past zstd-sys
+
+A CI-only patch release (PR #50). No library or server code changes.
+
+### Fixed
+
+- **Windows release leg no longer dies in `zstd-sys` (PR #50).** The
+  release workflow set `ZSTD_SYS_USE_PKG_CONFIG=1` at the job level, so
+  it reached all four matrix legs. When that variable is set, zstd-sys
+  *requires* pkg-config and panics if it is missing (`build.rs:60`,
+  exit 101) instead of building its vendored static zstd —
+  `windows-latest` ships without pkg-config, so the v0.8.0 run lost its
+  Windows asset (run 29975233898). The variable only exists to fix the
+  Linux-specific duplicate-libzstd-symbol conflict between zstd-sys and
+  lbug under rust-lld; it now lives on a Linux-gated Build step and is
+  genuinely unset (not empty) on macOS/Windows, whose legs build the
+  vendored static zstd as zstd-sys intends.
+- **`server.json` points at the v0.8.1 `.mcpb` with a verified
+  `fileSha256`.** The 0.8.0 entry carried a stale hash that did not
+  match the released bundle (the hash is only knowable after the
+  release workflow packs the asset; it is now corrected post-release
+  against the published `.mcpb.sha256`).
+
 ## [0.8.0] — Distribution: core tool profile, crates.io, cross-host installs
 
 A distribution-focused release (PRs #47, #48): the server now ships a

@@ -1,17 +1,22 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cdeust/automatised-pipeline",
-  "description": "Codebase intelligence MCP server — index any repo into a property graph; 24 tools for agents.",
-  "repository": { "url": "https://github.com/cdeust/automatised-pipeline", "source": "github" },
-  "version": "0.8.0",
+  "description": "Codebase intelligence MCP server \u2014 index any repo into a property graph; 24 tools for agents.",
+  "repository": {
+    "url": "https://github.com/cdeust/automatised-pipeline",
+    "source": "github"
+  },
+  "version": "0.8.1",
   "websiteUrl": "https://github.com/cdeust/automatised-pipeline#readme",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/cdeust/automatised-pipeline/releases/download/v0.8.0/automatised-pipeline.mcpb",
-      "version": "0.8.0",
-      "fileSha256": "400d936e2515615ece5a6e1f535c7252d9bb3679380bd07b93c10b7bf9704542",
-      "transport": { "type": "stdio" }
+      "identifier": "https://github.com/cdeust/automatised-pipeline/releases/download/v0.8.1/automatised-pipeline.mcpb",
+      "version": "0.8.1",
+      "fileSha256": "PENDING-V0.8.1-ASSET",
+      "transport": {
+        "type": "stdio"
+      }
     }
   ]
 }
