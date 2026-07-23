@@ -147,9 +147,14 @@ jobs:
           STAGING=$(mktemp -d)
           cp "$BIN" "$STAGING/automatised-pipeline${{ matrix.bin_suffix }}"
           tar -C "$STAGING" -czf "$ASSET" automatised-pipeline${{ matrix.bin_suffix }}
-          # shasum is present on every macOS + Linux GitHub runner, and
-          # ships with Git Bash (perl) on the windows runner.
-          shasum -a 256 "$ASSET" | tee "$ASSET.sha256"
+          # sha256sum (coreutils) covers Linux and Git Bash on windows;
+          # shasum covers macOS. windows-latest has NO shasum — the
+          # v0.8.1 windows leg exited 127 on it after a successful build.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET" | tee "$ASSET.sha256"
+          else
+            shasum -a 256 "$ASSET" | tee "$ASSET.sha256"
+          fi
           ls -la "$ASSET" "$ASSET.sha256"
 
       - name: Upload release assets
