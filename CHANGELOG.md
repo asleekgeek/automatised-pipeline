@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.2] — First complete four-platform release (Windows asset ships)
+
+A CI-only patch release (PR #52). No library or server code changes.
+
+### Fixed
+
+- **Windows tarball step no longer exits 127 on a missing `shasum`
+  (PR #52).** The v0.8.1 windows leg built `automatised-pipeline.exe`
+  (49m53s, lbug's C++ core compiling cleanly under MSVC) and then died
+  in *Package tarball + sha256*: contrary to the step's comment, Git
+  Bash on `windows-latest` ships no `shasum`. The step now prefers
+  `sha256sum` (coreutils — Linux and Git Bash) and falls back to
+  `shasum` (macOS). This was the last failing step on the Windows leg,
+  making this tag the first expected to publish all four platform
+  assets: macos-aarch64, linux-x86_64, linux-aarch64, windows-x86_64.
+- **`server.json` mcpb `fileSha256` verified against the published
+  asset** (pattern established in 0.8.1: placeholder in the release PR,
+  pinned post-release from the `.mcpb.sha256` asset).
+
 ## [0.8.1] — Fix: Windows release build past zstd-sys
 
 A CI-only patch release (PR #50). No library or server code changes.
