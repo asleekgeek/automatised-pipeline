@@ -86,14 +86,6 @@ jobs:
       run:
         shell: bash
 
-    # zstd-sys + lbug both statically link libzstd, producing duplicate
-    # symbols on Linux (rust-lld is strict; macOS ld64 silently dedupes).
-    # ZSTD_SYS_USE_PKG_CONFIG=1 makes zstd-sys link the system libzstd
-    # dynamically, eliminating the conflict. Harmless on macOS where
-    # zstd-sys ignores it (no pkg-config installed by default).
-    env:
-      ZSTD_SYS_USE_PKG_CONFIG: "1"
-
     steps:
       - uses: actions/checkout@v4
 
@@ -120,7 +112,22 @@ jobs:
           restore-keys: |
             ${{ matrix.target_tag }}-cargo-
 
-      - name: Build
+      # zstd-sys + lbug both statically link libzstd, producing duplicate
+      # symbols on Linux (rust-lld is strict; macOS ld64 silently dedupes).
+      # ZSTD_SYS_USE_PKG_CONFIG=1 makes zstd-sys link the system libzstd
+      # dynamically, eliminating the conflict. Linux-only: when the var is
+      # set, zstd-sys REQUIRES pkg-config (build.rs panics if it is
+      # missing), and windows-latest ships without pkg-config — v0.8.0 run
+      # 29975233898 failed exactly there. Two steps instead of one env
+      # expression so the var is genuinely unset (not "") off-Linux.
+      - name: Build (linux — dynamic system libzstd)
+        if: startsWith(matrix.runner, 'ubuntu')
+        env:
+          ZSTD_SYS_USE_PKG_CONFIG: "1"
+        run: cargo build --release --bin automatised-pipeline --target ${{ matrix.rust_target }}
+
+      - name: Build (macos/windows — vendored static zstd)
+        if: ${{ !startsWith(matrix.runner, 'ubuntu') }}
         run: cargo build --release --bin automatised-pipeline --target ${{ matrix.rust_target }}
 
       - name: Strip binary (best-effort)
