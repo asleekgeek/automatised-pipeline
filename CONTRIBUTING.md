@@ -129,6 +129,43 @@ load-bearing — a wire-level regression is a regression we ship.
 
 ---
 
+## Releasing
+
+**A release is not shipped until its pins move.** Tagging, building the
+binaries and cutting the GitHub release deliver nothing to plugin installs
+on their own: installs subscribe through `.claude-plugin/marketplace.json`,
+and the `version` pinned there is what they resolve. A tag the manifest does
+not name reaches nobody, and produces no error anywhere.
+
+Four files carry the version and must move together:
+
+| File | Field |
+|---|---|
+| `.claude-plugin/marketplace.json` | `metadata.version` + `plugins[].version` |
+| `.claude-plugin/plugin.json` | `version` |
+| `server.json` | `version` + `packages[].version` |
+| `Cargo.toml` | `package.version` |
+
+The release checklist therefore ENDS with:
+
+```bash
+# after tagging, before considering the release done
+python3 scripts/check_marketplace_pins.py   # must exit 0
+```
+
+CI enforces this — the `marketplace-pins` workflow runs on PR/push touching
+the manifest and on a weekly cron, because pins go stale by inaction and
+inaction never opens a PR. The gate reads the latest local git tag, so it
+detects a stale pin even when every manifest agrees with itself.
+
+Source: the 2026-07-25 incident — this repo's manifests both sat at 0.8.0
+while `server.json` and the latest tag were at v0.8.2, a three-way split
+that shipped v0.8.1 and v0.8.2 to zero installs (#67). The same class in
+`cdeust/Cortex` withheld six `zetetic-team-subagents` releases and two
+`cortex-viz` releases (cdeust/Cortex#179).
+
+---
+
 ## What NOT to do
 
 - Don't introduce a new dependency without justification. The Cargo.toml

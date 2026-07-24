@@ -4,3 +4,8 @@ Cargo.lock
 .claude/settings.local.json
 .claude/session-cache.json
 benches/runs/
+
+# Python bytecode — scripts/ carries the stdlib-only pin gate and its tests;
+# running them locally emits __pycache__ into a repo that is otherwise Rust.
+__pycache__/
+*.py[cod]
