@@ -49,12 +49,16 @@ pub const ARTIFACT_META: &str = "graph.meta.json";
 /// a way an older importer cannot read; import refuses a newer schema.
 const SCHEMA_VERSION: u32 = 1;
 
-/// zstd level for the explicit-index (best-ratio) tier.
+/// zstd level for the (single) explicit-index tier.
+///
+/// Only one tier exists: the explicit `index_codebase` call is the sole export
+/// caller, and it wants the best ratio. The reference (artifact.c) also carries
+/// a fast zstd-3 tier for its *file watcher*; AP has no watcher, so shipping
+/// that tier now would be a caller-less code path (coding-standards §9 — "if
+/// it's built, it must be called"). The fast tier lands together with a watcher,
+/// when one exists.
 // source: DeusData/codebase-memory-mcp src/pipeline/artifact.c — ART_ZSTD_BEST = 9.
-const ZSTD_BEST: i32 = 9;
-/// zstd level for the watcher / incremental (fast) tier.
-// source: DeusData/codebase-memory-mcp src/pipeline/artifact.c — ART_ZSTD_FAST = 3.
-const ZSTD_FAST: i32 = 3;
+const ZSTD_LEVEL: i32 = 9;
 
 /// Hard ceiling on the decompressed archive size. A crafted `.zst` that
 /// declares a larger stream is rejected mid-decode before it can exhaust disk,
@@ -67,30 +71,6 @@ const MAX_DECOMPRESSED_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/// Which compression tier to use. `Best` is the explicit-index tier (slower,
-/// smaller); `Fast` is the watcher / incremental tier (faster, larger).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CompressionTier {
-    Best,
-    // The watcher / incremental tier (zstd-3). AP has no file watcher yet, so
-    // no production path constructs it — the variant is the reserved half of
-    // the two-tier design the reference (artifact.c) mandates, exercised by the
-    // unit tests. Kept (not deleted) so the watcher lands without an API change;
-    // annotated per the repo idiom for a known-upcoming caller (see the
-    // `#[allow(dead_code)] // used in stage 3b` markers in graph_store.rs).
-    #[allow(dead_code)]
-    Fast,
-}
-
-impl CompressionTier {
-    fn level(self) -> i32 {
-        match self {
-            CompressionTier::Best => ZSTD_BEST,
-            CompressionTier::Fast => ZSTD_FAST,
-        }
-    }
-}
 
 /// The sidecar metadata committed alongside the compressed graph.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -113,6 +93,22 @@ pub struct ExportStats {
     pub artifact_path: PathBuf,
     pub original_bytes: u64,
     pub compressed_bytes: u64,
+}
+
+/// Staleness of a committed artifact relative to the repo's current git HEAD.
+/// Only produced when the artifact is NOT fresh (its sha differs from HEAD, or
+/// it carries no provenance sha at all).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StaleInfo {
+    /// git sha the artifact was exported at (empty string if the artifact
+    /// carried no provenance — e.g. exported outside a git working tree).
+    pub artifact_sha: String,
+    /// repo's current git HEAD sha.
+    pub head_sha: String,
+    /// number of commits HEAD is ahead of the artifact, via
+    /// `git rev-list --count <artifact_sha>..HEAD`. `None` when the artifact
+    /// sha is unknown to this repo (or absent), so the count is unknowable.
+    pub commits_behind: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +146,6 @@ pub fn export_artifact(
     repo_path: &Path,
     node_count: u64,
     edge_count: u64,
-    tier: CompressionTier,
 ) -> Result<ExportStats, String> {
     if !graph_path.exists() {
         return Err(format!(
@@ -162,7 +157,7 @@ pub fn export_artifact(
     fs::create_dir_all(&dir)
         .map_err(|e| format!("artifact export: create {}: {e}", dir.display()))?;
 
-    let level = tier.level();
+    let level = ZSTD_LEVEL;
     let out = artifact_file(repo_path);
     let tmp = out.with_extension("zst.tmp");
     let compressed_bytes = write_archive(graph_path, &tmp, level).inspect_err(|_| {
@@ -280,6 +275,63 @@ pub fn import_artifact(repo_path: &Path, graph_path: &Path) -> Result<ArtifactMe
         ));
     }
     Ok(meta)
+}
+
+/// Reads the committed sidecar for `repo_path`. Public so the bootstrap
+/// composition root can inspect provenance (git sha) before deciding whether
+/// to import.
+pub fn read_artifact_meta(repo_path: &Path) -> Result<ArtifactMeta, String> {
+    read_meta(repo_path)
+}
+
+/// Compares the artifact's provenance sha against the repo's current git HEAD.
+///
+/// Returns `None` when the artifact is FRESH — its sha equals HEAD, or the repo
+/// is not a git working tree (HEAD unavailable), so staleness is not a
+/// meaningful concept and a bootstrap is safe. Returns `Some(StaleInfo)` when
+/// the artifact is provably not the current HEAD: either the shas differ, or the
+/// artifact carries no provenance sha at all (empty) while the repo does have a
+/// HEAD. `commits_behind` is computed via `git rev-list --count sha..HEAD` and
+/// is `None` when the artifact sha is absent or unknown to this repo.
+pub fn artifact_staleness(repo_path: &Path, artifact_sha: &str) -> Option<StaleInfo> {
+    let head = git_head(repo_path)?; // not a git repo → treat as fresh
+    if !artifact_sha.is_empty() && artifact_sha == head {
+        return None;
+    }
+    let commits_behind = if is_hex_sha(artifact_sha) {
+        git_commits_between(repo_path, artifact_sha, &head)
+    } else {
+        None // empty or non-sha provenance → count is unknowable
+    };
+    Some(StaleInfo {
+        artifact_sha: artifact_sha.to_string(),
+        head_sha: head,
+        commits_behind,
+    })
+}
+
+/// `git rev-list --count <from>..<to>`. `None` if the command fails (e.g. the
+/// `from` sha is unknown to the repo) or the output does not parse.
+fn git_commits_between(repo_path: &Path, from: &str, to: &str) -> Option<u64> {
+    let range = format!("{from}..{to}");
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-list", "--count"])
+        .arg(&range)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok()
+}
+
+/// True for a plausible git object sha (non-empty, all ASCII hex). Guards the
+/// sidecar's `commit` field — an attacker-crafted sidecar could otherwise smuggle
+/// a `--flag` value into `git rev-list` (arg injection, not shell injection).
+fn is_hex_sha(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// True when a committed, schema-compatible artifact is present in `repo_path`.
@@ -410,86 +462,9 @@ fn path_size(path: &Path) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Tests — in a sibling file so this module stays under the 500-line limit.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn export_import_round_trips_a_directory_graph() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo = tmp.path().join("repo");
-        let out = tmp.path().join("out");
-        let graph = out.join("graph");
-        fs::create_dir_all(graph.join("sub")).expect("mk graph");
-        fs::write(graph.join("a.bin"), b"payload-a").expect("write a");
-        fs::write(graph.join("sub/b.bin"), b"payload-b").expect("write b");
-        fs::create_dir_all(&repo).expect("mk repo");
-
-        let stats = export_artifact(&graph, &repo, 3, 5, CompressionTier::Best)
-            .expect("export should succeed");
-        assert!(stats.compressed_bytes > 0);
-        assert!(artifact_exists(&repo));
-
-        // Simulate a fresh clone: fresh output dir, no local graph.
-        let fresh = tmp.path().join("fresh");
-        let fresh_graph = fresh.join("graph");
-        let meta = import_artifact(&repo, &fresh_graph).expect("import should succeed");
-        assert_eq!(meta.node_count, 3);
-        assert_eq!(meta.edge_count, 5);
-        assert_eq!(meta.compression_level, ZSTD_BEST);
-
-        assert_eq!(fs::read(fresh_graph.join("a.bin")).unwrap(), b"payload-a");
-        assert_eq!(
-            fs::read(fresh_graph.join("sub/b.bin")).unwrap(),
-            b"payload-b"
-        );
-    }
-
-    #[test]
-    fn gitattributes_entry_is_created_once_and_not_duplicated() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo = tmp.path().join("repo");
-        let graph = tmp.path().join("out/graph");
-        fs::create_dir_all(&graph).expect("mk graph");
-        fs::write(graph.join("x.bin"), b"x").expect("write x");
-        fs::create_dir_all(&repo).expect("mk repo");
-
-        export_artifact(&graph, &repo, 1, 0, CompressionTier::Fast).expect("first export");
-        export_artifact(&graph, &repo, 1, 0, CompressionTier::Fast).expect("second export");
-
-        let ga = fs::read_to_string(repo.join(".gitattributes")).expect("read gitattributes");
-        let entry = format!("{ARTIFACT_DIR}/{ARTIFACT_FILE} binary merge=ours");
-        let count = ga.lines().filter(|l| l.trim() == entry).count();
-        assert_eq!(count, 1, "entry must appear exactly once, got:\n{ga}");
-    }
-
-    #[test]
-    fn artifact_exists_is_false_without_export() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        assert!(!artifact_exists(tmp.path()));
-    }
-
-    #[test]
-    fn import_refuses_newer_schema() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo = tmp.path().join("repo");
-        let graph = tmp.path().join("out/graph");
-        fs::create_dir_all(&graph).expect("mk graph");
-        fs::write(graph.join("x.bin"), b"x").expect("write x");
-        fs::create_dir_all(&repo).expect("mk repo");
-        export_artifact(&graph, &repo, 1, 1, CompressionTier::Fast).expect("export");
-
-        // Rewrite the sidecar with a future schema version.
-        let mut meta = read_meta(&repo).expect("read meta");
-        meta.schema_version = SCHEMA_VERSION + 1;
-        write_meta(&repo, &meta).expect("rewrite meta");
-        assert!(!artifact_exists(&repo));
-
-        let err = import_artifact(&repo, &tmp.path().join("fresh/graph"))
-            .expect_err("must refuse newer schema");
-        assert!(err.contains("newer than supported"), "got: {err}");
-    }
-}
+#[path = "artifact_tests.rs"]
+mod tests;

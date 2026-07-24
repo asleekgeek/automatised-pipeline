@@ -1,4 +1,4 @@
-// artifact_bootstrap — issue #55 end-to-end gate.
+// artifact_bootstrap — issue #55 end-to-end gate (library level).
 //
 // External done-criteria (zetetic gate): the artifact is only "done" if a
 // teammate who never cold-indexed gets the SAME graph. This test:
@@ -8,13 +8,18 @@
 //   4. bootstrap-imports the artifact into that fresh output dir,
 //   5. asserts the graph query results match the original, query-for-query.
 //
-// It also asserts the sidecar carries the recorded node/edge counts and that
-// a `.gitattributes merge=ours` entry was created on export.
+// It also asserts the git-sha staleness computation (`artifact_staleness`) that
+// the handler's refuse/accept contract is built on: fresh right after export,
+// and one commit behind after a subsequent commit. The refuse-and-reindex and
+// accept_stale RESPONSE behaviors (cases b/c) are exercised at the handler seam
+// in `src/main.rs` (module `artifact_bootstrap_tests`), which owns that logic.
 
-use ai_architect_mcp::artifact::{self, CompressionTier};
+use ai_architect_mcp::artifact;
 use ai_architect_mcp::graph_store::GraphStore;
 use ai_architect_mcp::indexer;
 use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 const FIXTURE_MAIN: &str = r#"
 fn main() {
@@ -46,6 +51,32 @@ pub trait Processor {
 }
 "#;
 
+fn git(repo: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn init_git_repo(repo: &Path) {
+    git(repo, &["init", "-q"]);
+    git(repo, &["config", "user.email", "test@ap.dev"]);
+    git(repo, &["config", "user.name", "AP Test"]);
+}
+
+fn commit_all(repo: &Path, msg: &str) {
+    git(repo, &["add", "-A"]);
+    git(repo, &["commit", "-q", "--no-gpg-sign", "-m", msg]);
+}
+
 /// Runs a fixed battery of read queries and returns their results as strings,
 /// so two graphs can be compared query-for-query.
 fn snapshot_queries(store: &GraphStore) -> Vec<(String, Vec<Vec<String>>)> {
@@ -75,11 +106,13 @@ fn fresh_clone_bootstrap_matches_original_graph() {
         .tempdir()
         .expect("create temp dir");
 
-    // -- 1. Fixture repo + original index -----------------------------------
+    // -- 1. Fixture git repo + original index -------------------------------
     let repo = tmp.path().join("repo");
     fs::create_dir_all(repo.join("src")).expect("mk repo/src");
     fs::write(repo.join("src/main.rs"), FIXTURE_MAIN).expect("write main.rs");
     fs::write(repo.join("src/models.rs"), FIXTURE_MODELS).expect("write models.rs");
+    init_git_repo(&repo);
+    commit_all(&repo, "initial");
 
     let original_out = tmp.path().join("original_out");
     let original_graph = original_out.join("graph");
@@ -95,25 +128,27 @@ fn fresh_clone_bootstrap_matches_original_graph() {
     };
 
     // -- 2. Export the artifact into the repo tree --------------------------
-    let stats = artifact::export_artifact(
-        &original_graph,
-        &repo,
-        result.node_count,
-        result.edge_count,
-        CompressionTier::Best,
-    )
-    .expect("export should succeed");
+    let stats =
+        artifact::export_artifact(&original_graph, &repo, result.node_count, result.edge_count)
+            .expect("export should succeed");
     assert!(stats.compressed_bytes > 0, "artifact must be non-empty");
     assert!(
         artifact::artifact_exists(&repo),
         "artifact must be detectable after export"
     );
-    // merge=ours entry present so the committed blob never conflicts.
     let gitattrs =
         fs::read_to_string(repo.join(".gitattributes")).expect("gitattributes must exist");
     assert!(
         gitattrs.contains(".automatised-pipeline/graph.zst binary merge=ours"),
         "gitattributes must carry the merge=ours entry, got:\n{gitattrs}"
+    );
+
+    // -- Staleness computation: fresh right after export --------------------
+    let meta = artifact::read_artifact_meta(&repo).expect("read sidecar");
+    assert!(!meta.commit.is_empty(), "sidecar must record the git sha");
+    assert!(
+        artifact::artifact_staleness(&repo, &meta.commit).is_none(),
+        "artifact must be fresh immediately after export"
     );
 
     // -- 3. Simulate a fresh clone: new output dir, NO local graph ----------
@@ -126,13 +161,16 @@ fn fresh_clone_bootstrap_matches_original_graph() {
     );
 
     // -- 4. Bootstrap-import ------------------------------------------------
-    let meta = artifact::import_artifact(&repo, &fresh_graph).expect("bootstrap import");
-    assert_eq!(meta.node_count, result.node_count, "sidecar node count");
-    assert_eq!(meta.edge_count, result.edge_count, "sidecar edge count");
-    assert!(
-        fresh_graph.exists(),
-        "import must materialise the graph at the fresh path"
+    let imported_meta = artifact::import_artifact(&repo, &fresh_graph).expect("bootstrap import");
+    assert_eq!(
+        imported_meta.node_count, result.node_count,
+        "sidecar node count"
     );
+    assert_eq!(
+        imported_meta.edge_count, result.edge_count,
+        "sidecar edge count"
+    );
+    assert!(fresh_graph.exists(), "import must materialise the graph");
 
     // -- 5. Query results must match the original, query-for-query ----------
     let fresh_snapshot = {
@@ -142,5 +180,17 @@ fn fresh_clone_bootstrap_matches_original_graph() {
     assert_eq!(
         fresh_snapshot, original_snapshot,
         "bootstrapped graph must return identical results to the cold-indexed original"
+    );
+
+    // -- Staleness computation: one commit behind after a new commit --------
+    fs::write(repo.join("src/extra.rs"), "pub fn added() {}\n").expect("write extra.rs");
+    commit_all(&repo, "second");
+    let stale = artifact::artifact_staleness(&repo, &meta.commit)
+        .expect("artifact must be stale after a new commit");
+    assert_eq!(stale.artifact_sha, meta.commit);
+    assert_eq!(
+        stale.commits_behind,
+        Some(1),
+        "must report exactly one commit behind HEAD"
     );
 }

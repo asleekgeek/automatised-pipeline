@@ -258,7 +258,12 @@ fn index_codebase_schema() -> Value {
                 "bootstrap": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Issue #55 — when there is no local graph at <output_dir>/graph but a committed artifact exists at <path>/.automatised-pipeline/graph.zst, import (decompress) that snapshot instead of cold-indexing, so a fresh clone skips the full index. If the import fails it falls back to a full index explicitly (logged to stderr)."
+                    "description": "Issue #55 — when there is no local graph at <output_dir>/graph but a committed artifact exists at <path>/.automatised-pipeline/graph.zst, import (decompress) that snapshot instead of cold-indexing, so a fresh clone skips the full index. Staleness is checked first: if the artifact's git sha differs from the repo's current HEAD, the DEFAULT is to REFUSE the import and run a full index (a loud stderr line reports how many commits behind the artifact is), and the response carries a 'bootstrap_skipped' object. Pass accept_stale=true to import a stale snapshot anyway. If the import fails it falls back to a full index explicitly (logged)."
+                },
+                "accept_stale": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Issue #55 — only meaningful with bootstrap=true. When the committed artifact's git sha differs from the repo's current HEAD, import it anyway instead of refusing. The tool response then carries a 'stale_artifact' object {artifact_sha, head_sha, commits_behind} so the caller can never mistake the stale graph for a fresh one. Use when the small staleness is acceptable and skipping the full index is worth it."
                 }
             }
         }

@@ -1,0 +1,97 @@
+// Unit tests for `artifact` (issue #55). Split into its own file so
+// `src/artifact.rs` stays under the 500-line limit (coding-standards §4.1);
+// included as a private child module via `#[path]`, so `super::*` still reaches
+// the module's private items (`read_meta`, `write_meta`, `is_hex_sha`, …).
+
+use super::*;
+
+#[test]
+fn export_import_round_trips_a_directory_graph() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("repo");
+    let out = tmp.path().join("out");
+    let graph = out.join("graph");
+    fs::create_dir_all(graph.join("sub")).expect("mk graph");
+    fs::write(graph.join("a.bin"), b"payload-a").expect("write a");
+    fs::write(graph.join("sub/b.bin"), b"payload-b").expect("write b");
+    fs::create_dir_all(&repo).expect("mk repo");
+
+    let stats = export_artifact(&graph, &repo, 3, 5).expect("export should succeed");
+    assert!(stats.compressed_bytes > 0);
+    assert!(artifact_exists(&repo));
+
+    // Simulate a fresh clone: fresh output dir, no local graph.
+    let fresh = tmp.path().join("fresh");
+    let fresh_graph = fresh.join("graph");
+    let meta = import_artifact(&repo, &fresh_graph).expect("import should succeed");
+    assert_eq!(meta.node_count, 3);
+    assert_eq!(meta.edge_count, 5);
+    assert_eq!(meta.compression_level, ZSTD_LEVEL);
+
+    assert_eq!(fs::read(fresh_graph.join("a.bin")).unwrap(), b"payload-a");
+    assert_eq!(
+        fs::read(fresh_graph.join("sub/b.bin")).unwrap(),
+        b"payload-b"
+    );
+}
+
+#[test]
+fn gitattributes_entry_is_created_once_and_not_duplicated() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("repo");
+    let graph = tmp.path().join("out/graph");
+    fs::create_dir_all(&graph).expect("mk graph");
+    fs::write(graph.join("x.bin"), b"x").expect("write x");
+    fs::create_dir_all(&repo).expect("mk repo");
+
+    export_artifact(&graph, &repo, 1, 0).expect("first export");
+    export_artifact(&graph, &repo, 1, 0).expect("second export");
+
+    let ga = fs::read_to_string(repo.join(".gitattributes")).expect("read gitattributes");
+    let entry = format!("{ARTIFACT_DIR}/{ARTIFACT_FILE} binary merge=ours");
+    let count = ga.lines().filter(|l| l.trim() == entry).count();
+    assert_eq!(count, 1, "entry must appear exactly once, got:\n{ga}");
+}
+
+#[test]
+fn artifact_exists_is_false_without_export() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    assert!(!artifact_exists(tmp.path()));
+}
+
+#[test]
+fn import_refuses_newer_schema() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo = tmp.path().join("repo");
+    let graph = tmp.path().join("out/graph");
+    fs::create_dir_all(&graph).expect("mk graph");
+    fs::write(graph.join("x.bin"), b"x").expect("write x");
+    fs::create_dir_all(&repo).expect("mk repo");
+    export_artifact(&graph, &repo, 1, 1).expect("export");
+
+    // Rewrite the sidecar with a future schema version.
+    let mut meta = read_meta(&repo).expect("read meta");
+    meta.schema_version = SCHEMA_VERSION + 1;
+    write_meta(&repo, &meta).expect("rewrite meta");
+    assert!(!artifact_exists(&repo));
+
+    let err = import_artifact(&repo, &tmp.path().join("fresh/graph"))
+        .expect_err("must refuse newer schema");
+    assert!(err.contains("newer than supported"), "got: {err}");
+}
+
+#[test]
+fn staleness_is_none_outside_a_git_repo() {
+    // No git working tree → HEAD unavailable → staleness is not meaningful.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    assert!(artifact_staleness(tmp.path(), "").is_none());
+    assert!(artifact_staleness(tmp.path(), "deadbeef").is_none());
+}
+
+#[test]
+fn is_hex_sha_guards_arg_injection() {
+    assert!(is_hex_sha("0a1b2c3d4e5f"));
+    assert!(!is_hex_sha("")); // absent provenance
+    assert!(!is_hex_sha("--all")); // git flag smuggling attempt
+    assert!(!is_hex_sha("HEAD~1")); // non-hex revision expression
+}
