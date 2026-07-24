@@ -32,7 +32,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Unit tests (gate logic, all arms incl. offline)
+        run: python3 -m unittest scripts/tests/test_check_marketplace_pins.py -v 2>&1 | tail -5
       - name: Check marketplace pins
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/check_marketplace_pins.py
+
+  canonical-drift:
+    name: byte-identical with canonical copy (cdeust/Cortex)
+    # Cron-only: drift is an inaction failure; PR runs must not depend on
+    # the sibling repo's merge state.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Diff against canonical
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/cdeust/Cortex/main/scripts/check_marketplace_pins.py -o /tmp/canonical.py
+          diff -u /tmp/canonical.py scripts/check_marketplace_pins.py
