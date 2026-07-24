@@ -249,6 +249,16 @@ fn index_codebase_schema() -> Value {
                     "type": "boolean",
                     "default": false,
                     "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
+                },
+                "export_artifact": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Issue #55 — after a successful index, write a team-shared compressed graph snapshot to <path>/.automatised-pipeline/graph.zst (+ graph.meta.json sidecar with git sha, tool version, node/edge counts) and a .gitattributes 'merge=ours' entry so the committed blob never produces merge conflicts. Uses the best-ratio (zstd-9) tier. Export failure is logged but does not fail the index."
+                },
+                "bootstrap": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Issue #55 — when there is no local graph at <output_dir>/graph but a committed artifact exists at <path>/.automatised-pipeline/graph.zst, import (decompress) that snapshot instead of cold-indexing, so a fresh clone skips the full index. If the import fails it falls back to a full index explicitly (logged to stderr)."
                 }
             }
         }

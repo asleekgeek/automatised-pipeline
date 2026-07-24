@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Team-shared graph artifact (issue #55).** `index_codebase` gains two
+  optional booleans (both default `false`, so existing behavior and the
+  `core`/`core8` profiles are unchanged):
+  - `export_artifact` — after a successful index, write a `tar → zstd`
+    snapshot of the graph to `<path>/.automatised-pipeline/graph.zst` plus a
+    `graph.meta.json` sidecar (schema version, git sha, tool version,
+    node/edge counts), and append a `.gitattributes`
+    `.automatised-pipeline/graph.zst binary merge=ours` entry so the committed
+    blob never produces merge conflicts. Best-ratio (zstd-9) tier. Export
+    failure is logged but does not fail the index.
+  - `bootstrap` — when there is no local graph but a committed artifact is
+    present, decompress the snapshot instead of cold-indexing so a fresh clone
+    skips the full index. Import failure falls back to a full index explicitly
+    (logged), never a silent partial graph.
+  - New `src/artifact.rs` (infrastructure module; std + `tar` + `zstd` +
+    `serde` only, no `lbug`/`GraphStore` coupling). Decompression is capped at
+    64 GiB and `tar` unpack rejects `..`/absolute paths, so a malicious
+    committed artifact cannot path-traverse or exhaust disk on bootstrap.
+    Reference shape: DeusData/codebase-memory-mcp `src/pipeline/artifact.c`.
+  - Integration test `tests/artifact_bootstrap.rs`: index a fixture → export →
+    fresh-clone (new output dir, no local index) → bootstrap-import → assert
+    graph query results match the original query-for-query.
+
 ## [0.8.2] — First complete four-platform release (Windows asset ships)
 
 A CI-only patch release (PR #52). No library or server code changes.

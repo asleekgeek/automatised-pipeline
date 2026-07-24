@@ -18,6 +18,7 @@
 // Reference implementation (to read, not copy): /Users/cdeust/Developments/ai-architect
 
 mod ambiguity_policy;
+mod artifact;
 mod bridge;
 mod call_evidence;
 mod clustering;
@@ -488,6 +489,16 @@ fn parse_dependency_scope(args: &Map<String, Value>) -> Result<indexer::Dependen
             Some(true) => indexer::DependencyScope::Full,
             Some(false) | None => indexer::DependencyScope::None,
         }),
+    }
+}
+
+/// Parses an optional boolean argument, defaulting when absent and rejecting a
+/// present-but-non-boolean value (rather than silently coercing it).
+fn parse_bool_arg(args: &Map<String, Value>, key: &str, default: bool) -> Result<bool, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(other) => Err(format!("field '{key}' must be a boolean, got {other}")),
     }
 }
 
@@ -1911,6 +1922,8 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         .ok_or("missing required field 'output_dir'")?;
     let lang_filter = parse_language_filter(args)?;
     let dependency_scope = parse_dependency_scope(args)?;
+    let want_export = parse_bool_arg(args, "export_artifact", false)?;
+    let want_bootstrap = parse_bool_arg(args, "bootstrap", false)?;
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -1922,6 +1935,37 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     // source: H4 fix — validate the derived path ends in `/graph` and is not
     // a forbidden system root before any destructive op.
     validate_graph_path_safe(&graph_dir)?;
+
+    // Issue #55 bootstrap: when the caller opts in AND there is no local graph
+    // yet AND a committed artifact is present, import the snapshot instead of
+    // cold-indexing. A bootstrap failure is LOUD (logged to stderr) and falls
+    // back to a full index EXPLICITLY — never a silent partial graph.
+    if want_bootstrap && !graph_dir.exists() && artifact::artifact_exists(&codebase) {
+        match artifact::import_artifact(&codebase, &graph_dir) {
+            Ok(meta) => {
+                write_graph_meta(&output_dir, &codebase);
+                let (node_count, edge_count) = graph_counts(&graph_dir);
+                return Ok(json!({
+                    "stage": 3,
+                    "status": "ok",
+                    "tool": "index_codebase",
+                    "source": "artifact_bootstrap",
+                    "graph_path": graph_dir.to_string_lossy(),
+                    "node_count": node_count,
+                    "edge_count": edge_count,
+                    "artifact_commit": meta.commit,
+                    "artifact_tool_version": meta.tool_version,
+                }));
+            }
+            Err(e) => {
+                eprintln!(
+                    "[ap] artifact bootstrap failed ({e}); falling back to full index of {}",
+                    codebase.display()
+                );
+            }
+        }
+    }
+
     // lbug creates the database itself; if a stale graph artifact exists from a
     // prior run, remove it so lbug can initialise cleanly.
     if graph_dir.exists() {
@@ -1938,7 +1982,10 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     // Record the absolute source root beside the graph (relative file paths
     // stay in the graph; the root lets consumers reconstruct absolute paths).
     write_graph_meta(&output_dir, &codebase);
-    Ok(json!({
+
+    // Issue #55: an explicit index is the best-ratio (zstd-9) export tier.
+    // Failure to export is LOUD but non-fatal — the index itself succeeded.
+    let mut response = json!({
         "stage": 3,
         "status": "ok",
         "tool": "index_codebase",
@@ -1947,7 +1994,41 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         "edge_count": result.edge_count,
         "files_indexed": result.files_indexed,
         "elapsed_ms": result.elapsed_ms,
-    }))
+    });
+    if want_export {
+        match artifact::export_artifact(
+            &graph_dir,
+            &codebase,
+            result.node_count,
+            result.edge_count,
+            artifact::CompressionTier::Best,
+        ) {
+            Ok(stats) => {
+                response["artifact_path"] = json!(stats.artifact_path.to_string_lossy());
+                response["artifact_compressed_bytes"] = json!(stats.compressed_bytes);
+                response["artifact_original_bytes"] = json!(stats.original_bytes);
+            }
+            Err(e) => {
+                eprintln!("[ap] artifact export failed (index succeeded): {e}");
+                response["artifact_error"] = json!(e);
+            }
+        }
+    }
+    Ok(response)
+}
+
+/// Reads node/edge counts from an on-disk graph. Best-effort: an open/query
+/// failure yields `(0, 0)` rather than aborting the bootstrap response — the
+/// counts are informational and the graph is already in place.
+fn graph_counts(graph_dir: &Path) -> (u64, u64) {
+    match graph_store::GraphStore::open_or_create(graph_dir) {
+        Ok(store) => {
+            let n = store.node_count().unwrap_or(0);
+            let e = store.edge_count().unwrap_or(0);
+            (n, e)
+        }
+        Err(_) => (0, 0),
+    }
 }
 
 // ---------------------------------------------------------------------------

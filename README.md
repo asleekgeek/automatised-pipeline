@@ -271,6 +271,27 @@ Each tool has a JSON Schema enforced at the wire, reason codes on error (no cryp
 
 > Agent installs rarely need all 24 — the `core` profile (see [Tool profiles](#tool-profiles)) registers just the 8 code-intelligence tools.
 
+### Team-shared graph artifact (optional)
+
+`index_codebase` can commit a compressed snapshot of the graph so teammates who
+clone the repo never have to cold-index it.
+
+- `index_codebase` with `"export_artifact": true` writes, after a successful
+  index, a `tar → zstd` snapshot to `<path>/.automatised-pipeline/graph.zst`
+  plus a `graph.meta.json` sidecar (schema version, git sha, tool version,
+  node/edge counts). It also appends a `.gitattributes` entry
+  (`.automatised-pipeline/graph.zst binary merge=ours`) so the committed binary
+  never produces merge conflicts across branches. Commit both files.
+- `index_codebase` with `"bootstrap": true` — when there is no local graph at
+  `<output_dir>/graph` but a committed artifact is present — decompresses the
+  snapshot instead of cold-indexing. If the import fails it falls back to a full
+  index explicitly (the reason is logged to stderr), never a silent partial
+  graph.
+
+Both flags default to `false`, so existing behavior and the `core`/`core8`
+profiles are unchanged. The artifact is entirely optional: without it,
+`index_codebase` cold-indexes exactly as before.
+
 ---
 
 ## Architecture
