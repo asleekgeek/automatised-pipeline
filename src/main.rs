@@ -5151,7 +5151,9 @@ mod artifact_bootstrap_tests {
                     json!(1),
                     "accepted-stale response must carry the staleness report"
                 );
-                assert!(stale["artifact_sha"].as_str().is_some_and(|s| !s.is_empty()));
+                assert!(stale["artifact_sha"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty()));
                 assert!(stale["head_sha"].as_str().is_some_and(|s| !s.is_empty()));
             }
             other => panic!("expected Imported(resp), got {other:?}"),

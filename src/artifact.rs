@@ -196,8 +196,8 @@ fn write_archive(graph_path: &Path, dest: &Path, level: i32) -> Result<u64, Stri
     let name = graph_path
         .file_name()
         .ok_or_else(|| "artifact export: graph path has no final component".to_string())?;
-    let file =
-        File::create(dest).map_err(|e| format!("artifact export: create {}: {e}", dest.display()))?;
+    let file = File::create(dest)
+        .map_err(|e| format!("artifact export: create {}: {e}", dest.display()))?;
     let encoder =
         zstd::Encoder::new(file, level).map_err(|e| format!("artifact export: zstd init: {e}"))?;
     let mut builder = tar::Builder::new(encoder);
@@ -324,7 +324,10 @@ fn git_commits_between(repo_path: &Path, from: &str, to: &str) -> Option<u64> {
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok()
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u64>()
+        .ok()
 }
 
 /// True for a plausible git object sha (non-empty, all ASCII hex). Guards the
@@ -365,8 +368,7 @@ fn write_meta(repo_path: &Path, meta: &ArtifactMeta) -> Result<(), String> {
 
 fn read_meta(repo_path: &Path) -> Result<ArtifactMeta, String> {
     let path = meta_file(repo_path);
-    let bytes =
-        fs::read(&path).map_err(|e| format!("artifact: read {}: {e}", path.display()))?;
+    let bytes = fs::read(&path).map_err(|e| format!("artifact: read {}: {e}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("artifact: parse sidecar: {e}"))
 }
 
