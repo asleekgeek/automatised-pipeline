@@ -249,6 +249,21 @@ fn index_codebase_schema() -> Value {
                     "type": "boolean",
                     "default": false,
                     "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
+                },
+                "export_artifact": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Issue #55 — after a successful index, write a team-shared compressed graph snapshot to <path>/.automatised-pipeline/graph.zst (+ graph.meta.json sidecar with git sha, tool version, node/edge counts) and a .gitattributes 'merge=ours' entry so the committed blob never produces merge conflicts. Uses the best-ratio (zstd-9) tier. Export failure is logged but does not fail the index."
+                },
+                "bootstrap": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Issue #55 — when there is no local graph at <output_dir>/graph but a committed artifact exists at <path>/.automatised-pipeline/graph.zst, import (decompress) that snapshot instead of cold-indexing, so a fresh clone skips the full index. Staleness is checked first: if the artifact's git sha differs from the repo's current HEAD, the DEFAULT is to REFUSE the import and run a full index (a loud stderr line reports how many commits behind the artifact is), and the response carries a 'bootstrap_skipped' object. Pass accept_stale=true to import a stale snapshot anyway. If the import fails it falls back to a full index explicitly (logged)."
+                },
+                "accept_stale": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Issue #55 — only meaningful with bootstrap=true. When the committed artifact's git sha differs from the repo's current HEAD, import it anyway instead of refusing. The tool response then carries a 'stale_artifact' object {artifact_sha, head_sha, commits_behind} so the caller can never mistake the stale graph for a fresh one. Use when the small staleness is acceptable and skipping the full index is worth it."
                 }
             }
         }

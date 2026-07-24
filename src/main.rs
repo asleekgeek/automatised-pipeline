@@ -18,6 +18,7 @@
 // Reference implementation (to read, not copy): /Users/cdeust/Developments/ai-architect
 
 mod ambiguity_policy;
+mod artifact;
 mod bridge;
 mod call_evidence;
 mod clustering;
@@ -488,6 +489,16 @@ fn parse_dependency_scope(args: &Map<String, Value>) -> Result<indexer::Dependen
             Some(true) => indexer::DependencyScope::Full,
             Some(false) | None => indexer::DependencyScope::None,
         }),
+    }
+}
+
+/// Parses an optional boolean argument, defaulting when absent and rejecting a
+/// present-but-non-boolean value (rather than silently coercing it).
+fn parse_bool_arg(args: &Map<String, Value>, key: &str, default: bool) -> Result<bool, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(other) => Err(format!("field '{key}' must be a boolean, got {other}")),
     }
 }
 
@@ -1911,6 +1922,9 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         .ok_or("missing required field 'output_dir'")?;
     let lang_filter = parse_language_filter(args)?;
     let dependency_scope = parse_dependency_scope(args)?;
+    let want_export = parse_bool_arg(args, "export_artifact", false)?;
+    let want_bootstrap = parse_bool_arg(args, "bootstrap", false)?;
+    let accept_stale = parse_bool_arg(args, "accept_stale", false)?;
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -1922,6 +1936,21 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     // source: H4 fix — validate the derived path ends in `/graph` and is not
     // a forbidden system root before any destructive op.
     validate_graph_path_safe(&graph_dir)?;
+
+    // Issue #55 bootstrap: when the caller opts in AND there is no local graph
+    // yet, try importing the committed snapshot instead of cold-indexing. The
+    // staleness contract (fresh → import; stale → refuse+reindex unless
+    // accept_stale; import failure → reindex) lives in `attempt_bootstrap`. Any
+    // path that does NOT import falls through to the full index below, carrying
+    // an assertable `bootstrap_skipped` note when a stale artifact was refused.
+    let mut bootstrap_skipped: Option<Value> = None;
+    if want_bootstrap && !graph_dir.exists() {
+        match attempt_bootstrap(&codebase, &output_dir, &graph_dir, accept_stale) {
+            BootstrapOutcome::Imported(resp) => return Ok(resp),
+            BootstrapOutcome::Reindex(note) => bootstrap_skipped = note,
+        }
+    }
+
     // lbug creates the database itself; if a stale graph artifact exists from a
     // prior run, remove it so lbug can initialise cleanly.
     if graph_dir.exists() {
@@ -1938,7 +1967,10 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     // Record the absolute source root beside the graph (relative file paths
     // stay in the graph; the root lets consumers reconstruct absolute paths).
     write_graph_meta(&output_dir, &codebase);
-    Ok(json!({
+
+    // Issue #55: an explicit index is the single (best-ratio, zstd-9) export
+    // tier. Failure to export is LOUD but non-fatal — the index itself succeeded.
+    let mut response = json!({
         "stage": 3,
         "status": "ok",
         "tool": "index_codebase",
@@ -1947,7 +1979,133 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         "edge_count": result.edge_count,
         "files_indexed": result.files_indexed,
         "elapsed_ms": result.elapsed_ms,
-    }))
+    });
+    if let Some(note) = bootstrap_skipped {
+        response["bootstrap_skipped"] = note;
+    }
+    if want_export {
+        match artifact::export_artifact(&graph_dir, &codebase, result.node_count, result.edge_count)
+        {
+            Ok(stats) => {
+                response["artifact_path"] = json!(stats.artifact_path.to_string_lossy());
+                response["artifact_compressed_bytes"] = json!(stats.compressed_bytes);
+                response["artifact_original_bytes"] = json!(stats.original_bytes);
+            }
+            Err(e) => {
+                eprintln!("[ap] artifact export failed (index succeeded): {e}");
+                response["artifact_error"] = json!(e);
+            }
+        }
+    }
+    Ok(response)
+}
+
+/// Outcome of a bootstrap attempt (issue #55 staleness contract).
+#[derive(Debug)]
+enum BootstrapOutcome {
+    /// The snapshot was imported; this is the finished tool response.
+    Imported(Value),
+    /// Do a full index instead. Carries an assertable `bootstrap_skipped` note
+    /// when the reason was a refused stale artifact (`None` otherwise).
+    Reindex(Option<Value>),
+}
+
+/// Decides whether to import the committed artifact or cold-index. Never hard-
+/// errors: every non-import path logs its reason and returns `Reindex` so the
+/// caller falls back to a full index EXPLICITLY (§13 — no silent path).
+///
+/// Contract: no local artifact → reindex; unreadable sidecar → reindex; fresh
+/// (sha == HEAD, or repo is not git) → import; stale + `accept_stale` → import
+/// and attach a `stale_artifact` report; stale without `accept_stale` → refuse,
+/// log staleness, reindex with a `bootstrap_skipped` note.
+fn attempt_bootstrap(
+    codebase: &Path,
+    output_dir: &Path,
+    graph_dir: &Path,
+    accept_stale: bool,
+) -> BootstrapOutcome {
+    if !artifact::artifact_exists(codebase) {
+        return BootstrapOutcome::Reindex(None);
+    }
+    let meta = match artifact::read_artifact_meta(codebase) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[ap] artifact sidecar unreadable ({e}); running a full index");
+            return BootstrapOutcome::Reindex(None);
+        }
+    };
+    match artifact::artifact_staleness(codebase, &meta.commit) {
+        None => bootstrap_import(codebase, output_dir, graph_dir, &meta, None),
+        Some(info) if accept_stale => {
+            bootstrap_import(codebase, output_dir, graph_dir, &meta, Some(info))
+        }
+        Some(info) => {
+            let behind = match info.commits_behind {
+                Some(n) => n.to_string(),
+                None => "unknown (artifact sha not in repo history)".to_string(),
+            };
+            eprintln!(
+                "[ap] committed artifact is STALE — {behind} commit(s) behind HEAD \
+                 (artifact_sha={} head_sha={}); running a full index instead. \
+                 Pass accept_stale=true to import the stale snapshot anyway.",
+                info.artifact_sha, info.head_sha
+            );
+            let mut note = serde_json::to_value(&info).unwrap_or_else(|_| json!({}));
+            note["reason"] = json!("stale_artifact");
+            BootstrapOutcome::Reindex(Some(note))
+        }
+    }
+}
+
+/// Imports the snapshot into `graph_dir` and builds the bootstrap response.
+/// On import failure, logs loudly and returns `Reindex(None)` (fall back to a
+/// full index). When `stale` is set, the response carries a `stale_artifact`
+/// object so a caller can never mistake an accepted-stale graph for a fresh one.
+fn bootstrap_import(
+    codebase: &Path,
+    output_dir: &Path,
+    graph_dir: &Path,
+    meta: &artifact::ArtifactMeta,
+    stale: Option<artifact::StaleInfo>,
+) -> BootstrapOutcome {
+    if let Err(e) = artifact::import_artifact(codebase, graph_dir) {
+        eprintln!(
+            "[ap] artifact bootstrap failed ({e}); falling back to full index of {}",
+            codebase.display()
+        );
+        return BootstrapOutcome::Reindex(None);
+    }
+    write_graph_meta(output_dir, codebase);
+    let (node_count, edge_count) = graph_counts(graph_dir);
+    let mut resp = json!({
+        "stage": 3,
+        "status": "ok",
+        "tool": "index_codebase",
+        "source": "artifact_bootstrap",
+        "graph_path": graph_dir.to_string_lossy(),
+        "node_count": node_count,
+        "edge_count": edge_count,
+        "artifact_commit": meta.commit,
+        "artifact_tool_version": meta.tool_version,
+    });
+    if let Some(info) = stale {
+        resp["stale_artifact"] = serde_json::to_value(&info).unwrap_or_else(|_| json!({}));
+    }
+    BootstrapOutcome::Imported(resp)
+}
+
+/// Reads node/edge counts from an on-disk graph. Best-effort: an open/query
+/// failure yields `(0, 0)` rather than aborting the bootstrap response — the
+/// counts are informational and the graph is already in place.
+fn graph_counts(graph_dir: &Path) -> (u64, u64) {
+    match graph_store::GraphStore::open_or_create(graph_dir) {
+        Ok(store) => {
+            let n = store.node_count().unwrap_or(0);
+            let e = store.edge_count().unwrap_or(0);
+            (n, e)
+        }
+        Err(_) => (0, 0),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4889,5 +5047,120 @@ fn main() {
             Ok(req) => handle_request(req, profile),
             Err(e) => eprintln!("[automatised-pipeline] parse error: {}", e),
         }
+    }
+}
+
+#[cfg(test)]
+mod artifact_bootstrap_tests {
+    //! Issue #55 staleness contract at the handler seam (`attempt_bootstrap`):
+    //!   (b) stale artifact, default policy → REFUSE + reindex, with an
+    //!       assertable `bootstrap_skipped` note carrying commits_behind;
+    //!   (c) stale artifact + accept_stale → import anyway, response carries a
+    //!       `stale_artifact` {artifact_sha, head_sha, commits_behind} report.
+    //! Each uses a real git fixture, a real index, and a real export, so the
+    //! whole path (git sha compare → rev-list count → JSON shaping) is covered.
+    use super::*;
+    use std::path::Path;
+    use std::process::Command;
+
+    const SRC: &str = "fn main() { helper(); }\nfn helper() -> i32 { 1 }\n";
+
+    fn git(repo: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Builds a git fixture repo, indexes it, exports the artifact, then makes
+    /// one further commit so the committed artifact is exactly 1 commit stale.
+    /// Returns (repo, fresh_output_dir, fresh_graph_dir).
+    fn stale_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix("artifact_stale_")
+            .tempdir()
+            .expect("tempdir");
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(repo.join("src")).expect("mk src");
+        fs::write(repo.join("src/main.rs"), SRC).expect("write src");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "t@ap.dev"]);
+        git(&repo, &["config", "user.name", "AP"]);
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "--no-gpg-sign", "-m", "initial"]);
+
+        let out1 = tmp.path().join("out1");
+        let graph1 = out1.join("graph");
+        fs::create_dir_all(&out1).expect("mk out1");
+        let result = indexer::index_codebase(&repo.join("src"), &graph1).expect("index");
+        artifact::export_artifact(&graph1, &repo, result.node_count, result.edge_count)
+            .expect("export");
+
+        // Move HEAD forward by one commit → artifact is now 1 commit stale.
+        fs::write(repo.join("src/extra.rs"), "pub fn added() {}\n").expect("write extra");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "--no-gpg-sign", "-m", "second"]);
+
+        let fresh_out = tmp.path().join("fresh");
+        let fresh_graph = fresh_out.join("graph");
+        fs::create_dir_all(&fresh_out).expect("mk fresh");
+        (tmp, repo, fresh_out, fresh_graph)
+    }
+
+    #[test]
+    fn stale_artifact_default_refuses_and_reindexes() {
+        let (_tmp, repo, fresh_out, fresh_graph) = stale_fixture();
+
+        let outcome = attempt_bootstrap(&repo, &fresh_out, &fresh_graph, false);
+        match outcome {
+            BootstrapOutcome::Reindex(Some(note)) => {
+                assert_eq!(note["reason"], json!("stale_artifact"));
+                assert_eq!(
+                    note["commits_behind"],
+                    json!(1),
+                    "must report exactly one commit behind"
+                );
+                assert!(note["head_sha"].as_str().is_some_and(|s| !s.is_empty()));
+            }
+            other => panic!("expected Reindex(Some(note)), got {other:?}"),
+        }
+        assert!(
+            !fresh_graph.exists(),
+            "default policy must NOT import — no graph is materialised"
+        );
+    }
+
+    #[test]
+    fn accept_stale_imports_and_reports_staleness() {
+        let (_tmp, repo, fresh_out, fresh_graph) = stale_fixture();
+
+        let outcome = attempt_bootstrap(&repo, &fresh_out, &fresh_graph, true);
+        match outcome {
+            BootstrapOutcome::Imported(resp) => {
+                assert_eq!(resp["source"], json!("artifact_bootstrap"));
+                let stale = &resp["stale_artifact"];
+                assert_eq!(
+                    stale["commits_behind"],
+                    json!(1),
+                    "accepted-stale response must carry the staleness report"
+                );
+                assert!(stale["artifact_sha"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty()));
+                assert!(stale["head_sha"].as_str().is_some_and(|s| !s.is_empty()));
+            }
+            other => panic!("expected Imported(resp), got {other:?}"),
+        }
+        assert!(
+            fresh_graph.exists(),
+            "accept_stale must materialise the imported graph"
+        );
     }
 }

@@ -5,6 +5,7 @@
 // convention (src/lib.rs + src/main.rs coexist in the same crate).
 
 pub mod ambiguity_policy;
+pub mod artifact;
 pub mod bridge;
 pub mod call_evidence;
 pub mod clustering;

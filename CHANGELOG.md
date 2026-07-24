@@ -6,6 +6,47 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Team-shared graph artifact (issue #55).** `index_codebase` gains three
+  optional booleans (all default `false`, so existing behavior and the
+  `core`/`core8` profiles are unchanged):
+  - `export_artifact` — after a successful index, write a `tar → zstd`
+    snapshot of the graph to `<path>/.automatised-pipeline/graph.zst` plus a
+    `graph.meta.json` sidecar (schema version, git sha, tool version,
+    node/edge counts), and append a `.gitattributes`
+    `.automatised-pipeline/graph.zst binary merge=ours` entry so the committed
+    blob never produces merge conflicts. Single high-compression tier (zstd-9);
+    the reference's fast zstd-3 tier is deferred until AP grows a file watcher
+    to call it (no caller-less code). Export failure is logged but does not fail
+    the index.
+  - `bootstrap` — when there is no local graph but a committed artifact is
+    present, decompress the snapshot instead of cold-indexing so a fresh clone
+    skips the full index. **Staleness contract:** the artifact's git sha is
+    compared with the repo's current HEAD — (a) equal → import; (b) different →
+    by default REFUSE and run a full index, logging how many commits behind the
+    artifact is (`git rev-list --count`) and returning a `bootstrap_skipped`
+    object; (c) with `accept_stale: true` → import anyway and return a
+    `stale_artifact` `{artifact_sha, head_sha, commits_behind}` report so a
+    stale graph can never be mistaken for a fresh one. Import failure falls back
+    to a full index explicitly (logged), never a silent partial graph.
+  - `accept_stale` — opt in to importing a stale snapshot (see above).
+  - New `src/artifact.rs` (infrastructure module; std + `tar` + `zstd` +
+    `serde` only, no `lbug`/`GraphStore` coupling). Decompression is capped at
+    64 GiB and `tar` unpack rejects `..`/absolute paths, so a malicious
+    committed artifact cannot path-traverse or exhaust disk on bootstrap. The
+    sidecar `commit` field is validated as a hex sha before it reaches
+    `git rev-list` (arg-injection guard). Reference shape:
+    DeusData/codebase-memory-mcp `src/pipeline/artifact.c`.
+  - Integration test `tests/artifact_bootstrap.rs` (fresh-clone import matches
+    the cold index query-for-query; staleness computation) plus handler tests
+    `src/main.rs::artifact_bootstrap_tests` for the refuse-and-reindex (b) and
+    accept-stale (c) paths.
+  - **Known gap (tracked, not silent):** the reference's *incremental fill after
+    import* is blocked on AP having no incremental (changed-files-only) indexer;
+    filed as #62. Until then, a stale artifact triggers a full re-index (or an
+    explicit `accept_stale` import), which is correct but not yet optimal.
+
 ## [0.8.2] — First complete four-platform release (Windows asset ships)
 
 A CI-only patch release (PR #52). No library or server code changes.
