@@ -19,6 +19,7 @@ pub fn tools_list() -> Value {
             abort_verification_schema(),
             index_codebase_schema(),
             index_status_schema(),
+            ingest_traces_schema(),
             query_graph_schema(),
             get_symbol_schema(),
             resolve_graph_schema(),
@@ -216,6 +217,39 @@ fn abort_verification_schema() -> Value {
     })
 }
 
+fn ingest_traces_schema() -> Value {
+    json!({
+        "name": "ingest_traces",
+        "description": "Stage 3 — Fold RUNTIME caller→callee observations (from OTel spans, a profiler, or coverage traces) into the graph (issue #58): static analysis + runtime truth. For each trace it either ANNOTATES the matching static Calls edge with observed_count (the call happened, and static resolution already knew it — now weighted by real traffic), or CREATES an OBSERVED_CALLS edge where static resolution found NO edge (the divergence signal — a call that really happens but the static analyzer missed, e.g. via dynamic dispatch/reflection). Endpoints that are not Function/Method nodes are reported as unresolved. Enterprise uses: dead-code claims backed by production ABSENCE (a symbol with zero observed calls), and hot paths weighted by real traffic. Response: {matched, unmatched_created, unresolved_names} + a capped list of the created divergences and unresolved names. Query the results via query_graph: `MATCH ()-[r:OBSERVED_CALLS_Function_Function]->() RETURN r` for divergences, or Calls_* edges' observed_count for weighted hot paths.",
+        "annotations": { "destructiveHint": true },
+        "inputSchema": {
+            "type": "object",
+            "required": ["graph_path", "traces"],
+            "additionalProperties": false,
+            "properties": {
+                "graph_path": {
+                    "type": "string",
+                    "description": "Absolute path to the graph directory (must be indexed + resolved so Calls edges exist to match against)."
+                },
+                "traces": {
+                    "type": "array",
+                    "description": "Runtime caller→callee observations. Each item is {caller, callee, count?} where caller/callee are qualified names ('file::symbol', e.g. 'src/main.rs::handle') and count is the observed call frequency (default 1). Repeated pairs are summed.",
+                    "items": {
+                        "type": "object",
+                        "required": ["caller", "callee"],
+                        "additionalProperties": false,
+                        "properties": {
+                            "caller": { "type": "string", "description": "Qualified name of the calling Function/Method." },
+                            "callee": { "type": "string", "description": "Qualified name of the called Function/Method." },
+                            "count": { "type": "integer", "minimum": 1, "default": 1, "description": "Observed call count (real traffic weight)." }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
 fn index_status_schema() -> Value {
     json!({
         "name": "index_status",
@@ -289,6 +323,11 @@ fn index_codebase_schema() -> Value {
                     "type": "boolean",
                     "default": false,
                     "description": "Issue #62 — force a from-scratch full rebuild. By DEFAULT index_codebase is incremental: when a prior graph at <output_dir>/graph and its file_manifest.json exist, only the files that changed since the last index are re-parsed (the response carries mode='incremental' and {changed, added, deleted, renamed, unchanged} counts). Pass full=true to bypass that and rebuild everything — required when you change 'language' or 'dependency_scope', which the manifest does not capture."
+                },
+                "cochange": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Issue #58 — after indexing, mine git temporal coupling into FILE_CHANGES_WITH File→File edges (Tornhill-style: files that change together, thresholded at >=3 co-changes and >=0.30 coupling degree over a 1-year window). Default true; self-skips on a non-git tree. A full index re-mines the window; an incremental index EXTENDS the mined aggregates with only the new commits (append-only). The response carries a 'cochange' block {mode, commits_scanned, edges_written}. Query the edges via query_graph: `MATCH (a:File)-[r:FILE_CHANGES_WITH]-(b:File) WHERE r.coupling > 0.5 RETURN a.id, b.id, r.cochange_count`."
                 }
             }
         }
@@ -470,7 +509,7 @@ fn get_processes_schema() -> Value {
 fn get_impact_schema() -> Value {
     json!({
         "name": "get_impact",
-        "description": "Stage 3c — Reverse-dependency blast radius for a symbol. USE THIS INSTEAD OF grepping a name across the repo to find who depends on it: it returns callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements), each a re-queryable {id, qualified_name, label, confidence} handle you traverse further via get_symbol/get_context/query_graph — plus the communities and processes affected. Cursor: 'callers' is the PRIMARY paged list (page via next_offset, stable order); importers/users/implementors are byte-capped SUMMARIES from index 0 (secondary_lists_paged=false) — page one at scale via query_graph with ORDER BY. 'dependents_total' is the true pre-truncation size. TOKEN SURFACE (issue #56): detail='ids' → bare qualified names across all four sections; format='tabular' → rows-as-arrays under one 'columns' header. EPISTEMIC HONESTY: 'epistemic'='lower-bound' when the target is reached via dynamic dispatch or heuristically-resolved edges — real impact may exceed what is shown; 'epistemic_reasons' names the carriers. Prereqs: a resolved graph (cluster_graph adds the community/process fields).",
+        "description": "Stage 3c — Reverse-dependency blast radius for a symbol. USE THIS INSTEAD OF grepping a name across the repo to find who depends on it: it returns callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements), each a re-queryable {id, qualified_name, label, confidence} handle you traverse further via get_symbol/get_context/query_graph — plus the communities and processes affected. Cursor: 'callers' is the PRIMARY paged list (page via next_offset, stable order); importers/users/implementors are byte-capped SUMMARIES from index 0 (secondary_lists_paged=false) — page one at scale via query_graph with ORDER BY. 'dependents_total' is the true pre-truncation size. TOKEN SURFACE (issue #56): detail='ids' → bare qualified names across all four sections; format='tabular' → rows-as-arrays under one 'columns' header. TEMPORAL (issue #58): 'cochange_partners' lists the files that historically change WITH this symbol's file (FILE_CHANGES_WITH, strongest coupling first) — impact candidates the static call graph cannot see (the architect agent's churning-pairs signal). EPISTEMIC HONESTY: 'epistemic'='lower-bound' when the target is reached via dynamic dispatch or heuristically-resolved edges — real impact may exceed what is shown; 'epistemic_reasons' names the carriers. Prereqs: a resolved graph (cluster_graph adds the community/process fields).",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
