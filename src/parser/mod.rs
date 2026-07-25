@@ -60,6 +60,14 @@ pub struct ParseResult {
     // nodes rather than failing, so a non-fatal parse can still be degraded.
     // Cross-ref: GitNexus safe-parse.ts detects `root.hasError || root.isMissing`.
     pub parse_errors: u32,
+    // 1-based inclusive (start_line, end_line) spans of the ERROR/MISSING regions
+    // in the parse tree — the coverage-honesty signal (issue #57): constructs
+    // inside these lines may be missing from the graph, so an agent should grep
+    // them. Empty when the parse is clean. Capped (see `collect_error_ranges`) so
+    // a pathologically broken file cannot bloat the coverage sidecar.
+    // source: DeusData/codebase-memory-mcp index_coverage table — `parse_partial`
+    // rows store 1-based line ranges as their `detail`.
+    pub error_ranges: Vec<(u32, u32)>,
 }
 
 pub struct ExtractedNode {
@@ -141,6 +149,50 @@ pub(crate) fn count_parse_errors(root: Node) -> u32 {
         }
     }
     errors
+}
+
+/// Maximum number of error ranges recorded per file. A file keyed to the wrong
+/// grammar can produce thousands of ERROR nodes; recording every one would bloat
+/// the coverage sidecar for no added signal — the point is "this file is gappy;
+/// grep it", which a bounded, merged list conveys. Beyond the cap the ranges are
+/// truncated (the count on the File node still reflects the true total).
+// source: heuristic — 64 disjoint bad regions is far more than any real file has
+// while a wrong-grammar file trips the cap and is flagged wholesale anyway.
+const MAX_ERROR_RANGES: usize = 64;
+
+/// Collects the 1-based inclusive line spans of ERROR/MISSING nodes, merging
+/// adjacent/overlapping spans so a run of sibling error tokens on the same lines
+/// becomes one range. Returns at most `MAX_ERROR_RANGES` ranges (sorted by start
+/// line). Empty for a clean parse. This is the coverage-honesty detail (#57):
+/// the graph may be missing constructs inside these lines.
+pub(crate) fn collect_error_ranges(root: Node) -> Vec<(u32, u32)> {
+    let mut spans: Vec<(u32, u32)> = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.is_error() || node.is_missing() {
+            let start = node.start_position().row as u32 + 1;
+            let end = node.end_position().row as u32 + 1;
+            spans.push((start, end.max(start)));
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    if spans.is_empty() {
+        return spans;
+    }
+    spans.sort_unstable();
+    // Merge overlapping/adjacent spans (gap of 0 lines) into contiguous ranges.
+    let mut merged: Vec<(u32, u32)> = Vec::new();
+    for (start, end) in spans {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 + 1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged.truncate(MAX_ERROR_RANGES);
+    merged
 }
 
 /// Parses `source` under the shared per-file timeout guard and returns the tree.

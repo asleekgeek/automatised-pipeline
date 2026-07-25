@@ -37,9 +37,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use super::coverage::{self, CoverageCollector, FileCoverage};
 use super::manifest::{self, FileManifest, FileState};
+use super::persist::ParseOutcome;
 use super::walk::{collect_source_files, is_dependency_path, DependencyScope, WalkOptions};
 use super::{light_link, persist, relative_path, IncrementalResult, SymbolBatch};
+use std::collections::BTreeMap;
 
 // Every symbol the parser emits carries a file-scoped qualified-name id
 // (`<rel_path>::…`): the top-level extraction scope is the file path and nested
@@ -140,7 +143,7 @@ pub fn index_incremental(
     let current = discover(codebase, walk_opts)?;
     let plan = classify(prior, &current);
 
-    let reparsed = apply_changes(
+    let (reparsed, reparsed_gaps) = apply_changes(
         &store,
         codebase,
         &plan.change_set,
@@ -150,6 +153,16 @@ pub fn index_incremental(
 
     // Persist the refreshed manifest (built by classify, hashes reused).
     manifest::save(manifest_path, &plan.next_manifest)?;
+
+    // Coverage (issue #57): carry forward unchanged files' gaps, overlay the
+    // freshly-reparsed files' gaps (clearing any that are now clean), save.
+    save_incremental_coverage(
+        graph_dir,
+        &current,
+        &plan.change_set,
+        reparsed_gaps,
+        "incremental",
+    );
 
     // Intentionally NO node_count()/edge_count() here — see `IncrementalResult`.
     Ok(IncrementalResult {
@@ -187,7 +200,10 @@ fn apply_changes(
     changes: &ChangeSet,
     all_current: &[Discovered],
     dependency_scope: DependencyScope,
-) -> Result<u64, String> {
+) -> Result<(u64, BTreeMap<String, FileCoverage>), String> {
+    // Coverage gaps for the reparsed files only (issue #57). The caller merges
+    // this with the carried-forward coverage of unchanged files.
+    let mut collector = CoverageCollector::default();
     // The set of files whose nodes are being purged-and-reparsed. Used both to
     // scope the inbound-edge snapshot (source must be OUTSIDE this set) and to
     // re-run light-linking only for these sources.
@@ -229,25 +245,28 @@ fn apply_changes(
     // genuinely new directories are created, matching a full index.
     let mut dir_nodes_inserted: HashSet<PathBuf> = existing_directory_ids(store)?;
     for d in &changes.changed {
-        reparse_modified_file(store, codebase, d, dependency_scope)?;
+        let outcome = reparse_modified_file(store, codebase, d, dependency_scope)?;
+        record_reparse_outcome(&mut collector, &d.rel, outcome);
     }
     for d in &changes.added {
-        reparse_new_file(
+        let outcome = reparse_new_file(
             store,
             codebase,
             d,
             dependency_scope,
             &mut dir_nodes_inserted,
         )?;
+        record_reparse_outcome(&mut collector, &d.rel, outcome);
     }
     for r in &changes.renamed {
-        reparse_new_file(
+        let outcome = reparse_new_file(
             store,
             codebase,
             &r.new_file,
             dependency_scope,
             &mut dir_nodes_inserted,
         )?;
+        record_reparse_outcome(&mut collector, &r.new_file.rel, outcome);
     }
 
     // A deletion or rename can empty a directory. A full index never creates a
@@ -276,7 +295,100 @@ fn apply_changes(
     // ---- 5. Re-link the snapshotted inbound cross-file edges -----------------
     relink_inbound_edges(store, &saved_edges)?;
 
-    Ok(reparsed_set.len() as u64)
+    Ok((reparsed_set.len() as u64, collector.into_files()))
+}
+
+/// Records one reparsed file's outcome into the coverage collector, logging the
+/// non-clean cases. Unlike the full-index recorder, `files_indexed` is not
+/// tracked here (the incremental caller counts the whole current tree).
+fn record_reparse_outcome(collector: &mut CoverageCollector, rel: &str, outcome: ParseOutcome) {
+    match outcome {
+        ParseOutcome::Indexed => {}
+        ParseOutcome::Partial(ranges) => collector.record_partial(rel, ranges),
+        ParseOutcome::Skipped(reason) => {
+            eprintln!("incremental: skipping {rel}: {reason}");
+            collector.record_skipped(rel, reason);
+        }
+        ParseOutcome::Quarantined(reason) => {
+            eprintln!("incremental: QUARANTINED {rel}: {reason} (isolated; index continues)");
+            collector.record_quarantined(rel, reason);
+        }
+    }
+}
+
+/// Builds the next coverage report by carrying forward `prior` gaps for files
+/// that were NOT reparsed (and still exist), overlaid with the fresh gaps for
+/// the reparsed files. A reparsed file that is now clean simply has no fresh
+/// entry, so its stale gap is DROPPED — this is how an incomplete/quarantined
+/// file clears its flag once it becomes parseable (issue #57 item 5). Deleted
+/// and renamed-old files are absent from `current_rels`, so their gaps drop too.
+fn merge_coverage(
+    prior: Option<&coverage::CoverageReport>,
+    reparsed_gaps: BTreeMap<String, FileCoverage>,
+    reparsed_rels: &HashSet<String>,
+    current_rels: &HashSet<String>,
+    index_mode: &str,
+    files_indexed: u64,
+) -> coverage::CoverageReport {
+    let mut report = coverage::CoverageReport::new(index_mode, files_indexed);
+    // Carry forward prior gaps for files that still exist and were not reparsed.
+    if let Some(prior) = prior {
+        for (rel, cov) in &prior.files {
+            if current_rels.contains(rel) && !reparsed_rels.contains(rel) {
+                report.files.insert(rel.clone(), cov.clone());
+            }
+        }
+    }
+    // Overlay fresh gaps for the reparsed files (clean reparsed files add nothing).
+    for (rel, cov) in reparsed_gaps {
+        report.files.insert(rel, cov);
+    }
+    // files_indexed = files with a covered surface = total minus not-indexed
+    // (skipped/quarantined). Parse-partial files WERE indexed, so they count.
+    let (_partial, skipped, quarantined) = report.counts();
+    report.files_indexed = files_indexed.saturating_sub(skipped + quarantined);
+    report
+}
+
+/// Builds and writes the coverage sidecar for an incremental pass or bootstrap
+/// fill: carry forward unchanged files' gaps, overlay the reparsed files' fresh
+/// gaps, drop gaps for vanished/now-clean files. Best-effort — a failed write
+/// only degrades the honesty signal, never the index.
+fn save_incremental_coverage(
+    graph_dir: &Path,
+    current: &[Discovered],
+    changes: &ChangeSet,
+    reparsed_gaps: BTreeMap<String, FileCoverage>,
+    index_mode: &str,
+) {
+    let output_dir = match graph_dir.parent() {
+        Some(p) => p,
+        None => return,
+    };
+    let cov_path = coverage::coverage_path(output_dir);
+    let prior = coverage::load(&cov_path);
+    let current_rels: HashSet<String> = current.iter().map(|d| d.rel.clone()).collect();
+    let mut reparsed_rels: HashSet<String> = HashSet::new();
+    for d in &changes.changed {
+        reparsed_rels.insert(d.rel.clone());
+    }
+    for d in &changes.added {
+        reparsed_rels.insert(d.rel.clone());
+    }
+    for r in &changes.renamed {
+        reparsed_rels.insert(r.new_file.rel.clone());
+    }
+    let report = merge_coverage(
+        prior.as_ref(),
+        reparsed_gaps,
+        &reparsed_rels,
+        &current_rels,
+        index_mode,
+        current.len() as u64,
+    );
+    if let Err(e) = coverage::save(&cov_path, &report) {
+        eprintln!("[ap] coverage sidecar write failed: {e}");
+    }
 }
 
 /// Builds the manifest for a freshly full-indexed `codebase` and writes it to
@@ -403,11 +515,23 @@ pub fn fill_after_bootstrap(
     let deleted = changes.deleted.len() as u64;
     let renamed = changes.renamed.len() as u64;
 
-    let reparsed = apply_changes(&store, codebase, &changes, &current, dependency_scope)?;
+    let (reparsed, reparsed_gaps) =
+        apply_changes(&store, codebase, &changes, &current, dependency_scope)?;
     // Persist a local manifest reflecting the CURRENT tree so subsequent local
     // incrementals classify against this machine's mtimes/hashes, not the
     // artifact's (whose mtimes are meaningless on a fresh clone).
     manifest::save(manifest_path, &next_manifest)?;
+
+    // Coverage (issue #57): the artifact bundled the exporter's coverage (loaded
+    // from the sidecar unpacked beside the graph). Carry forward the files the
+    // fill did not touch, overlay the reparsed files' fresh gaps, save.
+    save_incremental_coverage(
+        graph_dir,
+        &current,
+        &changes,
+        reparsed_gaps,
+        "bootstrap_fill",
+    );
 
     Ok(FillResult {
         result: IncrementalResult {
@@ -886,7 +1010,7 @@ fn reparse_modified_file(
     codebase: &Path,
     d: &Discovered,
     dependency_scope: DependencyScope,
-) -> Result<(), String> {
+) -> Result<ParseOutcome, String> {
     // Reset the kept File node's mutable state. index_single_file re-bumps
     // parse_errors only when >0, so we clear it first (a fixed parse must drop
     // back to 0), and refresh size_bytes to the new length.
@@ -903,7 +1027,7 @@ fn reparse_modified_file(
     let mut seen_node_ids: HashSet<String> = HashSet::new();
     let restrict =
         dependency_scope == DependencyScope::PublicApi && is_dependency_path(codebase, &d.abs);
-    if let Err(e) = persist::index_single_file(
+    let outcome = persist::index_single_file(
         store,
         &mut batch,
         &d.abs,
@@ -911,10 +1035,9 @@ fn reparse_modified_file(
         &mut label_by_qn,
         &mut seen_node_ids,
         restrict,
-    ) {
-        eprintln!("incremental: skipping {}: {e}", d.rel);
-    }
-    batch.flush(store)
+    );
+    batch.flush(store)?;
+    Ok(outcome)
 }
 
 /// Indexes a NEW (or renamed-new) file from scratch: ancestor Directory nodes,
@@ -926,7 +1049,7 @@ fn reparse_new_file(
     d: &Discovered,
     dependency_scope: DependencyScope,
     dir_nodes_inserted: &mut HashSet<PathBuf>,
-) -> Result<(), String> {
+) -> Result<ParseOutcome, String> {
     let mut batch = SymbolBatch::default();
     let mut label_by_qn: HashMap<String, String> = HashMap::new();
     let mut seen_node_ids: HashSet<String> = HashSet::new();
@@ -946,7 +1069,7 @@ fn reparse_new_file(
 
     let restrict =
         dependency_scope == DependencyScope::PublicApi && is_dependency_path(codebase, &d.abs);
-    if let Err(e) = persist::index_single_file(
+    let outcome = persist::index_single_file(
         store,
         &mut batch,
         &d.abs,
@@ -954,10 +1077,9 @@ fn reparse_new_file(
         &mut label_by_qn,
         &mut seen_node_ids,
         restrict,
-    ) {
-        eprintln!("incremental: skipping {}: {e}", d.rel);
-    }
-    batch.flush(store)
+    );
+    batch.flush(store)?;
+    Ok(outcome)
 }
 
 // ---------------------------------------------------------------------------

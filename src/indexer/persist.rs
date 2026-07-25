@@ -112,6 +112,23 @@ pub(super) fn insert_dir_file_edge(batch: &mut SymbolBatch, rel_path: &Path) {
 // Single-file indexing: parse → insert nodes → insert edges
 // ---------------------------------------------------------------------------
 
+/// The coverage-relevant outcome of indexing one file (issue #57). Infallible by
+/// design: every failure mode is CLASSIFIED (not propagated as an error that
+/// could abort the whole index), so one bad file can never kill the run.
+pub(super) enum ParseOutcome {
+    /// Parsed cleanly, or a non-code file that is a legitimate File node with no
+    /// symbols. Fully covered — no gap.
+    Indexed,
+    /// Parsed, but the tree had ERROR/MISSING ranges (1-based line spans);
+    /// constructs inside them may be missing from the graph.
+    Partial(Vec<(u32, u32)>),
+    /// Not indexed at all (unreadable / oversized / parse timeout). Reason inside.
+    Skipped(String),
+    /// The parser PANICKED; the panic was caught and isolated so it could not
+    /// kill the index. The file is left uncovered. Reason inside.
+    Quarantined(String),
+}
+
 pub(super) fn index_single_file(
     store: &GraphStore,
     batch: &mut SymbolBatch,
@@ -120,38 +137,50 @@ pub(super) fn index_single_file(
     label_by_qn: &mut HashMap<String, String>,
     seen_node_ids: &mut std::collections::HashSet<String>,
     restrict_to_public_api: bool,
-) -> Result<(), String> {
+) -> ParseOutcome {
     // Detect language FIRST (cheap, no I/O). Under all-file indexing the
     // walker yields every file, so most non-code files reach here: they are
     // NOT parsed (no grammar) — their File node was already inserted by the
     // caller, and any lightweight cross-file links (e.g. .js import/require)
-    // are emitted in a dedicated post-pass once every File node exists
-    // (forward-reference safe). Returning Ok keeps them out of the error log.
+    // are emitted in a dedicated post-pass. A non-code file is fully covered as
+    // a File node (no symbols expected), so it is `Indexed`, not a gap.
     // source: all-file indexing — every file is a File node; only supported
     // languages get a full AST.
     let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let lang = match Language::from_extension(ext) {
         Some(l) => l,
-        None => return Ok(()),
+        None => return ParseOutcome::Indexed,
     };
-    let source = std::fs::read_to_string(abs_path)
-        .map_err(|e| format!("read {}: {e}", abs_path.display()))?;
+    let source = match std::fs::read_to_string(abs_path) {
+        Ok(s) => s,
+        Err(e) => return ParseOutcome::Skipped(format!("read_error: {e}")),
+    };
     // Defense-in-depth: even if the dir walker let a large file slip (e.g.
     // size changed between lstat and read), refuse to feed it to tree-sitter.
     // source: H2 fix — per-file parse cap, 1 MB is sufficient for all real code.
     if (source.len() as u64) > super::MAX_PARSE_BYTES {
-        return Err(format!(
-            "file_too_large_for_parser: {} bytes > MAX_PARSE_BYTES {}",
+        return ParseOutcome::Skipped(format!(
+            "oversized: {} bytes > MAX_PARSE_BYTES {}",
             source.len(),
             super::MAX_PARSE_BYTES
         ));
     }
-    let parsed = parser::parse_file(&source, rel_path, lang)?;
+    // Crash quarantine (issue #57): a parser panic (a grammar bug, a char-boundary
+    // slice on a pathological error tree, …) must not abort the whole index.
+    // `isolate` runs the parse under `catch_unwind`; a panic becomes a quarantined
+    // file and the loop continues. The batch is untouched until after this point,
+    // so a caught panic leaves no partial state. A tree-sitter timeout/None is a
+    // clean `Err` (not a panic) → Skipped.
+    let parsed = match isolate(|| parser::parse_file(&source, rel_path, lang)) {
+        Ok(p) => p,
+        Err(Isolated::Failed(e)) => return ParseOutcome::Skipped(format!("parse_failed: {e}")),
+        Err(Isolated::Panicked) => return ParseOutcome::Quarantined("parser panicked".to_string()),
+    };
     // Backfill the File node's parse-error count (inserted as 0 by the caller).
-    // Only issue the update when non-zero — the common clean-parse case pays no
-    // extra query. source: stages/stage-3.md §10.5.
+    // Best-effort: a store hiccup here must not fail the file (the count is a
+    // convenience; the authoritative gap signal is the coverage sidecar).
     if parsed.parse_errors > 0 {
-        set_file_parse_errors(store, rel_path, parsed.parse_errors)?;
+        let _ = set_file_parse_errors(store, rel_path, parsed.parse_errors);
     }
     accumulate_parsed_nodes(
         batch,
@@ -162,7 +191,38 @@ pub(super) fn index_single_file(
         restrict_to_public_api,
     );
     accumulate_parsed_edges(batch, &parsed.refs, label_by_qn);
-    Ok(())
+    if parsed.parse_errors > 0 {
+        ParseOutcome::Partial(parsed.error_ranges)
+    } else {
+        ParseOutcome::Indexed
+    }
+}
+
+/// Terminal outcome of an isolated parse that did not yield a tree.
+pub(super) enum Isolated {
+    /// The parse returned `Err(String)` (e.g. tree-sitter timeout/None) — no panic.
+    Failed(String),
+    /// The parse PANICKED and the panic was caught. The exact reason is not
+    /// recoverable across the unwind boundary; the caller supplies a stable label.
+    Panicked,
+}
+
+/// Runs `f` under `catch_unwind`, mapping its result to `Ok(value)`,
+/// `Err(Failed(msg))`, or `Err(Panicked)`. This is the crash-quarantine seam
+/// (issue #57): the exact construct the indexer uses to keep one file's parser
+/// panic from killing the whole run — extracted so it is unit-testable with a
+/// deliberately panicking closure (AP's own grammars are robust enough that no
+/// natural input panics them). `f` must be unwind-safe; the indexer's parse
+/// closure captures only `&str`/`Copy` values, which are.
+pub(super) fn isolate<T, F>(f: F) -> Result<T, Isolated>
+where
+    F: FnOnce() -> Result<T, String> + std::panic::UnwindSafe,
+{
+    match std::panic::catch_unwind(f) {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(msg)) => Err(Isolated::Failed(msg)),
+        Err(_) => Err(Isolated::Panicked),
+    }
 }
 
 /// Records the tree-sitter parse-error count on an already-inserted File node.
@@ -613,4 +673,38 @@ fn has_visibility_col(label: &str) -> bool {
         label,
         "Function" | "Method" | "Struct" | "Enum" | "Trait" | "Field"
     )
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::{isolate, Isolated};
+
+    #[test]
+    fn isolate_returns_value_on_success() {
+        let r: Result<u32, Isolated> = isolate(|| Ok(42u32));
+        assert!(matches!(r, Ok(42)));
+    }
+
+    #[test]
+    fn isolate_maps_err_to_failed() {
+        let r: Result<u32, Isolated> = isolate(|| Err("boom".to_string()));
+        assert!(matches!(r, Err(Isolated::Failed(m)) if m == "boom"));
+    }
+
+    #[test]
+    fn isolate_catches_panic_as_quarantine() {
+        // The crash-quarantine guarantee (issue #57): a panic inside the parse
+        // closure is CAUGHT — it becomes `Panicked` and the caller keeps going,
+        // instead of unwinding through the whole index. Silence the default panic
+        // hook so the deliberate panic does not spam the test output.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let r: Result<u32, Isolated> = isolate(|| panic!("simulated parser crash"));
+        std::panic::set_hook(prev);
+        assert!(matches!(r, Err(Isolated::Panicked)));
+    }
 }

@@ -10,16 +10,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+pub mod coverage;
 mod incremental;
 mod light_link;
 pub mod manifest;
 mod persist;
 mod walk;
 
+use coverage::{CoverageCollector, CoverageReport};
 pub use incremental::{
     fill_after_bootstrap, index_incremental, write_full_manifest, FillMethod, FillResult,
 };
-use persist::{index_single_file, insert_ancestor_dirs, insert_dir_file_edge, insert_file_node};
+use persist::{
+    index_single_file, insert_ancestor_dirs, insert_dir_file_edge, insert_file_node, ParseOutcome,
+};
 pub use walk::DependencyScope;
 use walk::{collect_source_files, is_dependency_path, WalkOptions};
 
@@ -62,6 +66,9 @@ pub struct IndexResult {
     pub edge_count: u64,
     pub files_indexed: u64,
     pub elapsed_ms: u64,
+    /// Coverage-honesty report (issue #57): which files were parse-incomplete,
+    /// skipped, or quarantined. The composition root persists it to the sidecar.
+    pub coverage: CoverageReport,
 }
 
 /// Outcome of an incremental (changed-files-only) re-index (issue #62).
@@ -178,9 +185,11 @@ pub fn index_codebase_with_language(
     // source: Fermi audit — probe_node_label was firing up to 9 MATCH queries
     // per edge; the indexer already knows every node's label in memory.
     let mut label_by_qn: HashMap<String, String> = HashMap::new();
-    let mut files_indexed: u64 = 0;
     let mut total_bytes: u64 = 0;
     let mut dir_nodes_inserted = std::collections::HashSet::<PathBuf>::new();
+    // Coverage-honesty accounting (issue #57): note every File node, and record
+    // the parse-incomplete / skipped / quarantined gaps as they occur.
+    let mut collector = CoverageCollector::default();
 
     // Symbol nodes + edges accumulate here and flush in large batches; the
     // global id set dedups across the whole run so one duplicate id can never
@@ -216,7 +225,7 @@ pub fn index_codebase_with_language(
         // source: ADR-4253701 §Decision 1.
         let restrict_to_public_api = dependency_scope == DependencyScope::PublicApi
             && is_dependency_path(codebase_path, file_path);
-        match index_single_file(
+        let outcome = index_single_file(
             &store,
             &mut batch,
             file_path,
@@ -224,10 +233,8 @@ pub fn index_codebase_with_language(
             &mut label_by_qn,
             &mut seen_node_ids,
             restrict_to_public_api,
-        ) {
-            Ok(()) => files_indexed += 1,
-            Err(e) => eprintln!("indexer: skipping {}: {e}", rel_str),
-        }
+        );
+        record_outcome(&mut collector, &rel_str, outcome);
         // Flush once the batch is large enough to amortize the per-call cost,
         // bounding peak memory on large codebases.
         if batch.node_row_count >= SYMBOL_FLUSH_THRESHOLD {
@@ -235,6 +242,7 @@ pub fn index_codebase_with_language(
         }
     }
     batch.flush(&store)?;
+    let files_indexed = collector.files_indexed();
 
     // All-file indexing post-pass: now that every File node exists, recover
     // the import graph of files the AST parsers don't cover (.js family) as
@@ -250,17 +258,41 @@ pub fn index_codebase_with_language(
     let edge_count = store.edge_count()?;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
+    let mut coverage = CoverageReport::new("full", files_indexed);
+    coverage.files = collector.into_files();
+
     Ok(IndexResult {
         graph_path: graph_path.to_path_buf(),
         node_count,
         edge_count,
         files_indexed,
         elapsed_ms,
+        coverage,
     })
 }
 
 fn relative_path(root: &Path, file: &Path) -> PathBuf {
     file.strip_prefix(root).unwrap_or(file).to_path_buf()
+}
+
+/// Feeds one file's `ParseOutcome` into the coverage collector, logging the
+/// non-clean cases so they are visible in stderr as well as the sidecar.
+fn record_outcome(collector: &mut CoverageCollector, rel: &str, outcome: ParseOutcome) {
+    match outcome {
+        ParseOutcome::Indexed => collector.note_indexed(),
+        ParseOutcome::Partial(ranges) => {
+            collector.note_indexed();
+            collector.record_partial(rel, ranges);
+        }
+        ParseOutcome::Skipped(reason) => {
+            eprintln!("indexer: skipping {rel}: {reason}");
+            collector.record_skipped(rel, reason);
+        }
+        ParseOutcome::Quarantined(reason) => {
+            eprintln!("indexer: QUARANTINED {rel}: {reason} (isolated; index continues)");
+            collector.record_quarantined(rel, reason);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -2024,6 +2024,13 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     {
         eprintln!("[ap] file manifest write failed (index succeeded): {e}");
     }
+    // Issue #57: persist the coverage-honesty sidecar (parse-incomplete, skipped,
+    // and quarantined files). Best-effort — a failed write only drops the honesty
+    // signal, never the index.
+    let coverage_path = indexer::coverage::coverage_path(&output_dir);
+    if let Err(e) = indexer::coverage::save(&coverage_path, &result.coverage) {
+        eprintln!("[ap] coverage sidecar write failed (index succeeded): {e}");
+    }
 
     // Issue #55: an explicit index is the single (best-ratio, zstd-9) export
     // tier. Failure to export is LOUD but non-fatal — the index itself succeeded.
@@ -2037,6 +2044,7 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         "files_indexed": result.files_indexed,
         "elapsed_ms": result.elapsed_ms,
     });
+    response["coverage"] = coverage_summary(&result.coverage);
     if let Some(note) = bootstrap_skipped {
         response["bootstrap_skipped"] = note;
     }
@@ -2047,6 +2055,7 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
             result.node_count,
             result.edge_count,
             Some(&manifest_path),
+            Some(&coverage_path),
         ) {
             Ok(stats) => {
                 response["artifact_path"] = json!(stats.artifact_path.to_string_lossy());
@@ -2060,6 +2069,148 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         }
     }
     Ok(response)
+}
+
+/// Max example files listed per coverage kind in a tool response. The counts are
+/// always exact; the example lists are capped so a repo with thousands of
+/// parse-incomplete files cannot blow the MCP tool-result budget. The full lists
+/// live in the `index_coverage.json` sidecar and are queryable via index_status.
+// source: DeusData/codebase-memory-mcp mcp.c — coverage responses carry "counts
+// plus a FEW EXAMPLES only", the complete lists queryable separately.
+const COVERAGE_LIST_CAP: usize = 50;
+
+/// The coverage-honesty caveat repeated on every surface that reports coverage
+/// (issue #57), mirroring the reference's wording so agents never overtrust it.
+// source: DeusData/codebase-memory-mcp mcp.c — "absence of a flag is NOT a
+// completeness guarantee; prefer grep inside flagged ranges".
+const COVERAGE_CAVEAT: &str = "Best-effort signal, NOT a completeness guarantee: \
+    absence of a flag only means the indexer detected no gap (a file keyed to a \
+    subtly wrong grammar can still parse 'clean'). 'parse_incomplete' files WERE \
+    indexed but constructs inside the flagged line ranges MAY be missing from the \
+    graph — prefer grep there. 'skipped'/'quarantined' files are NOT in the graph \
+    at all. source: DeusData/codebase-memory-mcp coverage wording.";
+
+/// Renders a `CoverageReport` into an honest, budget-bounded JSON block: exact
+/// counts per kind, capped example lists (parse_incomplete carries error ranges;
+/// skipped/quarantined carry reasons), and the completeness caveat.
+fn coverage_summary(report: &indexer::coverage::CoverageReport) -> Value {
+    use indexer::coverage::CoverageKind;
+    let (partial, skipped, quarantined) = report.counts();
+    let mut partial_files = Vec::new();
+    let mut skipped_files = Vec::new();
+    let mut quarantined_files = Vec::new();
+    for (rel, cov) in &report.files {
+        match cov.kind {
+            CoverageKind::ParsePartial => {
+                if partial_files.len() < COVERAGE_LIST_CAP {
+                    partial_files.push(json!({"path": rel, "error_ranges": cov.error_ranges}));
+                }
+            }
+            CoverageKind::Skipped => {
+                if skipped_files.len() < COVERAGE_LIST_CAP {
+                    skipped_files.push(json!({"path": rel, "reason": cov.detail}));
+                }
+            }
+            CoverageKind::Quarantined => {
+                if quarantined_files.len() < COVERAGE_LIST_CAP {
+                    quarantined_files.push(json!({"path": rel, "reason": cov.detail}));
+                }
+            }
+        }
+    }
+    json!({
+        "index_mode": report.index_mode,
+        "files_indexed": report.files_indexed,
+        "parse_incomplete": { "count": partial, "files": partial_files },
+        "skipped": { "count": skipped, "files": skipped_files },
+        "quarantined": { "count": quarantined, "files": quarantined_files },
+        "caveat": COVERAGE_CAVEAT,
+    })
+}
+
+/// Loads the coverage sidecar for a graph at `graph_dir` (its `output_dir` is the
+/// parent) and renders the summary, or `null` when no coverage is available.
+fn coverage_summary_for_graph(graph_dir: &Path) -> Value {
+    match graph_dir.parent() {
+        Some(output_dir) => {
+            let path = indexer::coverage::coverage_path(output_dir);
+            match indexer::coverage::load(&path) {
+                Some(report) => coverage_summary(&report),
+                None => Value::Null,
+            }
+        }
+        None => Value::Null,
+    }
+}
+
+/// The `query_graph(graph="missed")` response (issue #57): a structural
+/// enumeration of what the index does NOT fully cover, so an agent can pivot to
+/// grep. `null` coverage means no coverage sidecar exists for this graph — which
+/// is itself NOT a completeness claim (the index may predate coverage tracking).
+fn query_missed_response(graph_path: &Path) -> Value {
+    let coverage = coverage_summary_for_graph(graph_path);
+    if coverage.is_null() {
+        return json!({
+            "stage": 3,
+            "status": "ok",
+            "tool": "query_graph",
+            "graph": "missed",
+            "coverage": Value::Null,
+            "note": "No coverage sidecar for this graph (indexed before coverage \
+                     tracking, or the sidecar was not carried alongside the graph). \
+                     Absence of coverage data is NOT a completeness guarantee — \
+                     re-index to generate it.",
+        });
+    }
+    json!({
+        "stage": 3,
+        "status": "ok",
+        "tool": "query_graph",
+        "graph": "missed",
+        "coverage": coverage,
+        "note": "These files/ranges are where the index is known to be incomplete \
+                 — prefer grep for them before trusting a negative graph result.",
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3a — index_status (issue #57 coverage surface)
+// ---------------------------------------------------------------------------
+
+fn run_index_status(arguments: &Value) -> Value {
+    match do_index_status(arguments) {
+        Ok(v) => v,
+        Err(msg) => json!({
+            "stage": 3, "status": "error", "reason": "index_status_failed", "message": msg
+        }),
+    }
+}
+
+/// Reports a graph's indexing status: node/edge counts plus the coverage-honesty
+/// report (issue #57) — files indexed, parse-incomplete (count + capped list with
+/// ranges), and skipped/quarantined (count + list with reasons). This is the
+/// authoritative coverage surface; the caveat states that absence of a flag is
+/// not a completeness guarantee.
+fn do_index_status(arguments: &Value) -> Result<Value, String> {
+    let args = arguments.as_object().ok_or("arguments must be an object")?;
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
+        .ok_or("missing required field 'graph_path'")?;
+    let graph_path = Path::new(graph_str);
+    if !graph_path.exists() {
+        return Err(format!("graph_path does not exist: {graph_str}"));
+    }
+    let (node_count, edge_count) = graph_counts(graph_path);
+    Ok(json!({
+        "stage": 3,
+        "status": "ok",
+        "tool": "index_status",
+        "graph_path": graph_str,
+        "node_count": node_count,
+        "edge_count": edge_count,
+        "coverage": coverage_summary_for_graph(graph_path),
+    }))
 }
 
 /// Builds the tool response for a successful incremental re-index (issue #62)
@@ -2088,6 +2239,8 @@ fn finish_incremental_response(
         "files_reparsed": inc.files_reparsed,
         "elapsed_ms": inc.elapsed_ms,
     });
+    // Coverage (issue #57) was refreshed by the incremental pass; load + report it.
+    response["coverage"] = coverage_summary_for_graph(graph_dir);
     if want_export {
         // Whole-graph totals are needed only for the export sidecar; compute
         // them lazily here (a full table scan the incremental pass itself skips)
@@ -2095,12 +2248,14 @@ fn finish_incremental_response(
         let (node_count, edge_count) = graph_counts(graph_dir);
         response["node_count"] = json!(node_count);
         response["edge_count"] = json!(edge_count);
+        let coverage_path = graph_dir.parent().map(indexer::coverage::coverage_path);
         match artifact::export_artifact(
             graph_dir,
             codebase,
             node_count,
             edge_count,
             Some(manifest_path),
+            coverage_path.as_deref(),
         ) {
             Ok(stats) => {
                 response["artifact_path"] = json!(stats.artifact_path.to_string_lossy());
@@ -2231,6 +2386,9 @@ fn bootstrap_import(
     } else {
         resp["graph_state"] = json!("fresh");
     }
+    // Coverage (issue #57): the bootstrapped graph inherits the exporter's
+    // coverage sidecar (bundled in the artifact, unpacked beside the graph).
+    resp["coverage"] = coverage_summary_for_graph(graph_dir);
     BootstrapOutcome::Imported(resp)
 }
 
@@ -2307,6 +2465,8 @@ fn bootstrap_import_and_fill(
     if let Some(behind) = info.commits_behind {
         resp["artifact_commits_behind"] = json!(behind);
     }
+    // Coverage (issue #57): refreshed by the fill (carry-forward + reparsed gaps).
+    resp["coverage"] = coverage_summary_for_graph(graph_dir);
     BootstrapOutcome::Imported(resp)
 }
 
@@ -2497,6 +2657,24 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
         .get("graph_path")
         .and_then(|v| v.as_str())
         .ok_or("missing required field 'graph_path'")?;
+    let graph_path = Path::new(graph_str);
+
+    // Issue #57 — `graph: "missed"` enumerates what the index does NOT cover
+    // (parse-incomplete + skipped + quarantined files) instead of running Cypher,
+    // so an agent doing graph queries can pivot to grep for the gaps. `query` is
+    // not required in this mode. source: DeusData/codebase-memory-mcp
+    // query_graph(graph="missed").
+    let graph_mode = args
+        .get("graph")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    if graph_mode == "missed" {
+        if !graph_path.exists() {
+            return Err(format!("graph_path does not exist: {graph_str}"));
+        }
+        return Ok(query_missed_response(graph_path));
+    }
+
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
@@ -2504,7 +2682,8 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
 
     // source: H3 fix — query_graph is a read-only tool. Reject any query
-    // containing mutation keywords before handing it to the engine.
+    // containing mutation keywords BEFORE any filesystem check, so a mutation
+    // attempt is refused even for a nonexistent path (security ordering).
     if let Some(bad) = forbidden_cypher_keyword(query) {
         return Err(format!(
             "read_only_query_required: query_graph is read-only; \
@@ -2512,7 +2691,6 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
         ));
     }
 
-    let graph_path = Path::new(graph_str);
     if !graph_path.exists() {
         return Err(format!("graph_path does not exist: {graph_str}"));
     }
@@ -4580,6 +4758,7 @@ fn handle_tool_call(params: &Value, profile: ToolProfile) -> Value {
         "finalize_verification" => run_finalize_verification(&arguments),
         "abort_verification" => run_abort_verification(&arguments),
         "index_codebase" => run_index_codebase(&arguments),
+        "index_status" => run_index_status(&arguments),
         "query_graph" => run_query_graph(&arguments),
         "get_symbol" => run_get_symbol(&arguments),
         "resolve_graph" => run_resolve_graph(&arguments),
@@ -5329,6 +5508,7 @@ mod artifact_bootstrap_tests {
             result.node_count,
             result.edge_count,
             Some(&manifest_path),
+            None,
         )
         .expect("export");
 
@@ -5436,5 +5616,72 @@ mod artifact_bootstrap_tests {
             q.rows.is_empty(),
             "accept_stale must NOT fill — the stale graph lacks the new commit's symbol"
         );
+    }
+}
+
+#[cfg(test)]
+mod coverage_tools_tests {
+    // Issue #57 — the coverage-honesty tool surface: index_codebase reports
+    // coverage inline, index_status reports it authoritatively, and
+    // query_graph(graph="missed") enumerates the misses. All exercised end to end
+    // through the real handlers with a corrupt fixture file.
+    use super::*;
+    use std::fs;
+
+    const BROKEN: &str = "def broken(  \n    let x: i32 = ;\n    @#$%^& }{\nclass 9Invalid\n";
+
+    fn fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix("coverage_tools_")
+            .tempdir()
+            .expect("temp dir");
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(repo.join("src")).expect("mk src");
+        fs::write(repo.join("src/ok.py"), "def ok():\n    return 1\n").expect("ok");
+        fs::write(repo.join("src/bad.py"), BROKEN).expect("bad");
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).expect("mk out");
+        (tmp, repo, out)
+    }
+
+    #[test]
+    fn index_codebase_reports_coverage_then_index_status_and_missed_surface_it() {
+        let (_tmp, repo, out) = fixture();
+
+        // index_codebase inline coverage.
+        let idx = do_index_codebase(&json!({
+            "path": repo.to_string_lossy(),
+            "output_dir": out.to_string_lossy(),
+            "full": true,
+        }))
+        .expect("index");
+        let cov = &idx["coverage"];
+        assert_eq!(
+            cov["parse_incomplete"]["count"],
+            json!(1),
+            "index_codebase must report the corrupt file as parse_incomplete"
+        );
+        assert!(
+            cov["caveat"]
+                .as_str()
+                .unwrap()
+                .contains("NOT a completeness guarantee"),
+            "the honesty caveat must be present"
+        );
+        let graph_path = idx["graph_path"].as_str().expect("graph_path").to_string();
+
+        // index_status authoritative coverage.
+        let status = run_index_status(&json!({ "graph_path": graph_path }));
+        assert_eq!(status["status"], json!("ok"));
+        assert_eq!(status["coverage"]["parse_incomplete"]["count"], json!(1));
+        let listed = status["coverage"]["parse_incomplete"]["files"][0]["path"]
+            .as_str()
+            .expect("a listed parse_incomplete file");
+        assert_eq!(listed, "src/bad.py");
+
+        // query_graph(graph="missed") enumerates the misses (no Cypher needed).
+        let missed = run_query_graph(&json!({ "graph_path": graph_path, "graph": "missed" }));
+        assert_eq!(missed["graph"], json!("missed"));
+        assert_eq!(missed["coverage"]["parse_incomplete"]["count"], json!(1));
     }
 }

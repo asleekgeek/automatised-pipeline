@@ -41,6 +41,7 @@ pub fn parse_c_file(source: &str, file_path: &str) -> Result<ParseResult, String
         nodes: ctx.nodes,
         refs: ctx.refs,
         parse_errors: super::count_parse_errors(tree.root_node()),
+        error_ranges: super::collect_error_ranges(tree.root_node()),
     })
 }
 

@@ -129,7 +129,7 @@ mod tests {
 
     /// Every tool the server ships, in `tool_schemas::tools_list()` order.
     /// Kept literal so adding a tool forces a conscious profile decision.
-    const FULL_TOOL_NAMES: [&str; 24] = [
+    const FULL_TOOL_NAMES: [&str; 25] = [
         "health_check",
         "extract_finding",
         "refine_finding",
@@ -138,6 +138,7 @@ mod tests {
         "finalize_verification",
         "abort_verification",
         "index_codebase",
+        "index_status",
         "query_graph",
         "get_symbol",
         "resolve_graph",
