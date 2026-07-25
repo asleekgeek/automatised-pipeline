@@ -26,8 +26,14 @@ on:
     tags:
       - "v*"
 
+# Least privilege, expanded only for what provenance needs (issue #66):
+#   contents: write       upload release assets (pre-existing)
+#   id-token: write       OIDC token Sigstore exchanges for a short-lived cert
+#   attestations: write   record the signed provenance statement on the repo
 permissions:
-  contents: write  # required to upload release assets
+  contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   # Pre-create the release exactly once before the matrix fans out.
@@ -42,7 +48,7 @@ jobs:
     name: create release (${{ github.ref_name }})
     runs-on: ubuntu-latest
     steps:
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
@@ -87,7 +93,7 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Linux build deps
         if: startsWith(matrix.runner, 'ubuntu')
@@ -96,13 +102,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libzstd-dev pkg-config cmake
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # `@stable` was a BRANCH ref: the compiler that built a release was
+      # whatever that branch pointed at on the day, so two runs of the same tag
+      # could differ and a provenance attestation over it would attest to very
+      # little. Action pinned to a SHA; version comes from rust-toolchain.toml,
+      # which local builds read too (issue #66).
+      - name: Install Rust toolchain (pinned)
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: "1.95.0"
           targets: ${{ matrix.rust_target }}
 
       - name: Cache cargo registry + target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -157,8 +169,16 @@ jobs:
           fi
           ls -la "$ASSET" "$ASSET.sha256"
 
+      # Provenance BEFORE upload: the attestation binds this exact artifact
+      # digest to this workflow, commit and runner. Verify with
+      #   gh attestation verify <file> --repo cdeust/automatised-pipeline
+      - name: Attest build provenance (tarball)
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: automatised-pipeline-${{ matrix.target_tag }}.tar.gz
+
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           # Release was pre-created by the create_release job; we only
           # upload here. tag_name pins the upload to that release so
@@ -167,6 +187,50 @@ jobs:
           files: |
             automatised-pipeline-${{ matrix.target_tag }}.tar.gz
             automatised-pipeline-${{ matrix.target_tag }}.tar.gz.sha256
+          fail_on_unmatched_files: true
+
+  # SBOM for the whole dependency graph (issue #66). Generated from
+  # Cargo.lock, so it describes exactly the versions the release was built
+  # from — "what is actually in this binary" is otherwise an unanswerable
+  # question for a stripped static Rust binary, which is precisely the
+  # question an enterprise reviewer asks (enterprise-backlog#27).
+  sbom:
+    name: SBOM (CycloneDX)
+    needs: create_release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: "1.95.0"
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked --version ^0.5
+
+      - name: Generate SBOM
+        run: |
+          cargo cyclonedx --format json --all --override-filename sbom
+          # cargo-cyclonedx writes per-manifest files; collect the workspace
+          # root one under a predictable release-asset name.
+          find . -name 'sbom.json' -maxdepth 3 -print -quit \
+            | xargs -I{} cp {} automatised-pipeline.cdx.json
+          ls -la automatised-pipeline.cdx.json
+          sha256sum automatised-pipeline.cdx.json | tee automatised-pipeline.cdx.json.sha256
+
+      - name: Attest build provenance (SBOM)
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: automatised-pipeline.cdx.json
+
+      - name: Upload SBOM to release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            automatised-pipeline.cdx.json
+            automatised-pipeline.cdx.json.sha256
           fail_on_unmatched_files: true
 
   # Pack and publish the .mcpb bundle after all three platform binaries
@@ -178,7 +242,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Download platform binaries from release
         run: |
@@ -228,8 +292,13 @@ jobs:
           shasum -a 256 automatised-pipeline.mcpb | tee automatised-pipeline.mcpb.sha256
           ls -la automatised-pipeline.mcpb automatised-pipeline.mcpb.sha256
 
+      - name: Attest build provenance (.mcpb)
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: automatised-pipeline.mcpb
+
       - name: Upload .mcpb to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.ref_name }}
           files: |

@@ -1,0 +1,68 @@
+name: OpenSSF Scorecard
+
+# Issue #66. The score is a MEASUREMENT, not a target: the first run records
+# wherever this repo actually stands, and a low number is a valid result that
+# gets committed as-is (§8). What is being bought here is the trend and the
+# public evidence, not a badge — a repo that reads and indexes a user's entire
+# source tree should be able to show its supply-chain posture rather than
+# assert it.
+#
+# Report-only by construction: `publish_results` uploads to the OpenSSF API and
+# the SARIF goes to code scanning. Nothing here gates a PR, because Scorecard
+# grades repo-level policy (branch protection, signing, review counts) that a
+# contributor cannot fix inside their diff. Gating a PR on it would be the
+# heavy-broad-automation anti-pattern the house rules already name.
+
+# `workflow_call` makes this the ecosystem's single Scorecard definition
+# (issue #66 criterion 9): Cortex#178, prd-spec-generator#29, cortex-viz#37 and
+# zetetic-team-subagents#53 adopt it as a CALL SITE, not a copy, so the pinned
+# action SHAs and the report-only policy live in one place. Scorecard grades
+# repo-level posture and is language-agnostic, so it is the part of the
+# supply-chain story that genuinely generalises; SBOM and build provenance stay
+# per-repo because their toolchains differ (cargo / uv / pnpm).
+#
+#   jobs:
+#     scorecard:
+#       uses: cdeust/automatised-pipeline/.github/workflows/scorecard.yml@main
+#       permissions:
+#         security-events: write
+#         id-token: write
+#         contents: read
+#         actions: read
+on:
+  workflow_call:
+  branch_protection_rule:
+  schedule:
+    - cron: "0 7 * * 2"   # Tuesdays 07:00 UTC — posture drifts by inaction
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload SARIF to code scanning
+      id-token: write          # publish signed results to the OpenSSF API
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@f49aabe0b5af0936a0987cfb85d86b75731b0186 # v2.4.1
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3
+        with:
+          sarif_file: results.sarif

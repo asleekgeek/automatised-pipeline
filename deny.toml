@@ -1,0 +1,40 @@
+# cargo-deny policy (issue #66).
+#
+# Scope is deliberately narrow: this file exists to make the audit job's
+# verdict reproducible and reviewable, not to encode taste. Every deviation
+# from cargo-deny's defaults is justified in place (§8) so a future reader can
+# refute it rather than guess at intent.
+
+[advisories]
+# RUSTSEC advisories are a blocking condition, not a warning: this binary
+# reads and indexes a user's entire source tree.
+yanked = "deny"
+# No blanket ignores. An accepted advisory is added here WITH its RUSTSEC id
+# and a written reason, never as a silent list entry.
+ignore = []
+
+[licenses]
+# Permissive licenses only. This ships as a redistributable binary, so a
+# copyleft dependency is a distribution question that must be decided
+# deliberately rather than discovered at release time.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"   # advisory: duplicate versions are bloat, not risk
+wildcards = "deny"           # a wildcard version defeats Cargo.lock pinning
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

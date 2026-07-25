@@ -1,0 +1,20 @@
+# Pinned toolchain (issue #66).
+#
+# A provenance attestation over a non-deterministic build attests to very
+# little: it proves *a* workflow produced *an* artifact, not that the same
+# source yields the same bytes. `dtolnay/rust-toolchain@stable` is a BRANCH
+# reference, so the compiler that built a release was whatever `stable`
+# pointed at that day, and two runs of the same tag could differ.
+#
+# This file is the single source of truth for local AND CI builds, so
+# `cargo build` on a contributor's machine uses the same compiler the release
+# was built with.
+#
+# Version: 1.95.0 — matches the toolchain recorded in the committed
+# benchmarks (benchmarks/token_surface/MANIFEST.md, "rustc 1.95.0"), so the
+# measured numbers and the shipped binary come from one compiler. Bumping it
+# is a deliberate change that re-runs those benchmarks, not a silent drift.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

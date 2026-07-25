@@ -1,0 +1,57 @@
+name: Supply-chain audit
+
+# Issue #66, criterion 6. CodeQL has no Rust analysis, so the language-
+# appropriate equivalent is the cargo security toolchain — stated explicitly
+# rather than leaving "we skipped CodeQL" as an unexplained gap:
+#
+#   cargo audit  — RUSTSEC advisories against Cargo.lock (known CVEs)
+#   cargo deny   — license policy, duplicate/yanked crates, banned sources
+#
+# Cron matters more than the PR trigger: a new advisory lands against code
+# that has not changed, so inaction is the failure mode and inaction never
+# opens a PR. Same reasoning as the marketplace-pin gate (#67).
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/supply-chain-audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+  schedule:
+    - cron: "0 6 * * *"   # daily — advisories are published continuously
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: cargo audit + cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # rust-toolchain.toml pins the channel; this action only installs it.
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: "1.95.0"
+
+      - name: Install audit tooling
+        run: |
+          cargo install cargo-audit --locked --version ^0.21
+          cargo install cargo-deny  --locked --version ^0.16
+
+      # Blocking: a known-vulnerable dependency in a tool that reads the
+      # user's whole source tree is not an advisory matter.
+      - name: cargo audit (RUSTSEC advisories)
+        run: cargo audit --deny warnings
+
+      - name: cargo deny (licenses, bans, sources, advisories)
+        run: cargo deny --all-features check
