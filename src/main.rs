@@ -1925,6 +1925,11 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     let want_export = parse_bool_arg(args, "export_artifact", false)?;
     let want_bootstrap = parse_bool_arg(args, "bootstrap", false)?;
     let accept_stale = parse_bool_arg(args, "accept_stale", false)?;
+    // Issue #62: force a from-scratch rebuild even when an incremental baseline
+    // exists (e.g. after changing the language filter or dependency scope, which
+    // the manifest does not capture). Default false → auto-incremental when a
+    // prior index + manifest are present.
+    let want_full = parse_bool_arg(args, "full", false)?;
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -1933,6 +1938,7 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     let output_dir = require_absolute(output_str, "output_dir")?;
     fs::create_dir_all(&output_dir).map_err(|e| format!("create output dir: {e}"))?;
     let graph_dir = output_dir.join("graph");
+    let manifest_path = indexer::manifest::manifest_path(&output_dir);
     // source: H4 fix — validate the derived path ends in `/graph` and is not
     // a forbidden system root before any destructive op.
     validate_graph_path_safe(&graph_dir)?;
@@ -1948,6 +1954,39 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         match attempt_bootstrap(&codebase, &output_dir, &graph_dir, accept_stale) {
             BootstrapOutcome::Imported(resp) => return Ok(resp),
             BootstrapOutcome::Reindex(note) => bootstrap_skipped = note,
+        }
+    }
+
+    // Issue #62 incremental mode: when a prior local graph AND a readable file
+    // manifest exist and the caller did not force `full`, re-index only the
+    // changed files. Any failure logs loudly and falls through to a full
+    // rebuild (§13 — no silent path). Auto-selected so the common "re-index
+    // after editing a few files" call pays work proportional to the diff.
+    if !want_full && graph_dir.exists() {
+        if let Some(prior) = indexer::manifest::load(&manifest_path) {
+            match indexer::index_incremental(
+                &codebase,
+                &graph_dir,
+                &manifest_path,
+                lang_filter,
+                dependency_scope,
+                &prior,
+            ) {
+                Ok(inc) => {
+                    write_graph_meta(&output_dir, &codebase);
+                    return Ok(finish_incremental_response(
+                        inc,
+                        &graph_dir,
+                        &codebase,
+                        want_export,
+                    ));
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[ap] incremental index failed ({e}); falling back to a full re-index"
+                    );
+                }
+            }
         }
     }
 
@@ -1967,6 +2006,14 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     // Record the absolute source root beside the graph (relative file paths
     // stay in the graph; the root lets consumers reconstruct absolute paths).
     write_graph_meta(&output_dir, &codebase);
+    // Issue #62: persist the per-file manifest so the NEXT index_codebase call
+    // can run incrementally. Best-effort — a failed manifest write only forces
+    // the next run to full-index, never fails this one.
+    if let Err(e) =
+        indexer::write_full_manifest(&codebase, &manifest_path, lang_filter, dependency_scope)
+    {
+        eprintln!("[ap] file manifest write failed (index succeeded): {e}");
+    }
 
     // Issue #55: an explicit index is the single (best-ratio, zstd-9) export
     // tier. Failure to export is LOUD but non-fatal — the index itself succeeded.
@@ -1998,6 +2045,53 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         }
     }
     Ok(response)
+}
+
+/// Builds the tool response for a successful incremental re-index (issue #62)
+/// and runs the optional artifact export against the updated graph. The
+/// response carries the {changed, added, deleted, renamed, unchanged} partition
+/// plus files_reparsed and wall time, and `mode: "incremental"` so a caller can
+/// tell an incremental pass from a full one at a glance.
+fn finish_incremental_response(
+    inc: indexer::IncrementalResult,
+    graph_dir: &Path,
+    codebase: &Path,
+    want_export: bool,
+) -> Value {
+    let mut response = json!({
+        "stage": 3,
+        "status": "ok",
+        "tool": "index_codebase",
+        "mode": "incremental",
+        "graph_path": inc.graph_path.to_string_lossy(),
+        "changed": inc.changed,
+        "added": inc.added,
+        "deleted": inc.deleted,
+        "renamed": inc.renamed,
+        "unchanged": inc.unchanged,
+        "files_reparsed": inc.files_reparsed,
+        "elapsed_ms": inc.elapsed_ms,
+    });
+    if want_export {
+        // Whole-graph totals are needed only for the export sidecar; compute
+        // them lazily here (a full table scan the incremental pass itself skips)
+        // and surface them in the response alongside the artifact stats.
+        let (node_count, edge_count) = graph_counts(graph_dir);
+        response["node_count"] = json!(node_count);
+        response["edge_count"] = json!(edge_count);
+        match artifact::export_artifact(graph_dir, codebase, node_count, edge_count) {
+            Ok(stats) => {
+                response["artifact_path"] = json!(stats.artifact_path.to_string_lossy());
+                response["artifact_compressed_bytes"] = json!(stats.compressed_bytes);
+                response["artifact_original_bytes"] = json!(stats.original_bytes);
+            }
+            Err(e) => {
+                eprintln!("[ap] artifact export failed (incremental index succeeded): {e}");
+                response["artifact_error"] = json!(e);
+            }
+        }
+    }
+    response
 }
 
 /// Outcome of a bootstrap attempt (issue #55 staleness contract).
