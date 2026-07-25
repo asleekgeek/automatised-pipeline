@@ -1,0 +1,70 @@
+{
+  "comparison_a_ids_tabular_vs_json": {
+    "ids_reduction_pct": 81.06,
+    "ids_total_chars": 5068,
+    "json_total_chars": 26756,
+    "meets_30pct_criterion": true,
+    "tabular_reduction_pct": 48.05,
+    "tabular_total_chars": 13900
+  },
+  "comparison_b_graph_vs_files": {
+    "files_to_graph_ratio": 1.69,
+    "graph_tabular_total_chars": 13900,
+    "grep_read_transcript_chars": 23508,
+    "note": "comparison (b) is a SCRIPTED simulation of a grep/read transcript, NOT a live agent run"
+  },
+  "per_query": [
+    {
+      "ids_chars": 1202,
+      "ids_reduction_pct": 85.4,
+      "json_chars": 8231,
+      "label": "Q1",
+      "question": "Q1: find functions matching 'process'",
+      "rows": 41,
+      "tabular_chars": 4643,
+      "tabular_reduction_pct": 43.59
+    },
+    {
+      "ids_chars": 2344,
+      "ids_reduction_pct": 75.4,
+      "json_chars": 9529,
+      "label": "Q2",
+      "question": "Q2: list every function's qualified name",
+      "rows": 83,
+      "tabular_chars": 3962,
+      "tabular_reduction_pct": 58.42
+    },
+    {
+      "ids_chars": 132,
+      "ids_reduction_pct": 38.89,
+      "json_chars": 216,
+      "label": "Q3",
+      "question": "Q3: list all execution processes",
+      "rows": 1,
+      "tabular_chars": 228,
+      "tabular_reduction_pct": -5.56
+    },
+    {
+      "ids_chars": 103,
+      "ids_reduction_pct": 0.0,
+      "json_chars": 103,
+      "label": "Q4",
+      "question": "Q4: who depends on core_process?",
+      "rows": 0,
+      "tabular_chars": 158,
+      "tabular_reduction_pct": -53.4
+    },
+    {
+      "ids_chars": 1287,
+      "ids_reduction_pct": 85.17,
+      "json_chars": 8677,
+      "label": "Q5",
+      "question": "Q5: find symbols matching 'config'",
+      "rows": 43,
+      "tabular_chars": 4909,
+      "tabular_reduction_pct": 43.43
+    }
+  ],
+  "token_proxy": "characters of compact JSON serialization (~4 chars per token)",
+  "workload": "fixed 5-query structural workload on a generated fixture repo"
+}

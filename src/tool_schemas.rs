@@ -42,7 +42,7 @@ pub fn tools_list() -> Value {
 fn health_check_schema() -> Value {
     json!({
         "name": "health_check",
-        "description": "Stage 0 — Healthcheck + handshake verification. Returns server identity, protocol version, and the registered stage count. Use this before calling any other stage tool to confirm the MCP is live.",
+        "description": "Stage 0 — Handshake and liveness probe. CALL THIS FIRST, before any other tool, to confirm the MCP is live and to learn which tool profile is active (core vs full) so you know which tools are registered this session. Returns: server identity + version, the MCP protocol version, and the count of registered tools. Needs no graph and no arguments. This is a cheap read-only sanity check, not a data tool — for a graph's node/edge counts and indexing coverage use index_status instead.",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
@@ -295,10 +295,32 @@ fn index_codebase_schema() -> Value {
     })
 }
 
+/// The `detail` token-surface parameter (issue #56), shared by list-returning
+/// tools. `full` (default) is unchanged behavior; `ids` returns bare identifiers.
+fn detail_param() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["full", "ids"],
+        "default": "full",
+        "description": "Token surface (issue #56). 'full' (default): each result as a complete object. 'ids': return ONLY the bare identifiers (qualified names) plus the total — a cheap wide sweep to enumerate what exists before drilling into specific symbols with get_symbol/get_context. Overrides 'format' (an id list needs no table)."
+    })
+}
+
+/// The `format` token-surface parameter (issue #56), shared by list-returning
+/// tools. `json` (default) is objects; `tabular` streams rows as arrays.
+fn format_param() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["json", "tabular"],
+        "default": "json",
+        "description": "Token surface (issue #56). 'json' (default): results as objects. 'tabular': declare the columns ONCE (in the response's 'columns' header) and stream each result as an array of cells in that column order — homogeneous result sets stop repeating field names, cutting tokens. Read each row positionally against 'columns'. Ignored when detail='ids'."
+    })
+}
+
 fn query_graph_schema() -> Value {
     json!({
         "name": "query_graph",
-        "description": "Stage 3a — Execute a Cypher query against an indexed code graph. The graph must have been created by a prior index_codebase call. Returns column names and rows. COVERAGE HONESTY (issue #57): pass graph=\"missed\" to instead enumerate what the index does NOT fully cover (parse-incomplete + skipped + quarantined files) so you know where to prefer grep. IMPORTANT: absence of a file from graph results — or from the 'missed' list — is NOT a completeness guarantee; the signal only marks what the indexer can detect.",
+        "description": "Stage 3a — Run a read-only Cypher query against the code graph: the ESCAPE HATCH for structural questions the typed tools do not cover (arbitrary MATCH patterns, aggregations, multi-hop traversals). USE THIS INSTEAD OF scripting grep across files for structural facts like 'which functions call X and live in module Y'. Read-only: mutation keywords are rejected. Response: 'columns' + 'rows' (rows as compact arrays), a human-readable 'result' table, 'total_count', 'order_stable', and 'next_offset' — page a large result by re-calling with offset=next_offset, but paging is cursor-safe ONLY when your query declares ORDER BY (order_stable reports whether it does). TOKEN SURFACE (issue #56): format='tabular' drops the redundant human 'result' string (rows+columns already carry the data); detail='ids' collapses to the first column's values for a cheap sweep. COVERAGE HONESTY (issue #57): pass graph=\"missed\" to enumerate what the index does NOT cover (parse-incomplete + skipped + quarantined files) so you know where to prefer grep. IMPORTANT: absence from graph results — or from the 'missed' list — is NOT a completeness guarantee; the signal only marks what the indexer can detect.",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
@@ -324,6 +346,13 @@ fn query_graph_schema() -> Value {
                     "minimum": 0,
                     "default": 0,
                     "description": "Number of result rows to skip before filling the byte budget (cursor pagination). Page through a large result by re-calling with offset = the previous response's next_offset until next_offset is absent. IMPORTANT: paging is only cursor-safe when your query declares an ORDER BY — the response reports order_stable; without ORDER BY the row order is unspecified and pages may skip or duplicate rows."
+                },
+                "detail": detail_param(),
+                "format": {
+                    "type": "string",
+                    "enum": ["json", "tabular"],
+                    "default": "json",
+                    "description": "Token surface (issue #56). query_graph already returns 'rows' as compact arrays with 'columns' declared once. 'json' (default) additionally includes a human-readable 'result' text table. 'tabular' OMITS that 'result' string (the rows+columns already carry the data), cutting tokens. detail='ids' collapses to the first column's values."
                 }
             }
         }
@@ -333,7 +362,7 @@ fn query_graph_schema() -> Value {
 fn get_symbol_schema() -> Value {
     json!({
         "name": "get_symbol",
-        "description": "Stage 3a — Look up a symbol by qualified name in the code graph. Returns the node properties plus all incoming and outgoing edges. Qualified names follow the pattern 'file_path::symbol_name' (e.g., 'src/main.rs::handle_tool_call').",
+        "description": "Stage 3a — Exact symbol lookup by qualified name. USE THIS INSTEAD OF opening a file and reading around a definition: given a qualified name ('file_path::symbol_name', e.g. 'src/main.rs::handle_tool_call'), it returns the node's properties (kind, visibility, line span, language) plus EVERY incoming and outgoing edge (defines, calls, imports, implements, …) — the symbol's immediate neighborhood in one call. If you have a keyword but not the qualified name, run search_codebase first; for a grouped 360° view use get_context; for reverse-dependency blast radius use get_impact. Response: the node object + its edge lists. COVERAGE CAVEAT (issue #57): if the symbol is not found it may be UNINDEXED (its file parse-incomplete or skipped) rather than nonexistent — check index_status before concluding it does not exist.",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
@@ -426,6 +455,8 @@ fn get_processes_schema() -> Value {
                     "default": 0,
                     "description": "Number of processes to skip before filling the byte budget (cursor pagination). Processes are returned in a stable total order (name, then entry_point). Page through them all by re-calling with offset = the previous response's next_offset until next_offset is absent."
                 },
+                "detail": detail_param(),
+                "format": format_param(),
                 "sibling_graphs": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -439,7 +470,7 @@ fn get_processes_schema() -> Value {
 fn get_impact_schema() -> Value {
     json!({
         "name": "get_impact",
-        "description": "Stage 3c — Blast radius analysis for a symbol. Returns the symbol's reverse dependencies — callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements) — each as a re-queryable {id, qualified_name, label} handle you can traverse further via get_symbol/get_context/query_graph, plus the communities the symbol belongs to and the processes it participates in. Community/process fields require cluster_graph to have been called first; reverse-dependency fields work on any resolved graph.",
+        "description": "Stage 3c — Reverse-dependency blast radius for a symbol. USE THIS INSTEAD OF grepping a name across the repo to find who depends on it: it returns callers (reverse Calls), importers (reverse Imports), users (reverse Uses), and implementors (reverse Implements), each a re-queryable {id, qualified_name, label, confidence} handle you traverse further via get_symbol/get_context/query_graph — plus the communities and processes affected. Cursor: 'callers' is the PRIMARY paged list (page via next_offset, stable order); importers/users/implementors are byte-capped SUMMARIES from index 0 (secondary_lists_paged=false) — page one at scale via query_graph with ORDER BY. 'dependents_total' is the true pre-truncation size. TOKEN SURFACE (issue #56): detail='ids' → bare qualified names across all four sections; format='tabular' → rows-as-arrays under one 'columns' header. EPISTEMIC HONESTY: 'epistemic'='lower-bound' when the target is reached via dynamic dispatch or heuristically-resolved edges — real impact may exceed what is shown; 'epistemic_reasons' names the carriers. Prereqs: a resolved graph (cluster_graph adds the community/process fields).",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
@@ -460,6 +491,8 @@ fn get_impact_schema() -> Value {
                     "default": 0,
                     "description": "Number of CALLERS to skip before filling the byte budget (cursor pagination). 'callers' is the PRIMARY paged list, ordered by a stable total order (qualified_name, then id); page through every caller via next_offset. The other reverse-dependency lists (importers, users, implementors) are byte-capped SUMMARIES starting at index 0, not cursored (secondary_lists_paged=false) — to page one of those at scale, query it directly via query_graph with an explicit ORDER BY."
                 },
+                "detail": detail_param(),
+                "format": format_param(),
                 "sibling_graphs": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -501,7 +534,7 @@ fn index_history_schema() -> Value {
 fn search_codebase_schema() -> Value {
     json!({
         "name": "search_codebase",
-        "description": "Stage 3d — Search the code graph by keyword. Returns ranked symbols with name, kind, file path, community, process participation, and relevance score. Use this to find symbols without knowing their exact qualified names. Requires index_codebase + resolve_graph + cluster_graph to have been called first (or use analyze_codebase for all-in-one).",
+        "description": "Stage 3d — Ranked keyword search over the code graph. USE THIS INSTEAD OF grep/ripgrep when you know a name or concept but not the exact qualified name: it ranks symbols by hybrid lexical+structural relevance and returns structural context grep cannot — kind, file path, community, process participation, score. Response: 'results' (ranked, cursor-paged), 'total_count', 'by_process' (results grouped by execution flow), and 'next_offset' when more remain — page by re-calling with offset=next_offset until it is absent (stable order: score desc, then qualified_name). TOKEN SURFACE (issue #56): detail='ids' returns only qualified names for a cheap wide sweep before drilling in; format='tabular' streams rows as arrays under a one-line 'columns' header. Narrow with label_filter (Function/Method/Struct/…). COVERAGE CAVEAT (issue #57): a symbol absent from results may simply be UNINDEXED — the graph can be parse-incomplete; if a negative result matters, check index_status / query_graph(graph=\"missed\") and grep the flagged files. Prereqs: index_codebase + resolve_graph + cluster_graph (or analyze_codebase for all-in-one).",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
@@ -532,6 +565,8 @@ fn search_codebase_schema() -> Value {
                     "enum": ["Function", "Method", "Struct", "Enum", "Trait", "Module", "Constant", "TypeAlias"],
                     "description": "Optional: only return symbols of this kind."
                 },
+                "detail": detail_param(),
+                "format": format_param(),
                 "sibling_graphs": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -545,7 +580,7 @@ fn search_codebase_schema() -> Value {
 fn get_context_schema() -> Value {
     json!({
         "name": "get_context",
-        "description": "Stage 3d — 360° symbol view. Returns the symbol plus ALL its relationships grouped by kind: what it imports, what imports it, what it calls, what calls it, what it implements, what implements it, community membership, and process participation. Richer than get_symbol — use this when you need full context for PRD generation or impact analysis.",
+        "description": "Stage 3d — 360° symbol view: the symbol plus ALL its relationships grouped and labeled by kind — imports / imported-by, calls / called-by, implements / implemented-by, community membership, process participation. USE THIS INSTEAD OF reading a file and manually tracing what a symbol touches; it is the richest single-symbol tool (get_symbol returns raw edges, this groups them). Ideal for PRD generation, review prep, and understanding a symbol before changing it. Input: a qualified name ('file_path::symbol_name'); run search_codebase first if you only have a keyword, or get_impact for the reverse-dependency blast radius. COVERAGE CAVEAT (issue #57): grouped relationships are only as complete as the graph — a caller in a parse-incomplete file will be absent; verify negatives with index_status or query_graph(graph=\"missed\").",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
@@ -568,7 +603,7 @@ fn get_context_schema() -> Value {
 fn analyze_codebase_schema() -> Value {
     json!({
         "name": "analyze_codebase",
-        "description": "Stage 3 — All-in-one codebase analysis. Runs index_codebase + resolve_graph + cluster_graph in sequence, producing a fully searchable code graph in one call. Supports Rust, Python, and TypeScript (auto-detected by extension). Returns combined statistics from all phases.",
+        "description": "Stage 3 — All-in-one: runs index_codebase + resolve_graph + cluster_graph in sequence, producing a fully searchable, resolved, clustered graph in ONE call. USE THIS FIRST on a new repo instead of calling the three stages separately. Auto-detects language by extension (Rust, Python, TypeScript, Java, Kotlin, Swift, Obj-C, C, C++, Go). Returns combined statistics from every phase (nodes/edges, resolution counts, communities/processes) AND a coverage report (issue #57) listing files that were parse-incomplete / skipped / quarantined. COVERAGE CAVEAT: absence of a flag is NOT a completeness guarantee — before trusting a negative graph result on a specific file, consult index_status or query_graph(graph=\"missed\") and grep the flagged files/ranges. Afterward, explore with search_codebase / get_context / get_impact / query_graph; re-run after edits (indexing is incremental by default).",
         "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
@@ -735,7 +770,7 @@ fn verify_semantic_diff_schema() -> Value {
 fn detect_changes_schema() -> Value {
     json!({
         "name": "detect_changes",
-        "description": "Stage 3e — Git diff impact analysis. Maps changed lines to affected symbols, communities, and processes in the code graph. Accepts either raw unified diff text OR base_ref/head_ref to run git diff internally. Returns affected symbols with change type, community membership, process participation, and a heuristic risk score (0.0-1.0).",
+        "description": "Stage 3e — Git-diff impact analysis: maps changed lines to the affected symbols, communities, and processes, so you see a diff's blast radius without reading it line by line. USE THIS INSTEAD OF eyeballing a diff to guess what a change touches. Input: either raw unified-diff text, or base_ref/head_ref to run git diff internally. Returns affected symbols with change type (added/modified/deleted), community and process membership, and a heuristic risk score (0.0–1.0) per symbol. Follow up with get_impact on a high-risk symbol to expand its reverse-dependency blast radius. COVERAGE CAVEAT (issue #57): symbols in parse-incomplete files may be missing from the mapping — verify with index_status when a change lands in a flagged file.",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
