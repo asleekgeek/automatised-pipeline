@@ -21,6 +21,7 @@ mod ambiguity_policy;
 mod artifact;
 mod bridge;
 mod call_evidence;
+mod cli;
 mod clustering;
 mod cochange;
 mod epistemic;
@@ -28,6 +29,8 @@ mod git_diff;
 mod graph_cache;
 mod graph_store;
 mod history;
+mod hook_augment;
+mod host_install;
 mod indexer;
 mod language_provider;
 mod lsp_client;
@@ -5870,6 +5873,15 @@ fn main() {
     // Read-once-at-startup configuration: `--profile` flag beats `AP_PROFILE`
     // env var; absent both, every tool is registered (see tool_profile.rs).
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Issue #59 subcommands run and exit BEFORE the MCP stdio server starts.
+    match args.first().map(String::as_str) {
+        Some("install") => process::exit(cli::run_install(&args[1..])),
+        Some("uninstall") => process::exit(cli::run_uninstall(&args[1..])),
+        Some("hook-augment") => process::exit(cli::run_hook_augment()),
+        _ => {}
+    }
+
     let env_profile = std::env::var(tool_profile::PROFILE_ENV_VAR).ok();
     let profile = match ToolProfile::resolve(&args, env_profile.as_deref()) {
         Ok(profile) => profile,

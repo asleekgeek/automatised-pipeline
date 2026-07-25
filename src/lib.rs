@@ -14,6 +14,8 @@ pub mod epistemic;
 pub mod git_diff;
 pub mod graph_store;
 pub mod history;
+pub mod hook_augment;
+pub mod host_install;
 pub mod indexer;
 pub mod language_provider;
 pub mod lsp_client;
