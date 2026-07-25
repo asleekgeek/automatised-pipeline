@@ -180,6 +180,14 @@ fn should_skip(name: &str, dependency_scope: DependencyScope) -> bool {
     if name == ".git" {
         return true;
     }
+    // The tool's own artifact directory (issue #55 committed graph snapshot +
+    // sidecar) is generated data, never source. Skipping it in EVERY dependency
+    // scope keeps a full index and an artifact-bootstrap fill identical: the
+    // committed `graph.zst`/`file_manifest.json` never become File nodes, so the
+    // artifact's presence in the tree can't perturb graph parity (issue #62/#55).
+    if name == crate::artifact::ARTIFACT_DIR {
+        return true;
+    }
     // PublicApi/Full both descend into vendored/build/cache dirs so the graph
     // covers node_modules, .venv, vendor, target, etc. They differ at the
     // persistence filter (indexer::persist), not here.

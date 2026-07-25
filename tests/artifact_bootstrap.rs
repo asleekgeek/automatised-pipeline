@@ -128,9 +128,14 @@ fn fresh_clone_bootstrap_matches_original_graph() {
     };
 
     // -- 2. Export the artifact into the repo tree --------------------------
-    let stats =
-        artifact::export_artifact(&original_graph, &repo, result.node_count, result.edge_count)
-            .expect("export should succeed");
+    let stats = artifact::export_artifact(
+        &original_graph,
+        &repo,
+        result.node_count,
+        result.edge_count,
+        None,
+    )
+    .expect("export should succeed");
     assert!(stats.compressed_bytes > 0, "artifact must be non-empty");
     assert!(
         artifact::artifact_exists(&repo),
