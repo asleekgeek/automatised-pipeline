@@ -8,6 +8,10 @@ detail mode + tabular output). Reproducible: the fixture is generated in-code, s
 - **Base commit:** `37a55fe` (branch `feat/token-surface-56` off this).
 - **Date:** 2026-07-25.
 - **Toolchain:** rustc 1.95.0, release profile.
+- **Search/graph dependency set (issue #78):** tantivy 0.26.1, lbug 0.18.3.
+  Re-run after the upgrade from tantivy 0.22.1 / lbug 0.15.4. A search-engine
+  change can move ranking silently, so these numbers are not carried over from
+  the previous versions; they were regenerated on this dependency set.
 - **Command:** `cargo run -p token-surface-bench --release` → writes `results.json`.
 
 ## Methodology
