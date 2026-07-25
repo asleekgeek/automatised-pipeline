@@ -749,6 +749,23 @@ pub const REL_TABLES: &[(&str, &str, &str)] = &[
         NODE_VERSION,
         NODE_VERSION,
     ),
+    // Temporal coupling (issue #58) — Tornhill-style git co-change. One
+    // File→File edge per pair that changed together often enough; properties
+    // carry the coupling strength. source: Tornhill 2015 (temporal coupling),
+    // thresholds from DeusData/codebase-memory-mcp pass_githistory.c.
+    ("FILE_CHANGES_WITH", NODE_FILE, NODE_FILE),
+    // Runtime-observed calls (issue #58) — ingest_traces creates these where a
+    // runtime caller→callee has NO static Calls edge (the divergence signal:
+    // runtime truth the static resolver missed). Symbol-level, so one table per
+    // (Function|Method)×(Function|Method) callable pair.
+    (
+        "OBSERVED_CALLS_Function_Function",
+        NODE_FUNCTION,
+        NODE_FUNCTION,
+    ),
+    ("OBSERVED_CALLS_Function_Method", NODE_FUNCTION, NODE_METHOD),
+    ("OBSERVED_CALLS_Method_Function", NODE_METHOD, NODE_FUNCTION),
+    ("OBSERVED_CALLS_Method_Method", NODE_METHOD, NODE_METHOD),
 ];
 
 fn node_table_ddl() -> Vec<String> {
@@ -898,11 +915,63 @@ fn is_participates_rel(name: &str) -> bool {
     name.starts_with("ParticipatesIn_")
 }
 
+/// Temporal-coupling edge (issue #58): File→File git co-change.
+fn is_cochange_rel(name: &str) -> bool {
+    name == "FILE_CHANGES_WITH"
+}
+
+/// Runtime-observed call edge (issue #58): ingest_traces divergence signal.
+fn is_observed_calls_rel(name: &str) -> bool {
+    name.starts_with("OBSERVED_CALLS_")
+}
+
+/// Symbol-level static Calls tables that ingest_traces annotates with an
+/// `observed_count` (the runtime weight on a statically-known call). Excludes
+/// the CallSite-level Calls tables — traces are symbol→symbol, not call-site.
+pub fn is_observable_static_calls_rel(name: &str) -> bool {
+    matches!(
+        name,
+        "Calls_Function_Function"
+            | "Calls_Function_Method"
+            | "Calls_Method_Function"
+            | "Calls_Method_Method"
+    )
+}
+
 fn rel_table_ddl() -> Vec<String> {
     REL_TABLES
         .iter()
         .map(|(name, from, to)| {
-            if is_resolution_rel(name) || is_structural_provenance_rel(name) {
+            if is_cochange_rel(name) {
+                // Temporal coupling (issue #58). cochange_count = commits where
+                // both files changed; support = min(changes_a, changes_b) (the
+                // weaker file's revision count — the coupling denominator);
+                // coupling = cochange_count/support (Tornhill's degree, the
+                // thresholded metric); jaccard = cochange/(a+b-cochange); and the
+                // most recent co-change unix timestamp.
+                format!(
+                    "CREATE REL TABLE IF NOT EXISTS {name}(\
+                     FROM {from} TO {to}, \
+                     cochange_count INT64, support INT64, coupling DOUBLE, \
+                     jaccard DOUBLE, last_co_change INT64)"
+                )
+            } else if is_observed_calls_rel(name) {
+                // Runtime-observed calls (issue #58): observed_count = how many
+                // times the trace saw this caller→callee.
+                format!(
+                    "CREATE REL TABLE IF NOT EXISTS {name}(\
+                     FROM {from} TO {to}, observed_count INT64)"
+                )
+            } else if is_observable_static_calls_rel(name) {
+                // Symbol-level Calls also carry observed_count (issue #58) so
+                // ingest_traces can annotate a statically-known call with its
+                // runtime weight, in addition to the resolution provenance.
+                format!(
+                    "CREATE REL TABLE IF NOT EXISTS {name}(\
+                     FROM {from} TO {to}, \
+                     confidence DOUBLE, resolution_method STRING, observed_count INT64)"
+                )
+            } else if is_resolution_rel(name) || is_structural_provenance_rel(name) {
                 // resolution_rel: stages/stage-3b.md §2.
                 // structural_provenance: Spike B' BUG #4 — Defines/HasMethod
                 // now also carry (confidence, resolution_method) populated

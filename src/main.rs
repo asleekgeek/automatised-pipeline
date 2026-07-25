@@ -22,6 +22,7 @@ mod artifact;
 mod bridge;
 mod call_evidence;
 mod clustering;
+mod cochange;
 mod epistemic;
 mod git_diff;
 mod graph_cache;
@@ -1931,6 +1932,11 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     // the manifest does not capture). Default false → auto-incremental when a
     // prior index + manifest are present.
     let want_full = parse_bool_arg(args, "full", false)?;
+    // Issue #58: mine git temporal coupling (FILE_CHANGES_WITH) after indexing.
+    // Default true — it is cheap (one bounded `git log`) and the architect agent
+    // reads churning pairs straight from the graph. Set false to skip (e.g. a
+    // non-git tree, though mining self-skips there too).
+    let want_cochange = parse_bool_arg(args, "cochange", true)?;
 
     let codebase = require_absolute(path_str, "path")?;
     if !codebase.exists() {
@@ -1990,6 +1996,7 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
                         &codebase,
                         &manifest_path,
                         want_export,
+                        want_cochange,
                     ));
                 }
                 Err(e) => {
@@ -2032,6 +2039,13 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
     if let Err(e) = indexer::coverage::save(&coverage_path, &result.coverage) {
         eprintln!("[ap] coverage sidecar write failed (index succeeded): {e}");
     }
+    // Issue #58: mine git temporal coupling into FILE_CHANGES_WITH edges. Full
+    // index → full re-mine of the window.
+    let cochange_summary = if want_cochange {
+        run_cochange(&graph_dir, &codebase, &output_dir, cochange::Mode::Full)
+    } else {
+        Value::Null
+    };
 
     // Issue #55: an explicit index is the single (best-ratio, zstd-9) export
     // tier. Failure to export is LOUD but non-fatal — the index itself succeeded.
@@ -2045,6 +2059,9 @@ fn do_index_codebase(arguments: &Value) -> Result<Value, String> {
         "files_indexed": result.files_indexed,
         "elapsed_ms": result.elapsed_ms,
     });
+    if !cochange_summary.is_null() {
+        response["cochange"] = cochange_summary;
+    }
     response["coverage"] = coverage_summary(&result.coverage);
     if let Some(note) = bootstrap_skipped {
         response["bootstrap_skipped"] = note;
@@ -2214,6 +2231,229 @@ fn do_index_status(arguments: &Value) -> Result<Value, String> {
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 — ingest_traces (issue #58 runtime enrichment)
+// ---------------------------------------------------------------------------
+
+fn run_ingest_traces(arguments: &Value) -> Value {
+    match do_ingest_traces(arguments) {
+        Ok(v) => v,
+        Err(msg) => json!({
+            "stage": 3, "status": "error", "reason": "ingest_traces_failed", "message": msg
+        }),
+    }
+}
+
+/// Node labels a runtime trace endpoint may resolve to (callables).
+const CALLABLE_LABELS: &[&str] = &["Function", "Method"];
+
+/// Folds runtime caller→callee observations into the graph (issue #58): annotate
+/// a matching static Calls edge with `observed_count`, or create an
+/// `OBSERVED_CALLS` edge where static resolution found none (the divergence
+/// signal — runtime truth the static analysis missed).
+///
+/// Input: `{graph_path, traces: [{caller, callee, count}]}`. `caller`/`callee`
+/// are qualified names (`file::symbol`); `count` defaults to 1. Postconditions:
+/// each trace either annotated a static Calls edge (matched), created/updated an
+/// OBSERVED_CALLS edge (unmatched_created), or was recorded as unresolved
+/// (endpoint not a Function/Method node). The response reports the three counts
+/// plus a capped list of the created divergences and the unresolved names.
+fn do_ingest_traces(arguments: &Value) -> Result<Value, String> {
+    let args = arguments.as_object().ok_or("arguments must be an object")?;
+    let graph_str = args
+        .get("graph_path")
+        .and_then(|v| v.as_str())
+        .ok_or("missing required field 'graph_path'")?;
+    let graph_path = Path::new(graph_str);
+    if !graph_path.exists() {
+        return Err(format!("graph_path does not exist: {graph_str}"));
+    }
+    let traces = args
+        .get("traces")
+        .and_then(|v| v.as_array())
+        .ok_or("missing required field 'traces' (array of {caller, callee, count})")?;
+
+    // Aggregate observations per (caller, callee) so repeated pairs sum instead
+    // of creating duplicate edges.
+    let mut agg: std::collections::BTreeMap<(String, String), i64> =
+        std::collections::BTreeMap::new();
+    for t in traces {
+        let caller = t.get("caller").and_then(|v| v.as_str());
+        let callee = t.get("callee").and_then(|v| v.as_str());
+        let (caller, callee) = match (caller, callee) {
+            (Some(a), Some(b)) => (a.to_string(), b.to_string()),
+            _ => return Err("each trace needs 'caller' and 'callee' strings".to_string()),
+        };
+        let count = t.get("count").and_then(|v| v.as_i64()).unwrap_or(1).max(1);
+        *agg.entry((caller, callee)).or_insert(0) += count;
+    }
+
+    let store = graph_cache::open_cached(graph_path)?;
+    let mut matched = 0u64;
+    let mut unmatched_created = 0u64;
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut divergences: Vec<Value> = Vec::new();
+
+    for ((caller, callee), count) in agg {
+        let from_label = callable_label(&store, &caller);
+        let to_label = callable_label(&store, &callee);
+        let (from_label, to_label) = match (from_label, to_label) {
+            (Some(f), Some(t)) => (f, t),
+            _ => {
+                if from_label.is_none() {
+                    unresolved.push(caller.clone());
+                }
+                if to_label.is_none() {
+                    unresolved.push(callee.clone());
+                }
+                continue;
+            }
+        };
+        let static_table = format!("Calls_{from_label}_{to_label}");
+        if annotate_static_call(&store, &static_table, &caller, &callee, count)? {
+            matched += 1;
+        } else {
+            let observed_table = format!("OBSERVED_CALLS_{from_label}_{to_label}");
+            upsert_observed_call(&store, &observed_table, &caller, &callee, count)?;
+            unmatched_created += 1;
+            if divergences.len() < COVERAGE_LIST_CAP {
+                divergences.push(json!({
+                    "caller": caller, "callee": callee, "observed_count": count
+                }));
+            }
+        }
+    }
+
+    unresolved.sort();
+    unresolved.dedup();
+    let unresolved_total = unresolved.len();
+    unresolved.truncate(COVERAGE_LIST_CAP);
+
+    Ok(json!({
+        "stage": 3,
+        "status": "ok",
+        "tool": "ingest_traces",
+        "matched": matched,
+        "unmatched_created": unmatched_created,
+        "unresolved_names": unresolved_total,
+        "unresolved_names_sample": unresolved,
+        "observed_divergences": divergences,
+        "note": "matched = a static Calls edge annotated with observed_count. \
+                 unmatched_created = OBSERVED_CALLS edges where runtime saw a call \
+                 static analysis did not — the valuable divergence signal. \
+                 unresolved_names = trace endpoints that are not Function/Method \
+                 nodes (wrong qualified name, or an uncovered/unindexed symbol).",
+    }))
+}
+
+/// The callable label ("Function"/"Method") of the node with id `qn`, or `None`
+/// if no such callable node exists.
+fn callable_label(store: &graph_store::GraphStore, qn: &str) -> Option<&'static str> {
+    for &label in CALLABLE_LABELS {
+        let q = format!(
+            "MATCH (n:{label}) WHERE n.id = {} RETURN count(n)",
+            graph_store::cypher_str(qn)
+        );
+        if let Ok(qr) = store.execute_query(&q) {
+            let n = qr
+                .rows
+                .first()
+                .and_then(|r| r.first())
+                .and_then(|c| c.parse::<u64>().ok())
+                .unwrap_or(0);
+            if n > 0 {
+                return Some(label);
+            }
+        }
+    }
+    None
+}
+
+/// Annotates an existing static Calls edge with a runtime `observed_count`
+/// (accumulating). Returns `true` if such an edge existed (and was annotated),
+/// `false` if none exists (so the caller creates an OBSERVED_CALLS edge instead).
+fn annotate_static_call(
+    store: &graph_store::GraphStore,
+    table: &str,
+    caller: &str,
+    callee: &str,
+    count: i64,
+) -> Result<bool, String> {
+    let (from_label, to_label) = table
+        .strip_prefix("Calls_")
+        .and_then(|s| s.split_once('_'))
+        .ok_or_else(|| format!("bad calls table {table}"))?;
+    let a = graph_store::cypher_str(caller);
+    let b = graph_store::cypher_str(callee);
+    let set = format!(
+        "MATCH (x:{from_label})-[r:{table}]->(y:{to_label}) \
+         WHERE x.id = {a} AND y.id = {b} \
+         SET r.observed_count = coalesce(r.observed_count, 0) + {count}"
+    );
+    // SET on zero matches is a no-op; detect existence separately so we know
+    // whether to fall through to an OBSERVED_CALLS edge.
+    let exists_q = format!(
+        "MATCH (x:{from_label})-[r:{table}]->(y:{to_label}) \
+         WHERE x.id = {a} AND y.id = {b} RETURN count(r)"
+    );
+    let exists = store
+        .execute_query(&exists_q)?
+        .rows
+        .first()
+        .and_then(|r| r.first())
+        .and_then(|c| c.parse::<u64>().ok())
+        .map(|n| n > 0)
+        .unwrap_or(false);
+    if exists {
+        store.execute_query(&set)?;
+    }
+    Ok(exists)
+}
+
+/// Creates or accumulates an OBSERVED_CALLS edge (the runtime-only divergence).
+fn upsert_observed_call(
+    store: &graph_store::GraphStore,
+    table: &str,
+    caller: &str,
+    callee: &str,
+    count: i64,
+) -> Result<(), String> {
+    let (from_label, to_label) = table
+        .strip_prefix("OBSERVED_CALLS_")
+        .and_then(|s| s.split_once('_'))
+        .ok_or_else(|| format!("bad observed table {table}"))?;
+    let a = graph_store::cypher_str(caller);
+    let b = graph_store::cypher_str(callee);
+    let exists_q = format!(
+        "MATCH (x:{from_label})-[r:{table}]->(y:{to_label}) \
+         WHERE x.id = {a} AND y.id = {b} RETURN count(r)"
+    );
+    let exists = store
+        .execute_query(&exists_q)?
+        .rows
+        .first()
+        .and_then(|r| r.first())
+        .and_then(|c| c.parse::<u64>().ok())
+        .map(|n| n > 0)
+        .unwrap_or(false);
+    if exists {
+        let set = format!(
+            "MATCH (x:{from_label})-[r:{table}]->(y:{to_label}) \
+             WHERE x.id = {a} AND y.id = {b} \
+             SET r.observed_count = coalesce(r.observed_count, 0) + {count}"
+        );
+        store.execute_query(&set)?;
+    } else {
+        store.insert_edge(
+            table,
+            caller,
+            callee,
+            &[("observed_count", &count.to_string())],
+        )?;
+    }
+    Ok(())
+}
+
 /// Builds the tool response for a successful incremental re-index (issue #62)
 /// and runs the optional artifact export against the updated graph. The
 /// response carries the {changed, added, deleted, renamed, unchanged} partition
@@ -2225,6 +2465,7 @@ fn finish_incremental_response(
     codebase: &Path,
     manifest_path: &Path,
     want_export: bool,
+    want_cochange: bool,
 ) -> Value {
     let mut response = json!({
         "stage": 3,
@@ -2242,6 +2483,18 @@ fn finish_incremental_response(
     });
     // Coverage (issue #57) was refreshed by the incremental pass; load + report it.
     response["coverage"] = coverage_summary_for_graph(graph_dir);
+    // Temporal coupling (issue #58): EXTEND the mined aggregates with the commits
+    // since the last mine, then re-derive edges. Git history is append-only, so
+    // an incremental index need not re-walk the window.
+    if want_cochange {
+        if let Some(output_dir) = graph_dir.parent() {
+            let summary =
+                run_cochange(graph_dir, codebase, output_dir, cochange::Mode::Incremental);
+            if !summary.is_null() {
+                response["cochange"] = summary;
+            }
+        }
+    }
     if want_export {
         // Whole-graph totals are needed only for the export sidecar; compute
         // them lazily here (a full table scan the incremental pass itself skips)
@@ -2469,6 +2722,44 @@ fn bootstrap_import_and_fill(
     // Coverage (issue #57): refreshed by the fill (carry-forward + reparsed gaps).
     resp["coverage"] = coverage_summary_for_graph(graph_dir);
     BootstrapOutcome::Imported(resp)
+}
+
+/// Mines git temporal coupling into the graph at `graph_dir` (issue #58) and
+/// returns a JSON summary, or `Value::Null` when there is nothing to report (not
+/// a git tree, or a best-effort failure — never fatal to the index). `Full`
+/// re-mines the window; `Incremental` extends the sidecar aggregates with new
+/// commits. `output_dir` holds the `cochange.json` sidecar.
+fn run_cochange(
+    graph_dir: &Path,
+    codebase: &Path,
+    output_dir: &Path,
+    mode: cochange::Mode,
+) -> Value {
+    let store = match graph_store::GraphStore::open_or_create(graph_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[ap] cochange: open graph failed: {e}");
+            return Value::Null;
+        }
+    };
+    let prior = if mode == cochange::Mode::Incremental {
+        cochange::load_state(&cochange::state_path(output_dir))
+    } else {
+        None
+    };
+    match cochange::mine(&store, codebase, output_dir, mode, prior) {
+        Ok(Some(mr)) => json!({
+            "mode": mr.mode,
+            "commits_scanned": mr.commits_scanned,
+            "edges_written": mr.edges_written,
+            "mined_to_sha": mr.mined_to_sha,
+        }),
+        Ok(None) => Value::Null, // not a git working tree
+        Err(e) => {
+            eprintln!("[ap] cochange mining failed (index succeeded): {e}");
+            Value::Null
+        }
+    }
 }
 
 /// Reads node/edge counts from an on-disk graph. Best-effort: an open/query
@@ -3336,6 +3627,39 @@ fn run_get_impact(arguments: &Value) -> Value {
 /// (issue #56). Shared by all four impact sections (they are homogeneous).
 const IMPACT_COLUMNS: &[&str] = &["qualified_name", "label", "confidence", "id"];
 
+/// Columns of a co-change partner row (issue #58) in get_impact.
+const COCHANGE_PARTNER_COLUMNS: &[&str] = &["file", "cochange_count", "coupling", "jaccard"];
+
+/// The FILE_CHANGES_WITH partners of `file` (issue #58), strongest coupling
+/// first, as homogeneous objects ready for the token surface. Best-effort: an
+/// empty graph or a graph mined without cochange yields an empty list.
+fn cochange_partners(store: &graph_store::GraphStore, file: &str) -> Vec<Value> {
+    // Undirected: FILE_CHANGES_WITH stores one edge per pair (a<b), so match both
+    // directions to find every partner of `file`.
+    let q = format!(
+        "MATCH (f:File)-[r:FILE_CHANGES_WITH]-(g:File) WHERE f.id = {} \
+         RETURN g.id, r.cochange_count, r.coupling, r.jaccard \
+         ORDER BY r.coupling DESC, g.id",
+        graph_store::cypher_str(file)
+    );
+    let qr = match store.execute_query(&q) {
+        Ok(qr) => qr,
+        Err(_) => return Vec::new(),
+    };
+    qr.rows
+        .iter()
+        .filter(|row| row.len() >= 4)
+        .map(|row| {
+            json!({
+                "file": row[0],
+                "cochange_count": row[1].parse::<i64>().unwrap_or(0),
+                "coupling": row[2],
+                "jaccard": row[3],
+            })
+        })
+        .collect()
+}
+
 fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
     let graph_str = args
@@ -3482,6 +3806,28 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     if let Some(next) = callers.next_offset {
         out["next_offset"] = json!(next);
     }
+
+    // Issue #58: the symbol's FILE co-change partners are impact candidates the
+    // static call graph cannot see (files that historically change together —
+    // the architect agent's churning-pairs signal). Add them as a section under
+    // the same detail/format surface. The symbol's file is the qn up to '::'.
+    let file = qn.split("::").next().unwrap_or(qn);
+    let partners = cochange_partners(&store, file);
+    // Partners have their own shape ({file, cochange_count, coupling, jaccard}),
+    // so render them with their own columns/id — NOT the impact `render` closure.
+    let partner_view = token_surface::render_list(
+        &partners,
+        COCHANGE_PARTNER_COLUMNS,
+        "file",
+        &detail,
+        &format,
+    );
+    out["cochange_partners"] = partner_view.value;
+    out["cochange_partners_total"] = json!(partners.len());
+    if partner_view.columns.is_some() {
+        out["cochange_partner_columns"] = json!(COCHANGE_PARTNER_COLUMNS);
+    }
+
     // Suggested follow-up traversals from this blast-radius result.
     out["next_steps"] = impact_next_steps(&impact, qn);
 
@@ -4875,6 +5221,7 @@ fn handle_tool_call(params: &Value, profile: ToolProfile) -> Value {
         "abort_verification" => run_abort_verification(&arguments),
         "index_codebase" => run_index_codebase(&arguments),
         "index_status" => run_index_status(&arguments),
+        "ingest_traces" => run_ingest_traces(&arguments),
         "query_graph" => run_query_graph(&arguments),
         "get_symbol" => run_get_symbol(&arguments),
         "resolve_graph" => run_resolve_graph(&arguments),
@@ -5909,6 +6256,195 @@ mod token_surface_tools_tests {
         assert!(
             rows.iter().all(|v| v.is_string()),
             "ids mode must collapse rows to the first column's bare values, got {rows:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod temporal_runtime_tests {
+    // Issue #58 — ingest_traces (matched / static-miss / unresolved), the
+    // FILE_CHANGES_WITH surface in get_impact, and query_graph reachability of
+    // both new edge families, exercised end to end through the real handlers.
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn git(repo: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Builds a git repo where caller.py calls callee.py::callee (resolvable) and
+    /// the two files co-change 3× (for FILE_CHANGES_WITH). Returns (tmp, graph).
+    fn fixture() -> (tempfile::TempDir, String) {
+        let tmp = tempfile::Builder::new()
+            .prefix("temporal_rt_")
+            .tempdir()
+            .expect("tmp");
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).expect("mk repo");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "t@ap.dev"]);
+        git(&repo, &["config", "user.name", "AP"]);
+        git(&repo, &["config", "commit.gpgsign", "false"]);
+        let callee_body =
+            |n: i32| format!("def callee():\n    return {n}\n\ndef other():\n    return 2\n");
+        fs::write(repo.join("callee.py"), callee_body(1)).unwrap();
+        fs::write(
+            repo.join("caller.py"),
+            "from callee import callee\n\ndef caller():\n    return callee()\n",
+        )
+        .unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "c1"]);
+        // Two more commits touching BOTH files → 3 co-changes total.
+        for i in 2..4 {
+            fs::write(repo.join("callee.py"), callee_body(i)).unwrap();
+            fs::write(
+                repo.join("caller.py"),
+                format!("from callee import callee\n\ndef caller():\n    return callee() + {i}\n"),
+            )
+            .unwrap();
+            git(&repo, &["add", "-A"]);
+            git(&repo, &["commit", "-q", "-m", &format!("c{i}")]);
+        }
+
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).expect("mk out");
+        let idx = do_index_codebase(&json!({
+            "path": repo.to_string_lossy(),
+            "output_dir": out.to_string_lossy(),
+            "full": true,
+        }))
+        .expect("index");
+        // The index mined co-change (git repo, default on).
+        assert_eq!(
+            idx["cochange"]["mode"],
+            json!("full"),
+            "cochange mined on full index"
+        );
+        let graph = idx["graph_path"].as_str().expect("graph_path").to_string();
+        // Resolve so the static Calls edge caller->callee exists.
+        let store = graph_store::GraphStore::open_or_create(Path::new(&graph)).expect("open");
+        resolver::resolve_graph(&store).expect("resolve");
+        drop(store);
+        (tmp, graph)
+    }
+
+    #[test]
+    fn ingest_traces_matches_creates_and_reports_unresolved() {
+        let (_tmp, graph) = fixture();
+        let resp = run_ingest_traces(&json!({
+            "graph_path": graph,
+            "traces": [
+                { "caller": "caller.py::caller", "callee": "callee.py::callee", "count": 5 },
+                { "caller": "caller.py::caller", "callee": "callee.py::other", "count": 3 },
+                { "caller": "ghost.py::nope", "callee": "callee.py::callee" }
+            ]
+        }));
+        assert_eq!(resp["status"], json!("ok"), "resp: {resp}");
+        assert_eq!(
+            resp["matched"],
+            json!(1),
+            "the static caller->callee call is annotated"
+        );
+        assert_eq!(
+            resp["unmatched_created"],
+            json!(1),
+            "caller->other has no static edge → OBSERVED_CALLS"
+        );
+        assert_eq!(
+            resp["unresolved_names"],
+            json!(1),
+            "ghost::nope is not a node"
+        );
+
+        // The static Calls edge now carries the observed weight.
+        let weighted = run_query_graph(&json!({
+            "graph_path": graph,
+            "query": "MATCH (a:Function)-[r:Calls_Function_Function]->(b:Function) \
+                      WHERE a.id = 'caller.py::caller' AND b.id = 'callee.py::callee' \
+                      RETURN r.observed_count"
+        }));
+        assert_eq!(
+            weighted["rows"][0][0],
+            json!("5"),
+            "observed_count annotated: {weighted}"
+        );
+
+        // The divergence is a queryable OBSERVED_CALLS edge (query_graph surface).
+        let observed = run_query_graph(&json!({
+            "graph_path": graph,
+            "query": "MATCH (a:Function)-[r:OBSERVED_CALLS_Function_Function]->(b:Function) \
+                      RETURN a.id, b.id, r.observed_count"
+        }));
+        let rows = observed["rows"].as_array().expect("rows");
+        assert!(
+            rows.iter()
+                .any(|r| r[0] == "caller.py::caller" && r[1] == "callee.py::other"),
+            "OBSERVED_CALLS divergence must be reachable via query_graph: {observed}"
+        );
+    }
+
+    #[test]
+    fn get_impact_surfaces_cochange_partners_under_token_surface() {
+        let (_tmp, graph) = fixture();
+        // callee.py::callee is called by caller; its file co-changes with caller.py.
+        let full = run_get_impact(&json!({
+            "graph_path": graph, "qualified_name": "callee.py::callee"
+        }));
+        let partners = full["cochange_partners"]
+            .as_array()
+            .expect("cochange_partners");
+        assert!(
+            partners.iter().any(|p| p["file"] == "caller.py"),
+            "callee.py's co-change partner caller.py must be listed: {}",
+            full["cochange_partners"]
+        );
+
+        // ids mode (issue #56 renderer) applies to the section automatically.
+        let ids = run_get_impact(&json!({
+            "graph_path": graph, "qualified_name": "callee.py::callee", "detail": "ids"
+        }));
+        let ids_partners = ids["cochange_partners"].as_array().expect("array");
+        assert!(
+            ids_partners.iter().all(|v| v.is_string()),
+            "ids mode must render co-change partners as bare file ids: {}",
+            ids["cochange_partners"]
+        );
+        assert!(ids_partners.iter().any(|v| v == "caller.py"));
+    }
+
+    #[test]
+    fn file_changes_with_is_reachable_via_query_graph() {
+        let (_tmp, graph) = fixture();
+        let resp = run_query_graph(&json!({
+            "graph_path": graph,
+            "query": "MATCH (a:File)-[r:FILE_CHANGES_WITH]-(b:File) \
+                      RETURN a.id, b.id, r.cochange_count, r.coupling"
+        }));
+        let rows = resp["rows"].as_array().expect("rows");
+        assert!(
+            !rows.is_empty(),
+            "the mined FILE_CHANGES_WITH edge must be queryable: {resp}"
+        );
+        // caller.py <-> callee.py co-changed in all 3 commits.
+        assert!(
+            rows.iter().any(|r| {
+                let files = [r[0].as_str().unwrap_or(""), r[1].as_str().unwrap_or("")];
+                files.contains(&"caller.py") && files.contains(&"callee.py")
+            }),
+            "caller.py <-> callee.py must be a co-change edge: {resp}"
         );
     }
 }

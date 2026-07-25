@@ -9,6 +9,7 @@ pub mod artifact;
 pub mod bridge;
 pub mod call_evidence;
 pub mod clustering;
+pub mod cochange;
 pub mod epistemic;
 pub mod git_diff;
 pub mod graph_store;
