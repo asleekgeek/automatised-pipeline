@@ -1,0 +1,18 @@
+{
+  "arch": "aarch64",
+  "attempts_min_of": 5,
+  "bootstrap_fill_ms": 379,
+  "bootstrap_fill_vs_full_pct": 15,
+  "caveat": "Wall-clock RATIOS are hardware- and profile-dependent: the short op (incremental/fill) has a fixed-cost floor (git diff, DB open, re-parse a few files), so on fast hardware where the full index is quick the RATIO gets WORSE even as both absolute times improve. That is why this is a benchmark with recorded hardware, NOT a correctness gate (issue #74).",
+  "fixture": {
+    "diff_files": 4,
+    "edges": 4680,
+    "files": 260,
+    "nodes": 4681
+  },
+  "full_index_ms": 2505,
+  "incremental_ms": 279,
+  "incremental_vs_full_pct": 11,
+  "os": "macos",
+  "profile_note": "run this bench with --release for the perf claim; the profile is recorded in MANIFEST"
+}
