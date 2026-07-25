@@ -11,7 +11,21 @@
 yanked = "deny"
 # No blanket ignores. An accepted advisory is added here WITH its RUSTSEC id
 # and a written reason, never as a silent list entry.
-ignore = []
+#
+# All three below are `unmaintained`/`unsound` warnings, NOT vulnerabilities,
+# and all three are transitive (none appears in this Cargo.toml). Clearing them
+# means upgrading tantivy 0.22→0.26 and lbug 0.15→0.18, which are dependency
+# migrations with real blast radius (search ranking; on-disk graph format) and
+# so are tracked separately in #78 rather than smuggled into a CI change.
+# Removing these entries is an acceptance criterion of that issue.
+ignore = [
+    # instant 0.1.13 is unmaintained. Reached via measure_time <- tantivy 0.22.1.
+    "RUSTSEC-2024-0384",
+    # lru 0.12.5: IterMut violates Stacked Borrows. Reached via tantivy 0.22.1.
+    "RUSTSEC-2026-0002",
+    # cxx 1.0.138: let_cxx_string! uses an uninitialized value. Via lbug 0.15.4.
+    "RUSTSEC-2026-0202",
+]
 
 [licenses]
 # Permissive licenses only. This ships as a redistributable binary, so a
