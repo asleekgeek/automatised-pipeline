@@ -2,6 +2,10 @@
 name = "bench-end-result"
 version = "0.0.1"
 edition = "2021"
+# Same terms as the workspace root (see LICENSE). Declared explicitly so
+# `cargo deny check licenses` can classify this crate instead of reporting it
+# as unlicensed (issue #66).
+license = "MIT"
 description = "End-result evaluation harness for ai-architect-mcp. Scores the pipeline's agent-facing tool answers against ground truth (stage-3b-v2 §2)."
 
 [[bin]]

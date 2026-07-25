@@ -45,8 +45,13 @@ jobs:
 
       - name: Install audit tooling
         run: |
-          cargo install cargo-audit --locked --version ^0.21
-          cargo install cargo-deny  --locked --version ^0.16
+          # 0.21 cannot PARSE the current RUSTSEC database: the run on
+          # 2026-07-25 died on `RUSTSEC-2026-0109.md` with a TOML parse error,
+          # not on a finding. An advisory scanner that fails to read the
+          # advisory list is worse than none — it goes red for a reason that
+          # has nothing to do with this repo's dependencies.
+          cargo install cargo-audit --locked --version ^0.22
+          cargo install cargo-deny  --locked --version ^0.20
 
       # Blocking: a known-vulnerable dependency in a tool that reads the
       # user's whole source tree is not an advisory matter.
