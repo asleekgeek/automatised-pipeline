@@ -32,13 +32,36 @@ const JS_RESOLVE_SUFFIXES: &[&str] =
 /// Emits `Imports_File_File` edges for relative imports in JS-family files.
 /// Returns the number of edges created. Never fails the index — resolution
 /// misses and per-file read errors are silently skipped.
+///
+/// Full-index convenience: scan every file and resolve against that same set.
 pub(super) fn link_loose_file_imports(
     store: &GraphStore,
     root: &Path,
     files: &[PathBuf],
 ) -> Result<u64, String> {
+    link_file_imports_for(store, root, files, files)
+}
+
+/// Incremental-friendly core: scan only `sources` for import/reference
+/// specifiers, but resolve each specifier against the id set of `all_files`
+/// (the full current file list). This is the split the incremental pass needs —
+/// after a partial re-parse it must re-derive the light links *out of* the
+/// changed/added files while still resolving them against every File node that
+/// exists in the graph, not just the handful that were re-parsed.
+///
+/// Preconditions: every File node for `all_files` already exists in `store`
+/// (this runs as a post-pass, like the full-index caller). Postconditions on
+/// `Ok(n)`: `n` `Imports_File_File`/`References_File_File` edges whose source is
+/// in `sources` and whose resolved target is in `all_files` have been inserted;
+/// per-file read errors and unresolved specifiers are skipped, never fatal.
+pub(super) fn link_file_imports_for(
+    store: &GraphStore,
+    root: &Path,
+    sources: &[PathBuf],
+    all_files: &[PathBuf],
+) -> Result<u64, String> {
     // Set of indexed File ids (repo-relative, forward-slash) for O(1) lookup.
-    let file_ids: HashSet<String> = files.iter().map(|f| rel_id(root, f)).collect();
+    let file_ids: HashSet<String> = all_files.iter().map(|f| rel_id(root, f)).collect();
 
     let mut seen: HashSet<(String, String)> = HashSet::new();
     // Staged per rel_table and bulk-inserted once at the end instead of one
@@ -46,7 +69,7 @@ pub(super) fn link_loose_file_imports(
     // batched. source: ADR-4253701 §Decision 2 (levier 2, light_link.rs:93).
     let mut edges_by_table: HashMap<&'static str, PropEdgeList> = HashMap::new();
 
-    for file_path in files {
+    for file_path in sources {
         let ext = file_path
             .extension()
             .and_then(|e| e.to_str())
@@ -121,7 +144,7 @@ fn read_text(path: &Path) -> Option<String> {
 }
 
 /// Repo-relative, forward-slash File id for a path under `root`.
-fn rel_id(root: &Path, file: &Path) -> String {
+pub(super) fn rel_id(root: &Path, file: &Path) -> String {
     file.strip_prefix(root)
         .unwrap_or(file)
         .to_string_lossy()

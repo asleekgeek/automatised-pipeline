@@ -10,10 +10,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod incremental;
 mod light_link;
+pub mod manifest;
 mod persist;
 mod walk;
 
+pub use incremental::{index_incremental, write_full_manifest};
 use persist::{index_single_file, insert_ancestor_dirs, insert_dir_file_edge, insert_file_node};
 pub use walk::DependencyScope;
 use walk::{collect_source_files, is_dependency_path, WalkOptions};
@@ -56,6 +59,28 @@ pub struct IndexResult {
     pub node_count: u64,
     pub edge_count: u64,
     pub files_indexed: u64,
+    pub elapsed_ms: u64,
+}
+
+/// Outcome of an incremental (changed-files-only) re-index (issue #62).
+/// `changed`/`added`/`deleted`/`renamed`/`unchanged` partition the current file
+/// tree by class; `files_reparsed` is the number of files whose symbols were
+/// re-parsed (changed + added + renamed-new).
+///
+/// Deliberately carries NO whole-graph node/edge totals: counting every node
+/// and edge is a full table scan (~0.3s on this machine, independent of the
+/// change size) that would defeat the point of an incremental pass. The change
+/// partition is the answer callers need; a caller that wants graph totals can
+/// query them (or run with `full`). The one place totals are required — writing
+/// the export sidecar — computes them lazily at the composition root.
+pub struct IncrementalResult {
+    pub graph_path: PathBuf,
+    pub changed: u64,
+    pub added: u64,
+    pub deleted: u64,
+    pub renamed: u64,
+    pub unchanged: u64,
+    pub files_reparsed: u64,
     pub elapsed_ms: u64,
 }
 

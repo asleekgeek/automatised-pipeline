@@ -264,6 +264,11 @@ fn index_codebase_schema() -> Value {
                     "type": "boolean",
                     "default": false,
                     "description": "Issue #55 — only meaningful with bootstrap=true. When the committed artifact's git sha differs from the repo's current HEAD, import it anyway instead of refusing. The tool response then carries a 'stale_artifact' object {artifact_sha, head_sha, commits_behind} so the caller can never mistake the stale graph for a fresh one. Use when the small staleness is acceptable and skipping the full index is worth it."
+                },
+                "full": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Issue #62 — force a from-scratch full rebuild. By DEFAULT index_codebase is incremental: when a prior graph at <output_dir>/graph and its file_manifest.json exist, only the files that changed since the last index are re-parsed (the response carries mode='incremental' and {changed, added, deleted, renamed, unchanged} counts). Pass full=true to bypass that and rebuild everything — required when you change 'language' or 'dependency_scope', which the manifest does not capture."
                 }
             }
         }
