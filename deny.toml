@@ -21,11 +21,15 @@ yanked = "deny"
 ignore = [
     # instant 0.1.13 is unmaintained. Reached via measure_time <- tantivy 0.22.1.
     "RUSTSEC-2024-0384",
-    # lru 0.12.5: IterMut violates Stacked Borrows. Reached via tantivy 0.22.1.
-    "RUSTSEC-2026-0002",
-    # cxx 1.0.138: let_cxx_string! uses an uninitialized value. Via lbug 0.15.4.
-    "RUSTSEC-2026-0202",
 ]
+# NOT listed above, deliberately: cargo-deny does not classify these two under
+# its advisory criteria, so listing them produces `advisory-not-detected`
+# warnings — an ignore entry for something the tool never raises is noise that
+# makes the real entries harder to read. `cargo audit` DOES report both, and the
+# report-only step in the workflow keeps them visible:
+#   RUSTSEC-2026-0002  lru 0.12.5   unsound  <- tantivy 0.22.1
+#   RUSTSEC-2026-0202  cxx 1.0.138  unsound  <- lbug 0.15.4
+# Both clear with the upgrades tracked in #78.
 
 [licenses]
 # Permissive licenses only. This ships as a redistributable binary, so a
@@ -47,6 +51,11 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"   # advisory: duplicate versions are bloat, not risk
 wildcards = "deny"           # a wildcard version defeats Cargo.lock pinning
+# ...but a PATH dependency has no version requirement to state, and the path IS
+# the pin: `zera = { path = "crates/zera" }` is an in-workspace crate, not an
+# unpinned registry fetch. Without this, `wildcards = "deny"` fails on our own
+# workspace layout, which would be a gate failing on a non-problem.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
