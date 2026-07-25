@@ -12,24 +12,33 @@ yanked = "deny"
 # No blanket ignores. An accepted advisory is added here WITH its RUSTSEC id
 # and a written reason, never as a silent list entry.
 #
-# All three below are `unmaintained`/`unsound` warnings, NOT vulnerabilities,
-# and all three are transitive (none appears in this Cargo.toml). Clearing them
-# means upgrading tantivy 0.22→0.26 and lbug 0.15→0.18, which are dependency
-# migrations with real blast radius (search ranking; on-disk graph format) and
-# so are tracked separately in #78 rather than smuggled into a CI change.
-# Removing these entries is an acceptance criterion of that issue.
+# CLEARED by the #78 upgrades (tantivy 0.22.1 -> 0.26.1, lbug 0.15.4 -> 0.18.3):
+#   RUSTSEC-2024-0384  instant     unmaintained  -> crate is GONE from the tree
+#                                                   (it came via measure_time <- tantivy 0.22)
+#   RUSTSEC-2026-0002  lru         unsound       -> 0.12.5 -> 0.16.4, and the
+#                                                   advisory is patched >= 0.16.3
+# Their entries are removed rather than left behind: an ignore for an advisory
+# the tree no longer raises is dead config that hides the live one.
 ignore = [
-    # instant 0.1.13 is unmaintained. Reached via measure_time <- tantivy 0.22.1.
-    "RUSTSEC-2024-0384",
+    # RUSTSEC-2026-0202 — cxx 1.0.138, `let_cxx_string!` uses an uninitialized
+    # value. `unsound`, not a vulnerability, and NOT reachable from our code:
+    # cxx arrives only under lbug (the graph store), which is a C++ FFI
+    # boundary we do not hand-write bindings against.
+    #
+    # BLOCKED UPSTREAM, with evidence rather than assertion. The advisory is
+    # patched in cxx >= 1.0.195 and 1.0.198 is published, but lbug pins cxx
+    # with an EXACT requirement, so no `cargo update` can move it:
+    #
+    #   $ curl .../crates/lbug/0.18.3/dependencies
+    #     cxx        req="=1.0.138"  kind=normal
+    #     cxx-build  req="=1.0.138"  kind=build
+    #
+    # and every published lbug carries the same exact pin (checked 0.18.3,
+    # 0.18.2, 0.18.1, 0.18.0, 0.17.1; 0.18.3 is the latest release). There is
+    # no lbug version that permits a patched cxx, so this cannot be resolved
+    # from this repo. Re-check when lbug publishes a release that relaxes it.
+    "RUSTSEC-2026-0202",
 ]
-# NOT listed above, deliberately: cargo-deny does not classify these two under
-# its advisory criteria, so listing them produces `advisory-not-detected`
-# warnings — an ignore entry for something the tool never raises is noise that
-# makes the real entries harder to read. `cargo audit` DOES report both, and the
-# report-only step in the workflow keeps them visible:
-#   RUSTSEC-2026-0002  lru 0.12.5   unsound  <- tantivy 0.22.1
-#   RUSTSEC-2026-0202  cxx 1.0.138  unsound  <- lbug 0.15.4
-# Both clear with the upgrades tracked in #78.
 
 [licenses]
 # Permissive licenses only. This ships as a redistributable binary, so a

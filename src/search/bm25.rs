@@ -159,8 +159,12 @@ pub fn query_index(
         .parse_query(&tokenized_query)
         .map_err(|e| format!("tantivy parse query: {e}"))?;
 
+    // tantivy 0.26: `TopDocs` is a builder and no longer implements `Collector`
+    // itself — an ordering must be chosen explicitly. `order_by_score()` yields
+    // `Collector<Fruit = Vec<(Score, DocAddress)>>`, the same tuple shape 0.22
+    // produced, so ranking is BM25-by-relevance exactly as before.
     let top_docs = searcher
-        .search(&query, &TopDocs::with_limit(limit))
+        .search(&query, &TopDocs::with_limit(limit).order_by_score())
         .map_err(|e| format!("tantivy search: {e}"))?;
 
     let mut results = Vec::with_capacity(top_docs.len());

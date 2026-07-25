@@ -13,6 +13,10 @@ Reproducible: the git fixture is generated in-code, so
 - **Hardware:** Apple Silicon (`arm64` / `aarch64`), macOS 26.5.1.
 - **Toolchain:** rustc 1.95.0 (59807616e 2026-04-14).
 - **Date:** 2026-07-25.
+- **Search/graph dependency set (issue #78):** tantivy 0.26.1, lbug 0.18.3.
+  Re-run after the upgrade from tantivy 0.22.1 / lbug 0.15.4. A search-engine
+  change can move ranking silently, so these numbers are not carried over from
+  the previous versions; they were regenerated on this dependency set.
 - **Command:** `cargo run -p incremental-speed-bench --release`.
 - **Profile:** release (the headline `results.json`); debug numbers below for contrast.
 
