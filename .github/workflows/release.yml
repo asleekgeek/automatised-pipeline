@@ -214,8 +214,9 @@ jobs:
           cargo cyclonedx --format json --all --override-filename sbom
           # cargo-cyclonedx writes per-manifest files; collect the workspace
           # root one under a predictable release-asset name.
-          find . -name 'sbom.json' -maxdepth 3 -print -quit \
-            | xargs -I{} cp {} automatised-pipeline.cdx.json
+          # -exec rather than `| xargs`: shellcheck SC2038, and a path with a
+          # space would silently produce the wrong file.
+          find . -maxdepth 3 -name 'sbom.json' -exec cp {} automatised-pipeline.cdx.json \; -quit
           ls -la automatised-pipeline.cdx.json
           sha256sum automatised-pipeline.cdx.json | tee automatised-pipeline.cdx.json.sha256
 
