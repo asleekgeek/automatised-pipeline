@@ -18,6 +18,7 @@ pub fn tools_list() -> Value {
             finalize_verification_schema(),
             abort_verification_schema(),
             index_codebase_schema(),
+            index_status_schema(),
             query_graph_schema(),
             get_symbol_schema(),
             resolve_graph_schema(),
@@ -215,10 +216,29 @@ fn abort_verification_schema() -> Value {
     })
 }
 
+fn index_status_schema() -> Value {
+    json!({
+        "name": "index_status",
+        "description": "Stage 3a — Report an indexed graph's status and its indexing-COVERAGE (issue #57): node/edge counts, files indexed, and which files the indexer could NOT fully cover — 'parse_incomplete' (WERE indexed, but tree-sitter left ERROR/MISSING line ranges, so constructs there MAY be missing from the graph — grep those ranges), 'skipped' (not indexed at all: oversized/read-failure/parse-timeout), and 'quarantined' (the parser panicked; isolated so it could not kill the index). Counts are exact; example lists are capped (full lists in the index_coverage.json sidecar). IMPORTANT: absence of a flag is NOT a completeness guarantee — the signal only marks what the indexer can detect. Use before trusting graph completeness on a file; for a structural view of the misses use query_graph(graph=\"missed\").",
+        "annotations": { "readOnlyHint": true },
+        "inputSchema": {
+            "type": "object",
+            "required": ["graph_path"],
+            "additionalProperties": false,
+            "properties": {
+                "graph_path": {
+                    "type": "string",
+                    "description": "Absolute path to the graph directory (the path returned by index_codebase)."
+                }
+            }
+        }
+    })
+}
+
 fn index_codebase_schema() -> Value {
     json!({
         "name": "index_codebase",
-        "description": "Stage 3a — Index a codebase. Walks the directory, parses source files with tree-sitter (Rust, Python, TypeScript), and persists a code-intelligence graph (nodes: functions, structs/classes, enums, traits/interfaces, etc.; edges: contains, defines, has_method, etc.) into a LadybugDB database at <output_dir>/graph/. Returns node/edge counts and elapsed time.",
+        "description": "Stage 3a — Index a codebase. Walks the directory, parses source files with tree-sitter (Rust, Python, TypeScript), and persists a code-intelligence graph (nodes: functions, structs/classes, enums, traits/interfaces, etc.; edges: contains, defines, has_method, etc.) into a LadybugDB database at <output_dir>/graph/. Returns node/edge counts, elapsed time, and a COVERAGE report (issue #57) listing files that were parse-incomplete, skipped, or quarantined — absence of a flag is NOT a completeness guarantee; query the full report any time via index_status or query_graph(graph=\"missed\").",
         "annotations": { "destructiveHint": true },
         "inputSchema": {
             "type": "object",
@@ -278,20 +298,26 @@ fn index_codebase_schema() -> Value {
 fn query_graph_schema() -> Value {
     json!({
         "name": "query_graph",
-        "description": "Stage 3a — Execute a Cypher query against an indexed code graph. The graph must have been created by a prior index_codebase call. Returns column names and rows.",
+        "description": "Stage 3a — Execute a Cypher query against an indexed code graph. The graph must have been created by a prior index_codebase call. Returns column names and rows. COVERAGE HONESTY (issue #57): pass graph=\"missed\" to instead enumerate what the index does NOT fully cover (parse-incomplete + skipped + quarantined files) so you know where to prefer grep. IMPORTANT: absence of a file from graph results — or from the 'missed' list — is NOT a completeness guarantee; the signal only marks what the indexer can detect.",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
-            "required": ["graph_path", "query"],
+            "required": ["graph_path"],
             "additionalProperties": false,
             "properties": {
                 "graph_path": {
                     "type": "string",
                     "description": "Absolute path to the graph directory (the path returned by index_codebase)."
                 },
+                "graph": {
+                    "type": "string",
+                    "enum": ["default", "missed"],
+                    "default": "default",
+                    "description": "Which view to query. 'default': run the Cypher 'query' against the code graph. 'missed' (issue #57): ignore 'query' and return the coverage report — the files the index could NOT fully cover (parse_incomplete with flagged line ranges, skipped, quarantined), so an agent can pivot to grep. Absence from the missed list is NOT a completeness guarantee."
+                },
                 "query": {
                     "type": "string",
-                    "description": "Cypher query to execute against the graph."
+                    "description": "Cypher query to execute against the graph. Required unless graph=\"missed\"."
                 },
                 "offset": {
                     "type": "integer",

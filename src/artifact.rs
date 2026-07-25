@@ -52,6 +52,11 @@ pub const ARTIFACT_META: &str = "graph.meta.json";
 /// is infrastructure, the manifest is an indexer leaf — no cross-import).
 const ARTIFACT_MANIFEST_ENTRY: &str = "file_manifest.json";
 
+/// Archive entry name for the bundled coverage report (issue #57). Kept equal to
+/// `indexer::coverage::COVERAGE_FILE` (asserted in a test) so it unpacks beside
+/// the graph where `index_status` / `query_graph(graph="missed")` look for it.
+const ARTIFACT_COVERAGE_ENTRY: &str = "index_coverage.json";
+
 /// Sidecar schema version. Bump when the sidecar or archive layout changes in
 /// a way an older importer cannot read; import refuses a newer schema.
 const SCHEMA_VERSION: u32 = 1;
@@ -154,6 +159,7 @@ pub fn export_artifact(
     node_count: u64,
     edge_count: u64,
     manifest_path: Option<&Path>,
+    coverage_path: Option<&Path>,
 ) -> Result<ExportStats, String> {
     if !graph_path.exists() {
         return Err(format!(
@@ -165,21 +171,27 @@ pub fn export_artifact(
     fs::create_dir_all(&dir)
         .map_err(|e| format!("artifact export: create {}: {e}", dir.display()))?;
 
-    // Bundle the per-file manifest (issue #62) INTO the archive when it exists,
-    // so a fresh clone can classify the artifact→HEAD diff for the incremental
-    // fill (issue #55) without re-hashing the whole tree. A missing manifest is
-    // not fatal — the importer falls back to git-diff classification.
-    let bundled_manifest = manifest_path
-        .filter(|p| p.exists())
-        .map(|p| p.to_path_buf());
+    // Bundle the sidecars INTO the archive when they exist, so a fresh clone
+    // inherits them on import:
+    //   * the per-file manifest (issue #62) → classify the artifact→HEAD diff for
+    //     the incremental fill without re-hashing the whole tree;
+    //   * the coverage report (issue #57) → the bootstrapped clone starts with the
+    //     exporter's honesty signal (which files were parse-incomplete/skipped).
+    // Missing sidecars are not fatal — each importer degrades gracefully.
+    let sidecars: Vec<(PathBuf, &str)> = [
+        (manifest_path, ARTIFACT_MANIFEST_ENTRY),
+        (coverage_path, ARTIFACT_COVERAGE_ENTRY),
+    ]
+    .into_iter()
+    .filter_map(|(p, name)| p.filter(|p| p.exists()).map(|p| (p.to_path_buf(), name)))
+    .collect();
 
     let level = ZSTD_LEVEL;
     let out = artifact_file(repo_path);
     let tmp = out.with_extension("zst.tmp");
-    let compressed_bytes = write_archive(graph_path, bundled_manifest.as_deref(), &tmp, level)
-        .inspect_err(|_| {
-            let _ = fs::remove_file(&tmp);
-        })?;
+    let compressed_bytes = write_archive(graph_path, &sidecars, &tmp, level).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })?;
     fs::rename(&tmp, &out).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         format!("artifact export: rename into place: {e}")
@@ -214,7 +226,7 @@ pub fn export_artifact(
 /// precisely where the incremental classifier (issue #62) looks for it.
 fn write_archive(
     graph_path: &Path,
-    manifest_path: Option<&Path>,
+    sidecars: &[(PathBuf, &str)],
     dest: &Path,
     level: i32,
 ) -> Result<u64, String> {
@@ -236,10 +248,10 @@ fn write_archive(
             .append_path_with_name(graph_path, name)
             .map_err(|e| format!("artifact export: tar file: {e}"))?;
     }
-    if let Some(mp) = manifest_path {
+    for (path, entry_name) in sidecars {
         builder
-            .append_path_with_name(mp, ARTIFACT_MANIFEST_ENTRY)
-            .map_err(|e| format!("artifact export: tar manifest: {e}"))?;
+            .append_path_with_name(path, entry_name)
+            .map_err(|e| format!("artifact export: tar sidecar {entry_name}: {e}"))?;
     }
     let encoder = builder
         .into_inner()

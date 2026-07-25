@@ -16,6 +16,11 @@ fn bundled_manifest_entry_name_matches_the_indexer_manifest_filename() {
         crate::indexer::manifest::MANIFEST_FILE,
         "bundled manifest entry name must equal the indexer's manifest filename"
     );
+    assert_eq!(
+        ARTIFACT_COVERAGE_ENTRY,
+        crate::indexer::coverage::COVERAGE_FILE,
+        "bundled coverage entry name must equal the indexer's coverage filename"
+    );
 }
 
 #[test]
@@ -33,7 +38,7 @@ fn export_bundles_manifest_and_import_restores_it_beside_the_graph() {
     let manifest_path = out.join("file_manifest.json");
     fs::write(&manifest_path, b"{\"schema_version\":1,\"files\":{}}").expect("write manifest");
 
-    export_artifact(&graph, &repo, 1, 1, Some(&manifest_path)).expect("export");
+    export_artifact(&graph, &repo, 1, 1, Some(&manifest_path), None).expect("export");
 
     let fresh = tmp.path().join("fresh");
     let fresh_graph = fresh.join("graph");
@@ -57,7 +62,7 @@ fn export_import_round_trips_a_directory_graph() {
     fs::write(graph.join("sub/b.bin"), b"payload-b").expect("write b");
     fs::create_dir_all(&repo).expect("mk repo");
 
-    let stats = export_artifact(&graph, &repo, 3, 5, None).expect("export should succeed");
+    let stats = export_artifact(&graph, &repo, 3, 5, None, None).expect("export should succeed");
     assert!(stats.compressed_bytes > 0);
     assert!(artifact_exists(&repo));
 
@@ -85,8 +90,8 @@ fn gitattributes_entry_is_created_once_and_not_duplicated() {
     fs::write(graph.join("x.bin"), b"x").expect("write x");
     fs::create_dir_all(&repo).expect("mk repo");
 
-    export_artifact(&graph, &repo, 1, 0, None).expect("first export");
-    export_artifact(&graph, &repo, 1, 0, None).expect("second export");
+    export_artifact(&graph, &repo, 1, 0, None, None).expect("first export");
+    export_artifact(&graph, &repo, 1, 0, None, None).expect("second export");
 
     let ga = fs::read_to_string(repo.join(".gitattributes")).expect("read gitattributes");
     let entry = format!("{ARTIFACT_DIR}/{ARTIFACT_FILE} binary merge=ours");
@@ -108,7 +113,7 @@ fn import_refuses_newer_schema() {
     fs::create_dir_all(&graph).expect("mk graph");
     fs::write(graph.join("x.bin"), b"x").expect("write x");
     fs::create_dir_all(&repo).expect("mk repo");
-    export_artifact(&graph, &repo, 1, 1, None).expect("export");
+    export_artifact(&graph, &repo, 1, 1, None, None).expect("export");
 
     // Rewrite the sidecar with a future schema version.
     let mut meta = read_meta(&repo).expect("read meta");

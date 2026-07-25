@@ -134,6 +134,7 @@ fn fresh_clone_bootstrap_matches_original_graph() {
         result.node_count,
         result.edge_count,
         None,
+        None,
     )
     .expect("export should succeed");
     assert!(stats.compressed_bytes > 0, "artifact must be non-empty");

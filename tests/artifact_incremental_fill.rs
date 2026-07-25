@@ -123,6 +123,7 @@ fn stale_clone_bootstrap_fill_matches_full_index_and_is_faster() {
         result.node_count,
         result.edge_count,
         Some(&idx_manifest),
+        None,
     )
     .expect("export artifact");
 
@@ -295,6 +296,7 @@ fn fill_falls_back_to_content_hash_when_not_a_git_tree() {
         result.node_count,
         result.edge_count,
         Some(&idx_manifest),
+        None,
     )
     .expect("export");
 
