@@ -28,4 +28,5 @@ pub mod search;
 pub mod security_gates;
 pub mod semantic_diff;
 pub mod stdlib_index;
+pub mod token_surface;
 pub mod tool_schemas;

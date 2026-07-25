@@ -43,6 +43,7 @@ mod search;
 mod security_gates;
 mod semantic_diff;
 mod stdlib_index;
+mod token_surface;
 mod tool_profile;
 mod tool_schemas;
 
@@ -2762,6 +2763,49 @@ fn do_query_graph(arguments: &Value) -> Result<Value, String> {
         "order_stable": order_stable,
         "limit_injected": limit_injected,
     });
+    // Token-surface shaping (issue #56). query_graph already emits `rows` as
+    // compact arrays with `columns` declared once — the native tabular shape. The
+    // token hog is the human-readable `result` string that duplicates the rows,
+    // so the compact modes drop it:
+    //   * detail:"ids"   → collapse to the FIRST column's values (a bare id list)
+    //                       and drop `result` — the cheap "which nodes match" sweep.
+    //   * format:"tabular" → keep columns+rows, drop `result`.
+    //   * default (full/json) → unchanged (columns + rows + result string).
+    match token_surface::parse_detail(args) {
+        token_surface::Detail::Ids => {
+            let ids: Vec<Value> = returned_rows
+                .iter()
+                .filter_map(|r| r.as_array().and_then(|cells| cells.first()).cloned())
+                .collect();
+            let first_col: Vec<Value> = qr
+                .columns
+                .first()
+                .cloned()
+                .map(|c| json!(c))
+                .into_iter()
+                .collect();
+            if let Some(obj) = out.as_object_mut() {
+                obj.insert("rows".into(), json!(ids));
+                obj.insert("columns".into(), json!(first_col));
+                obj.remove("result");
+                obj.insert("detail".into(), json!("ids"));
+                obj.insert("format".into(), json!("ids"));
+            }
+        }
+        token_surface::Detail::Full => match token_surface::parse_format(args) {
+            token_surface::Format::Tabular => {
+                if let Some(obj) = out.as_object_mut() {
+                    obj.remove("result");
+                    obj.insert("detail".into(), json!("full"));
+                    obj.insert("format".into(), json!("tabular"));
+                }
+            }
+            token_surface::Format::Json => {
+                out["detail"] = json!("full");
+                out["format"] = json!("json");
+            }
+        },
+    }
     if let Some(next) = page.next_offset {
         out["next_offset"] = json!(next);
     }
@@ -3245,6 +3289,12 @@ fn do_get_processes(arguments: &Value) -> Result<Value, String> {
     let page =
         response_budget::bound_values_paged(procs, offset, response_budget::per_section_chars());
 
+    // Token-surface shaping (issue #56): ids → bare process names; tabular →
+    // columns-once rows. See token_surface.
+    let detail = token_surface::parse_detail(args);
+    let format = token_surface::parse_format(args);
+    let view = token_surface::render_list(&page.items, PROCESS_COLUMNS, "name", &detail, &format);
+
     let mut out = json!({
         "stage": 3,
         "status": "ok",
@@ -3253,13 +3303,21 @@ fn do_get_processes(arguments: &Value) -> Result<Value, String> {
         "total_count": page.total_count,
         "offset": offset,
         "truncated": page.truncated,
-        "processes": page.items,
+        "detail": view.detail,
+        "format": view.format,
+        "processes": view.value,
     });
+    if let Some(cols) = view.columns {
+        out["columns"] = cols;
+    }
     if let Some(next) = page.next_offset {
         out["next_offset"] = json!(next);
     }
     Ok(out)
 }
+
+/// Scalar columns of a process row, in tabular-projection order (issue #56).
+const PROCESS_COLUMNS: &[&str] = &["name", "entry_point", "entry_kind", "depth", "node_count"];
 
 // ---------------------------------------------------------------------------
 // Stage 3c — get_impact
@@ -3273,6 +3331,10 @@ fn run_get_impact(arguments: &Value) -> Value {
         }),
     }
 }
+
+/// Scalar columns of a reverse-dependency handle, in tabular-projection order
+/// (issue #56). Shared by all four impact sections (they are homogeneous).
+const IMPACT_COLUMNS: &[&str] = &["qualified_name", "label", "confidence", "id"];
 
 fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
@@ -3367,6 +3429,20 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     let any_truncated =
         callers.truncated || importers.truncated || users.truncated || implementors.truncated;
 
+    // Token-surface shaping (issue #56): render each reverse-dependency section
+    // under the shared detail/format. ids → bare qualified names; tabular →
+    // columns-once rows (one `columns` header covers all four sections, which are
+    // homogeneous). See token_surface.
+    let detail = token_surface::parse_detail(args);
+    let format = token_surface::parse_format(args);
+    let render = |items: &[Value]| {
+        token_surface::render_list(items, IMPACT_COLUMNS, "qualified_name", &detail, &format)
+    };
+    let callers_view = render(&callers.items);
+    let importers_view = render(&importers.items);
+    let users_view = render(&users.items);
+    let implementors_view = render(&implementors.items);
+
     let mut out = json!({
         "stage": 3,
         "status": "ok",
@@ -3376,16 +3452,18 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "communities_affected": impact.communities.len(),
         "processes": impact.processes,
         "processes_affected": impact.processes.len(),
-        "callers": callers.items,
+        "detail": callers_view.detail,
+        "format": callers_view.format,
+        "callers": callers_view.value,
         "callers_total": callers.total_count,
         "offset": offset,
         "primary_list": "callers",
         "secondary_lists_paged": false,
-        "importers": importers.items,
+        "importers": importers_view.value,
         "importers_total": importers.total_count,
-        "users": users.items,
+        "users": users_view.value,
         "users_total": users.total_count,
-        "implementors": implementors.items,
+        "implementors": implementors_view.value,
         "implementors_total": implementors.total_count,
         "dependents_total": dependents_total,
         "truncated": any_truncated,
@@ -3397,6 +3475,10 @@ fn do_get_impact(arguments: &Value) -> Result<Value, String> {
         "epistemic": impact.epistemic.as_str(),
         "epistemic_reasons": impact.epistemic_reasons,
     });
+    if callers_view.columns.is_some() {
+        // One header covers all four homogeneous sections.
+        out["columns"] = json!(IMPACT_COLUMNS);
+    }
     if let Some(next) = callers.next_offset {
         out["next_offset"] = json!(next);
     }
@@ -3529,6 +3611,21 @@ fn run_search_codebase(arguments: &Value) -> Value {
     }
 }
 
+/// Scalar columns of a search hit, in tabular-projection order (issue #56). The
+/// `processes` array field is intentionally omitted from the tabular projection
+/// (a cell must be scalar); it stays available via the grouped `by_process`
+/// section and in the default `detail:"full", format:"json"` objects.
+const SEARCH_COLUMNS: &[&str] = &[
+    "qualified_name",
+    "name",
+    "kind",
+    "file_path",
+    "score",
+    "start_line",
+    "end_line",
+    "community_id",
+];
+
 fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
     let args = arguments.as_object().ok_or("arguments must be an object")?;
     let graph_str = args
@@ -3636,6 +3733,20 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         })
         .collect();
 
+    // Token-surface shaping (issue #56): `detail:"ids"` returns bare qualified
+    // names for a cheap wide sweep; `format:"tabular"` streams rows as arrays with
+    // the columns declared once. Applied to the PAGED list, so the cursor contract
+    // is untouched. `by_process` (built from the objects above) is unaffected.
+    let detail = token_surface::parse_detail(args);
+    let format = token_surface::parse_format(args);
+    let view = token_surface::render_list(
+        &page.items,
+        SEARCH_COLUMNS,
+        "qualified_name",
+        &detail,
+        &format,
+    );
+
     let mut out = json!({
         "stage": 3,
         "status": "ok",
@@ -3645,10 +3756,15 @@ fn do_search_codebase(arguments: &Value) -> Result<Value, String> {
         "total_count": page.total_count,
         "offset": offset,
         "truncated": page.truncated,
-        "results": page.items,
+        "detail": view.detail,
+        "format": view.format,
+        "results": view.value,
         "by_process": by_process,
         "elapsed_ms": elapsed_ms,
     });
+    if let Some(cols) = view.columns {
+        out["columns"] = cols;
+    }
     if let Some(next) = page.next_offset {
         out["next_offset"] = json!(next);
     }
@@ -5683,5 +5799,116 @@ mod coverage_tools_tests {
         let missed = run_query_graph(&json!({ "graph_path": graph_path, "graph": "missed" }));
         assert_eq!(missed["graph"], json!("missed"));
         assert_eq!(missed["coverage"]["parse_incomplete"]["count"], json!(1));
+    }
+}
+
+#[cfg(test)]
+mod token_surface_tools_tests {
+    // Issue #56 — the detail/format token surface, exercised end to end through
+    // the real handlers.
+    use super::*;
+    use std::fs;
+
+    fn indexed_graph() -> (tempfile::TempDir, String) {
+        let tmp = tempfile::Builder::new()
+            .prefix("token_surface_tools_")
+            .tempdir()
+            .expect("temp dir");
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(repo.join("src")).expect("mk src");
+        fs::write(
+            repo.join("src/a.py"),
+            "def process_one():\n    return 1\n\ndef process_two():\n    return 2\n",
+        )
+        .expect("write a");
+        let out = tmp.path().join("out");
+        fs::create_dir_all(&out).expect("mk out");
+        let idx = do_index_codebase(&json!({
+            "path": repo.to_string_lossy(),
+            "output_dir": out.to_string_lossy(),
+            "full": true,
+        }))
+        .expect("index");
+        let graph = idx["graph_path"].as_str().expect("graph_path").to_string();
+        (tmp, graph)
+    }
+
+    #[test]
+    fn search_ids_mode_returns_bare_identifiers() {
+        let (_tmp, graph) = indexed_graph();
+        let resp = run_search_codebase(&json!({
+            "graph_path": graph, "query": "process", "detail": "ids"
+        }));
+        assert_eq!(resp["detail"], json!("ids"));
+        let results = resp["results"].as_array().expect("results array");
+        assert!(!results.is_empty(), "should find process_* symbols");
+        // Every element is a bare qualified-name string, not an object.
+        assert!(
+            results.iter().all(|v| v.is_string()),
+            "ids mode must return bare identifiers, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn search_tabular_mode_declares_columns_and_streams_rows() {
+        let (_tmp, graph) = indexed_graph();
+        let resp = run_search_codebase(&json!({
+            "graph_path": graph, "query": "process", "format": "tabular"
+        }));
+        assert_eq!(resp["format"], json!("tabular"));
+        assert!(
+            resp["columns"].is_array(),
+            "tabular must declare a columns header"
+        );
+        let results = resp["results"].as_array().expect("results array");
+        assert!(
+            results.iter().all(|row| row.is_array()),
+            "tabular rows must be arrays of cells, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn query_graph_tabular_drops_the_human_result_string() {
+        let (_tmp, graph) = indexed_graph();
+        // Default keeps the human `result` table.
+        let default = run_query_graph(&json!({
+            "graph_path": graph, "query": "MATCH (f:Function) RETURN f.qualified_name"
+        }));
+        assert!(
+            default.get("result").is_some(),
+            "default query_graph keeps the result string"
+        );
+        // Tabular drops it (rows+columns already carry the data).
+        let tabular = run_query_graph(&json!({
+            "graph_path": graph,
+            "query": "MATCH (f:Function) RETURN f.qualified_name",
+            "format": "tabular"
+        }));
+        assert_eq!(tabular["format"], json!("tabular"));
+        assert!(
+            tabular.get("result").is_none(),
+            "tabular query_graph must omit the redundant human result string"
+        );
+        assert!(tabular["rows"].is_array());
+        // Serialized, tabular must be smaller than the default for the same query.
+        let d = serde_json::to_string(&default).unwrap().len();
+        let t = serde_json::to_string(&tabular).unwrap().len();
+        assert!(t < d, "tabular ({t}) must be smaller than default ({d})");
+    }
+
+    #[test]
+    fn query_graph_ids_mode_collapses_to_first_column() {
+        let (_tmp, graph) = indexed_graph();
+        let resp = run_query_graph(&json!({
+            "graph_path": graph,
+            "query": "MATCH (f:Function) RETURN f.qualified_name, f.name",
+            "detail": "ids"
+        }));
+        assert_eq!(resp["detail"], json!("ids"));
+        let rows = resp["rows"].as_array().expect("rows array");
+        assert!(
+            rows.iter().all(|v| v.is_string()),
+            "ids mode must collapse rows to the first column's bare values, got {rows:?}"
+        );
     }
 }
