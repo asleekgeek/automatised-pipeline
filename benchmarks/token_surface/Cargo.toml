@@ -2,6 +2,10 @@
 name = "token-surface-bench"
 version = "0.0.1"
 edition = "2021"
+# Same terms as the workspace root (see LICENSE). Declared explicitly so
+# `cargo deny check licenses` can classify this crate instead of reporting it
+# as unlicensed (issue #66).
+license = "MIT"
 description = "Falsifiable token-efficiency benchmark for the issue #56 token surface: a fixed 5-query workload measured as ids/tabular vs current JSON, and graph-tools vs a scripted grep/read transcript. Writes results.json + reads MANIFEST.md."
 publish = false
 

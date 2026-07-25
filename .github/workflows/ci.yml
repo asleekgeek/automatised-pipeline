@@ -48,7 +48,7 @@ jobs:
       ZSTD_SYS_USE_PKG_CONFIG: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Linux build deps
         run: |
@@ -57,7 +57,13 @@ jobs:
             libzstd-dev pkg-config cmake
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          # Required input: `@stable` carried the version in the REF, so
+          # pinning the action to a SHA drops it and the action hard-fails
+          # with "'toolchain' is a required input". Keep in step with
+          # rust-toolchain.toml, which governs local builds.
+          toolchain: "1.95.0"
 
       # Cache the cargo target dir keyed on Cargo.lock. Saves ~minutes per
       # run because tree-sitter + tantivy + lbug are heavy to recompile.
@@ -70,7 +76,7 @@ jobs:
       # back and the link error reappears. Bump this segment whenever
       # the build env changes in a way that touches target/.
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -110,7 +116,7 @@ jobs:
       ZSTD_SYS_USE_PKG_CONFIG: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Linux build deps
         run: |
@@ -119,12 +125,13 @@ jobs:
             libzstd-dev pkg-config cmake
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: "1.95.0"
           components: clippy
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry

@@ -36,6 +36,42 @@ Only the latest minor release on `main` receives security patches.
    anonymity.
 5. Public advisory published on the agreed date.
 
+## What this tool accesses, and what assurance is offered
+
+Being plain about this is the point: `automatised-pipeline` **reads your entire
+source tree** to build its graph. That is what it is for. It is also exactly
+the access an attacker would want, so the honest question is not whether it
+reads your code but whether the binary you ran is the one we built.
+
+**Access.** It reads every file under the indexed path (source, config, docs,
+binaries as `File` nodes), reads git history when co-change mining is enabled,
+and writes a graph database under the output directory you name. It makes no
+network calls during indexing; all processing is local.
+
+**Assurance, as of the release that includes issue #66:**
+
+| Property | How you check it |
+|---|---|
+| The artifact was built by our workflow, from this source | `gh attestation verify <file> --repo cdeust/automatised-pipeline` |
+| The bytes were not altered in transit | `sha256sum -c <file>.sha256` |
+| What is inside the binary | the CycloneDX SBOM asset, `automatised-pipeline.cdx.json` |
+| Dependencies carry no known advisory | `cargo audit` / `cargo deny`, run daily in CI |
+| Repo-level supply-chain posture | OpenSSF Scorecard, published weekly |
+
+Verify a downloaded release before running it:
+
+```bash
+gh attestation verify automatised-pipeline-macos-aarch64.tar.gz \
+  --repo cdeust/automatised-pipeline
+sha256sum -c automatised-pipeline-macos-aarch64.tar.gz.sha256
+```
+
+**Limits, stated rather than implied.** Provenance proves *who built it and
+from which commit*; it does not prove the source is free of defects, and it is
+worthless if you never run the verification. Binaries are **not** yet
+Apple-notarized, so macOS Gatekeeper will still prompt: that work is tracked in
+cdeust/enterprise-backlog#15 and is not claimed here.
+
 ## Out of Scope
 
 - Vulnerabilities in third-party dependencies that have not been patched

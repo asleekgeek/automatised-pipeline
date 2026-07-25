@@ -11,6 +11,10 @@
 name = "zera"
 version = "0.0.1"
 edition = "2021"
+# Same terms as the workspace root (see LICENSE). Declared explicitly so
+# `cargo deny check licenses` can classify this crate instead of reporting it
+# as unlicensed (issue #66).
+license = "MIT"
 description = "Zero-latency Encoded Recursive Atlas — wire protocol for >1 GB graph payloads"
 
 [dependencies]

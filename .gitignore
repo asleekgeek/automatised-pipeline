@@ -1,5 +1,14 @@
 /target
-Cargo.lock
+
+# Cargo.lock IS committed (issue #66). This crate ships a binary
+# (`[[bin]] automatised-pipeline`), and for an end product Cargo's own
+# guidance is to commit the lock. Ignoring it meant release builds re-resolved
+# dependencies on every run, so:
+#   - the build was NOT reproducible even with a pinned compiler,
+#   - `cargo audit` scanned a lock that never shipped,
+#   - the SBOM would have described versions no release was ever built from.
+# All three are load-bearing claims of the supply-chain work; none of them
+# survive an ignored lockfile.
 .DS_Store
 .claude/settings.local.json
 .claude/session-cache.json
