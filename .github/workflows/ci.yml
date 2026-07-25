@@ -48,7 +48,7 @@ jobs:
       ZSTD_SYS_USE_PKG_CONFIG: "1"
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install Linux build deps
         run: |
@@ -76,7 +76,7 @@ jobs:
       # back and the link error reappears. Bump this segment whenever
       # the build env changes in a way that touches target/.
       - name: Cache cargo build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -116,7 +116,7 @@ jobs:
       ZSTD_SYS_USE_PKG_CONFIG: "1"
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install Linux build deps
         run: |
@@ -131,7 +131,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
