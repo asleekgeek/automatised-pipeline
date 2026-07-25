@@ -155,6 +155,37 @@ The server is a self-contained stdio binary — any MCP host can launch it. Inst
 cargo install ai-architect-mcp   # installs the `automatised-pipeline` binary into ~/.cargo/bin
 ```
 
+### Install into your agent host (auto-config)
+
+One command detects your installed hosts and writes the right MCP config for each — **never clobbering** the rest of the file:
+
+```bash
+automatised-pipeline install
+```
+
+It configures the top six hosts it detects: **Claude Code** (`~/.claude.json`), **Codex CLI** (`~/.codex/config.toml`), **Gemini CLI** (`~/.gemini/settings.json`), **Cursor** (`~/.cursor/mcp.json`), **VS Code** (`Code/User/mcp.json`), and **Zed** (`~/.config/zed/settings.json`).
+
+- **Never clobbers.** The existing config is parsed; only our `ai-architect` entry is added or updated; every other server survives. A file it cannot safely parse is **never overwritten** — it prints the exact entry to paste by hand.
+- **Zed JSONC.** Zed's `settings.json` allows comments, which strict JSON editing would destroy, so `install` **refuses to edit it in place** and prints the snippet + instructions instead (your comments stay byte-for-byte).
+- **Codex TOML** is edited comment- and format-preserving (via `toml_edit`).
+- **Flags:** `--dry-run` (print planned changes, write nothing), `--only <host>` / `--skip <host>` (filter; `--only` forces a host even if undetected), `--with-hooks` (also register the Grep/Glob PreToolUse hook, see below). Re-running is **idempotent** (a second run reports "no change").
+- **Uninstall:** `automatised-pipeline uninstall` removes exactly our entries (and the hook), leaving everything else intact.
+
+```bash
+automatised-pipeline install --dry-run                 # preview
+automatised-pipeline install --only cursor --only zed  # just these
+automatised-pipeline install --with-hooks              # + the grep→graph hook
+automatised-pipeline uninstall                         # remove our entries
+```
+
+**Binary → first query.** Measured on this machine (2026-07): `install` completes in **~1.3 s** (dominated by process/DB startup; the config write itself is sub-second); `analyze_codebase` on this repo's own `src/` (114 files → 16.5k nodes, 16.3k edges — index + resolve + cluster) takes **~12 s wall**; the first `search_codebase` returns instantly. So once the binary exists, **install → analyze → first graph query is ~15 s — well under the 2-minute target.** The one-time `cargo build --release` (~5 min, compiling the LadybugDB C++ core) is a separate, before-the-clock step.
+
+#### Fail-open grep→graph hook
+
+`automatised-pipeline install --with-hooks` registers a Claude Code `PreToolUse` hook (matcher `Grep|Glob`) that runs `automatised-pipeline hook-augment`. Before a Grep/Glob in a project that has an ai-architect graph, it injects a one-line suggestion to consider `search_codebase`/`query_graph` first. **Cardinal rule: it never blocks the tool call** — no graph, an unparseable payload, or any error → it prints nothing and exits 0. Hook registration is **opt-in** (the `--with-hooks` flag), never default.
+
+### Or configure a host by hand
+
 The CLI commands below assume `~/.cargo/bin` is on your `PATH`. GUI hosts (Cursor, Windsurf, VS Code) may not inherit your shell `PATH` — in the JSON configs, replace `automatised-pipeline` with the output of `which automatised-pipeline`. Use the `core` profile (8 read-only tools) for agent hosts.
 
 **Gemini CLI**

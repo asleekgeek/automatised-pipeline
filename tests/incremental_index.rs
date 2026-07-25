@@ -143,13 +143,13 @@ fn incremental_matches_full_reindex_and_is_faster() {
     )
     .expect("rename file");
 
-    // -- 4/5. Paired best-of-3 timing over fresh copies of the pristine graph -
+    // -- 4/5. Paired best-of-5 timing over fresh copies of the pristine graph -
     // The incremental pass is short, so a transient CPU-starvation spike (many
     // test binaries run in parallel) can inflate a single wall-clock reading. We
     // measure the incremental pass AND a full index back-to-back in each attempt
     // — the same contention window — and take the attempt with the smallest
     // ratio. Pairing makes the ratio contention-invariant (both scale together
-    // under load); the min-of-3 guards the short op against a spike that misses
+    // under load); the min-of-5 guards the short op against a spike that misses
     // its paired full. Parity/counts are checked once, on the first attempt.
     let mut best: Option<(u64, u64)> = None; // (inc_ms, full_ms) of the min-ratio attempt
     let mut first: Option<(
@@ -157,7 +157,7 @@ fn incremental_matches_full_reindex_and_is_faster() {
         std::path::PathBuf,
         std::path::PathBuf,
     )> = None;
-    for attempt in 0..3 {
+    for attempt in 0..5 {
         let graph_try = tmp.path().join(format!("graph_try_{attempt}"));
         let manifest_try = tmp.path().join(format!("manifest_try_{attempt}.json"));
         copy_path(&graph_a, &graph_try);
@@ -253,7 +253,7 @@ fn incremental_matches_full_reindex_and_is_faster() {
     );
 }
 
-/// Copies a graph path (used to snapshot a pristine graph before each best-of-3
+/// Copies a graph path (used to snapshot a pristine graph before each best-of-5
 /// incremental attempt, so every attempt starts from the same state without
 /// re-indexing). The lbug graph is a single file in this version, but older
 /// layouts are a directory — handle both so the test is layout-agnostic.

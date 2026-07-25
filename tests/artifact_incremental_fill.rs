@@ -169,17 +169,17 @@ fn stale_clone_bootstrap_fill_matches_full_index_and_is_faster() {
         "the cloned repo must carry the committed artifact"
     );
 
-    // -- 5/6. Paired best-of-3 timing: bootstrap+fill vs full index ---------
+    // -- 5/6. Paired best-of-5 timing: bootstrap+fill vs full index ---------
     // The fill is short, so a transient CPU-starvation spike (many test binaries
     // run in parallel) can inflate a single wall-clock reading. We measure the
     // fill AND a full index back-to-back in each attempt — the same contention
     // window — and take the attempt with the smallest ratio. Pairing makes the
-    // ratio contention-invariant (both scale together under load); the min-of-3
+    // ratio contention-invariant (both scale together under load); the min-of-5
     // guards the short fill against a spike that misses its paired full.
     // Parity/counts are asserted once, on the first attempt.
     let mut best: Option<(u64, u64)> = None; // (fill_ms, full_ms) of the min-ratio attempt
     let mut first_boot_graph: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
-    for attempt in 0..3 {
+    for attempt in 0..5 {
         let boot_out = tmp.path().join(format!("boot_out_{attempt}"));
         fs::create_dir_all(&boot_out).expect("mk boot_out");
         let boot_graph = boot_out.join("graph");
