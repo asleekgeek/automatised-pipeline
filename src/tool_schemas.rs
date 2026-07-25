@@ -40,6 +40,34 @@ pub fn tools_list() -> Value {
     })
 }
 
+/// The canonical one-line summary of a tool: the first sentence of its
+/// `tools_list()` description. This is the SINGLE source of truth for what a
+/// tool does — the prompts layer (`mcp_prompts`) composes workflow text from
+/// this rather than hand-copying descriptions, so adding or renaming a tool
+/// cannot leave two descriptions that disagree (§1.2 / issue #65 criterion 3).
+///
+/// Precondition: `name` is a candidate tool name (any string).
+/// Postcondition: returns `Some(first_sentence)` iff a tool with that exact
+/// name is registered in `tools_list()`; `None` otherwise. The returned string
+/// is the description text up to and including the first ". " boundary (or the
+/// whole description when it contains no such boundary).
+pub fn tool_summary(name: &str) -> Option<String> {
+    let payload = tools_list();
+    let tools = payload.get("tools").and_then(Value::as_array)?;
+    let description = tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
+        .and_then(|tool| tool.get("description").and_then(Value::as_str))?;
+    // First sentence: text up to and including the first ". " boundary. AP's
+    // descriptions open with a stage tag then a sentence (e.g. "Stage 3a — ….")
+    // which is exactly the orientation a workflow prompt needs.
+    let first = match description.split_once(". ") {
+        Some((head, _)) => format!("{head}."),
+        None => description.to_string(),
+    };
+    Some(first)
+}
+
 fn health_check_schema() -> Value {
     json!({
         "name": "health_check",

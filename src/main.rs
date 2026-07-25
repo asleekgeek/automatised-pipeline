@@ -36,6 +36,7 @@ mod language_provider;
 mod lsp_client;
 mod lsp_resolver;
 mod macro_expansion;
+mod mcp_prompts;
 mod parser;
 mod prd_input;
 mod prd_validator;
@@ -69,6 +70,44 @@ use tool_profile::ToolProfile;
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "ai-architect";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// `initialize.instructions` teaches the connecting LLM the active profile's
+// intended workflow. The text VARIES by profile (issue #65 criterion 5): a
+// `core` client is told what `core` is for, not handed the full-pipeline map.
+// source: tool_profile.rs — CORE_TOOL_NAMES is the read-only code-intelligence
+// surface; Full is the whole finding→verification→PRD→gates pipeline.
+const CORE_INSTRUCTIONS: &str =
+    "ai-architect, 'core' profile — the read-only code-intelligence surface (8 tools). \
+     Start with health_check to confirm liveness and the active profile, then analyze_codebase \
+     on a repo to index + resolve + cluster the graph in one call. Explore with search_codebase \
+     (keyword → ranked symbols), get_context / get_symbol (a symbol's neighborhood), get_impact \
+     (reverse-dependency blast radius), detect_changes (a diff's blast radius), and query_graph \
+     (arbitrary read-only Cypher). Absence from the graph is NOT proof of absence — a file may \
+     be parse-incomplete; verify negatives with query_graph(graph=\"missed\"). Two guided \
+     workflows are published via prompts/list: explore_codebase and review_change_impact. The \
+     internal finding→verification→PRD pipeline stages are hidden in this profile; restart with \
+     --profile full to expose them.";
+const FULL_INSTRUCTIONS: &str =
+    "ai-architect, 'full' profile — the entire pipeline (every tool; the default). The tools are \
+     strongly ordered and the order is not guessable; a caller that gets it wrong gets an empty \
+     or misleading result rather than an error. Stages: (1) findings — extract_finding → \
+     refine_finding; (2) verification — start_verification → append_clarification → \
+     finalize_verification; (3) code intelligence — index_codebase → resolve_graph → \
+     cluster_graph (or analyze_codebase for all three), then search_codebase / get_context / \
+     get_symbol / get_impact / detect_changes / query_graph; (4/6) PRD grounding — \
+     prepare_prd_input → validate_prd_against_graph; (8/9) gates — check_security_gates, \
+     verify_semantic_diff. Absence from the graph is NOT proof of absence — verify negatives \
+     with query_graph(graph=\"missed\"). Guided workflows are published via prompts/list: \
+     explore_codebase, review_change_impact, verify_finding, ground_prd. For the read-only \
+     code-intelligence subset only, restart with --profile core.";
+
+/// The `initialize.instructions` string for `profile` (issue #65 criterion 5).
+fn server_instructions(profile: ToolProfile) -> &'static str {
+    match profile {
+        ToolProfile::Core => CORE_INSTRUCTIONS,
+        ToolProfile::Full => FULL_INSTRUCTIONS,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Stage 1 constants — every value traces to a spec section.
@@ -5272,8 +5311,16 @@ fn handle_request(req: Request, profile: ToolProfile) {
             id,
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION }
+                // Declare prompts alongside tools. Resources are intentionally
+                // NOT declared — see resources/list below: some clients probe
+                // resources regardless of declared capabilities.
+                "capabilities": {
+                    "tools": {},
+                    "prompts": { "listChanged": false }
+                },
+                "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
+                // Per-profile workflow guidance (issue #65 criterion 5).
+                "instructions": server_instructions(profile)
             }),
         ),
         "notifications/initialized" => {
@@ -5281,6 +5328,18 @@ fn handle_request(req: Request, profile: ToolProfile) {
         }
         "tools/list" => send_response(id, tools_list(profile)),
         "tools/call" => send_response(id, handle_tool_call(&req.params, profile)),
+        "prompts/list" => send_response(id, mcp_prompts::prompts_list(profile)),
+        "prompts/get" => match mcp_prompts::prompt_get(&req.params, profile) {
+            Ok(result) => send_response(id, result),
+            Err((code, message)) => send_error(id, code, &message),
+        },
+        // Empty-but-present resource endpoints. This server exposes no
+        // resources, but some MCP clients probe these on connect regardless of
+        // declared capabilities and surface the resulting -32601 as a failed
+        // connection (CBM upstream #958). An empty list is interoperable.
+        // source: DeusData/codebase-memory-mcp src/mcp/mcp.c:10810-10816 (#958).
+        "resources/list" => send_response(id, json!({ "resources": [] })),
+        "resources/templates/list" => send_response(id, json!({ "resourceTemplates": [] })),
         other => send_error(id, -32601, &format!("Method not found: {}", other)),
     }
 }
