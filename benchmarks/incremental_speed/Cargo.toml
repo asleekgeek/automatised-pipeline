@@ -1,0 +1,17 @@
+[package]
+name = "incremental-speed-bench"
+version = "0.0.1"
+edition = "2021"
+description = "Performance benchmark for issue #62/#55: incremental re-index and artifact bootstrap-fill vs a full index, on a fixed git fixture. Re-homes the wall-clock claim that issue #74 removed from the correctness suite — with recorded hardware/toolchain and committed results."
+publish = false
+
+[[bin]]
+name = "incremental_speed_bench"
+path = "src/main.rs"
+
+[dependencies]
+# The library under test — drives the real indexer/artifact/fill machinery, so
+# the measured operations are the ones the tools run.
+ai-architect-mcp = { path = "../.." }
+serde_json = "1"
+tempfile = "3"
