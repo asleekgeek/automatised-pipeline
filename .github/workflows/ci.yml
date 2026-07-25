@@ -58,6 +58,12 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          # Required input: `@stable` carried the version in the REF, so
+          # pinning the action to a SHA drops it and the action hard-fails
+          # with "'toolchain' is a required input". Keep in step with
+          # rust-toolchain.toml, which governs local builds.
+          toolchain: "1.95.0"
 
       # Cache the cargo target dir keyed on Cargo.lock. Saves ~minutes per
       # run because tree-sitter + tantivy + lbug are heavy to recompile.
@@ -121,6 +127,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: "1.95.0"
           components: clippy
 
       - name: Cache cargo build
