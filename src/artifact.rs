@@ -45,6 +45,13 @@ pub const ARTIFACT_FILE: &str = "graph.zst";
 /// The JSON metadata sidecar filename.
 pub const ARTIFACT_META: &str = "graph.meta.json";
 
+/// Archive entry name for the bundled per-file manifest (issue #62). Kept equal
+/// to `indexer::manifest::MANIFEST_FILE` so that unpacking the archive into the
+/// output dir drops it exactly where the incremental classifier expects it; the
+/// two are asserted equal in a test rather than coupled at compile time (artifact
+/// is infrastructure, the manifest is an indexer leaf — no cross-import).
+const ARTIFACT_MANIFEST_ENTRY: &str = "file_manifest.json";
+
 /// Sidecar schema version. Bump when the sidecar or archive layout changes in
 /// a way an older importer cannot read; import refuses a newer schema.
 const SCHEMA_VERSION: u32 = 1;
@@ -146,6 +153,7 @@ pub fn export_artifact(
     repo_path: &Path,
     node_count: u64,
     edge_count: u64,
+    manifest_path: Option<&Path>,
 ) -> Result<ExportStats, String> {
     if !graph_path.exists() {
         return Err(format!(
@@ -157,12 +165,21 @@ pub fn export_artifact(
     fs::create_dir_all(&dir)
         .map_err(|e| format!("artifact export: create {}: {e}", dir.display()))?;
 
+    // Bundle the per-file manifest (issue #62) INTO the archive when it exists,
+    // so a fresh clone can classify the artifact→HEAD diff for the incremental
+    // fill (issue #55) without re-hashing the whole tree. A missing manifest is
+    // not fatal — the importer falls back to git-diff classification.
+    let bundled_manifest = manifest_path
+        .filter(|p| p.exists())
+        .map(|p| p.to_path_buf());
+
     let level = ZSTD_LEVEL;
     let out = artifact_file(repo_path);
     let tmp = out.with_extension("zst.tmp");
-    let compressed_bytes = write_archive(graph_path, &tmp, level).inspect_err(|_| {
-        let _ = fs::remove_file(&tmp);
-    })?;
+    let compressed_bytes = write_archive(graph_path, bundled_manifest.as_deref(), &tmp, level)
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })?;
     fs::rename(&tmp, &out).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         format!("artifact export: rename into place: {e}")
@@ -189,10 +206,18 @@ pub fn export_artifact(
     })
 }
 
-/// Streams `graph_path` (dir or single file) through tar → zstd into `dest`.
+/// Streams `graph_path` (dir or single file) through tar → zstd into `dest`,
+/// optionally bundling `manifest_path` as a top-level `file_manifest.json` entry.
 /// Returns the compressed byte count. The archive stores the graph under its
-/// own basename so import can unpack it back into `<parent>/<basename>`.
-fn write_archive(graph_path: &Path, dest: &Path, level: i32) -> Result<u64, String> {
+/// own basename so import can unpack it back into `<parent>/<basename>`, and the
+/// bundled manifest unpacks as a sibling `<parent>/file_manifest.json` —
+/// precisely where the incremental classifier (issue #62) looks for it.
+fn write_archive(
+    graph_path: &Path,
+    manifest_path: Option<&Path>,
+    dest: &Path,
+    level: i32,
+) -> Result<u64, String> {
     let name = graph_path
         .file_name()
         .ok_or_else(|| "artifact export: graph path has no final component".to_string())?;
@@ -210,6 +235,11 @@ fn write_archive(graph_path: &Path, dest: &Path, level: i32) -> Result<u64, Stri
         builder
             .append_path_with_name(graph_path, name)
             .map_err(|e| format!("artifact export: tar file: {e}"))?;
+    }
+    if let Some(mp) = manifest_path {
+        builder
+            .append_path_with_name(mp, ARTIFACT_MANIFEST_ENTRY)
+            .map_err(|e| format!("artifact export: tar manifest: {e}"))?;
     }
     let encoder = builder
         .into_inner()

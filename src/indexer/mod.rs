@@ -16,7 +16,9 @@ pub mod manifest;
 mod persist;
 mod walk;
 
-pub use incremental::{index_incremental, write_full_manifest};
+pub use incremental::{
+    fill_after_bootstrap, index_incremental, write_full_manifest, FillMethod, FillResult,
+};
 use persist::{index_single_file, insert_ancestor_dirs, insert_dir_file_edge, insert_file_node};
 pub use walk::DependencyScope;
 use walk::{collect_source_files, is_dependency_path, WalkOptions};
