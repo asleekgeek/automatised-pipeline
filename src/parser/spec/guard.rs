@@ -10,72 +10,29 @@
 // node-kind string) and asserts every kind and field name in the spec is real
 // for that grammar. It makes the §8 source citation executable.
 
-use std::collections::BTreeSet;
-
-use serde_json::Value;
-
-use super::lang_spec::LangSpec;
+use super::guard_grammar::{node_types_json, parse_node_types};
+use super::lang_spec::{DeclaratorNaming, LangSpec};
 use super::registry::{MIGRATED_SPECS, SHALLOW_SPECS};
 use super::shallow::ShallowSpec;
-use crate::parser::Language;
 
-/// The grammar's `node-types.json` text for a migrated language. One arm per
-/// migrated language (added as each language migrates — OCP dispatch, not a
-/// growing conditional in the walker). source: each crate's `NODE_TYPES`,
-/// which is `include_str!("../../src/node-types.json")`.
-fn node_types_json(language: Language) -> &'static str {
-    match language {
-        Language::Go => tree_sitter_go::NODE_TYPES,
-        Language::Python => tree_sitter_python::NODE_TYPES,
-        Language::Java => tree_sitter_java::NODE_TYPES,
-        Language::Kotlin => tree_sitter_kotlin_ng::NODE_TYPES,
-        Language::Swift => tree_sitter_swift::NODE_TYPES,
-        Language::C => tree_sitter_c::NODE_TYPES,
-        Language::Cpp => tree_sitter_cpp::NODE_TYPES,
-        Language::ObjC => tree_sitter_objc::NODE_TYPES,
-        // TypeScript ships two grammars (typescript + tsx); every node kind in
-        // TS_FAMILY is a core-TS kind present in the typescript grammar (the tsx
-        // grammar adds only JSX kinds, which the spec does not reference), so the
-        // typescript node-types.json is the validation source.
-        Language::TypeScript => tree_sitter_typescript::TYPESCRIPT_NODE_TYPES,
-        // Shallow-path languages (ADR-0056) are validated by the same guard:
-        // a stale node kind in a shallow row drops symbols exactly as silently
-        // as in a deep row, so breadth must not come with weaker validation.
-        Language::Ruby => tree_sitter_ruby::NODE_TYPES,
-        // A spec row for a not-yet-wired language would fail loudly here rather
-        // than silently skip validation.
-        other => panic!(
-            "spec guard: no node-types.json wired for migrated language {other:?}; \
-             wire it in guard::node_types_json"
-        ),
+/// Every node-kind string a `DeclaratorNaming` sub-table references, tagged with
+/// its path. One helper for both C-family rows, so adding a family cannot forget
+/// to validate its naming data (issues #106, #123).
+fn naming_node_kinds(
+    prefix: &'static str,
+    naming: &DeclaratorNaming,
+) -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    for k in naming.identifier_kinds {
+        out.push((prefix, (*k).to_string()));
     }
-}
-
-/// Parses `node-types.json` into (set of node kinds, set of field names).
-fn parse_node_types(json: &str) -> (BTreeSet<String>, BTreeSet<String>) {
-    let root: Value = serde_json::from_str(json).expect("node-types.json is valid JSON");
-    let entries = root.as_array().expect("node-types.json is a JSON array");
-    let mut kinds = BTreeSet::new();
-    let mut fields = BTreeSet::new();
-    for entry in entries {
-        if let Some(t) = entry.get("type").and_then(Value::as_str) {
-            kinds.insert(t.to_string());
-        }
-        // Supertype nodes list their concrete members under "subtypes".
-        if let Some(subs) = entry.get("subtypes").and_then(Value::as_array) {
-            for s in subs {
-                if let Some(t) = s.get("type").and_then(Value::as_str) {
-                    kinds.insert(t.to_string());
-                }
-            }
-        }
-        if let Some(field_map) = entry.get("fields").and_then(Value::as_object) {
-            for name in field_map.keys() {
-                fields.insert(name.clone());
-            }
-        }
+    for k in naming.name_text_kinds {
+        out.push((prefix, (*k).to_string()));
     }
-    (kinds, fields)
+    for k in naming.indirection_declarator_kinds {
+        out.push((prefix, (*k).to_string()));
+    }
+    out
 }
 
 /// Every node-kind string a spec references (slices + options + value name +
@@ -136,20 +93,16 @@ fn spec_node_kinds(spec: &LangSpec) -> Vec<(&'static str, String)> {
             ("c_family.func_def_kinds", cf.func_def_kinds),
             ("c_family.func_decl_kinds", cf.func_decl_kinds),
             ("c_family.field_decl_kinds", cf.field_decl_kinds),
-            ("c_family.identifier_kinds", cf.identifier_kinds),
         ];
         for (field, kinds) in cf_slices {
             for k in *kinds {
                 out.push((field, (*k).to_string()));
             }
         }
+        out.extend(naming_node_kinds("c_family.naming", cf.naming));
         out.push((
             "c_family.func_declarator_kind",
             cf.func_declarator_kind.to_string(),
-        ));
-        out.push((
-            "c_family.init_declarator_kind",
-            cf.init_declarator_kind.to_string(),
         ));
         out.push((
             "c_family.field_identifier_kind",
@@ -163,21 +116,28 @@ fn spec_node_kinds(spec: &LangSpec) -> Vec<(&'static str, String)> {
             ("cpp_family.class_kinds", cf.class_kinds),
             ("cpp_family.struct_kinds", cf.struct_kinds),
             ("cpp_family.enum_kinds", cf.enum_kinds),
+            ("cpp_family.enum_member_kinds", cf.enum_member_kinds),
             ("cpp_family.template_kinds", cf.template_kinds),
             ("cpp_family.func_def_kinds", cf.func_def_kinds),
             ("cpp_family.field_decl_kinds", cf.field_decl_kinds),
+            ("cpp_family.member_decl_kinds", cf.member_decl_kinds),
             ("cpp_family.typedef_kinds", cf.typedef_kinds),
+            ("cpp_family.alias_kinds", cf.alias_kinds),
             ("cpp_family.base_type_kinds", cf.base_type_kinds),
-            ("cpp_family.identifier_kinds", cf.identifier_kinds),
         ];
         for (field, kinds) in cpp_slices {
             for k in *kinds {
                 out.push((field, (*k).to_string()));
             }
         }
+        out.extend(naming_node_kinds("cpp_family.naming", cf.naming));
         out.push((
             "cpp_family.func_declarator_kind",
             cf.func_declarator_kind.to_string(),
+        ));
+        out.push((
+            "cpp_family.qualified_declarator_kind",
+            cf.qualified_declarator_kind.to_string(),
         ));
         out.push((
             "cpp_family.base_clause_kind",
@@ -198,6 +158,10 @@ fn spec_node_kinds(spec: &LangSpec) -> Vec<(&'static str, String)> {
             ("objc_family.field_decl_kinds", of.field_decl_kinds),
             ("objc_family.func_body_kinds", of.func_body_kinds),
             ("objc_family.identifier_kinds", of.identifier_kinds),
+            (
+                "objc_family.method_parameter_kinds",
+                of.method_parameter_kinds,
+            ),
         ];
         for (field, kinds) in objc_slices {
             for k in *kinds {
@@ -311,15 +275,18 @@ fn spec_field_names(spec: &LangSpec) -> Vec<(&'static str, String)> {
             out.push((field, v.to_string()));
         }
     }
-    // The C-family declarator field (the struct/function name lives under it).
+    // The C-family naming fields: the declarator chain the name lives under, and
+    // the parameter list the search must SKIP (#106/#123). A stale
+    // `parameters_field` would silently reintroduce the last-parameter defect —
+    // the skip would match nothing — so it is validated like any other field.
     if let Some(cf) = spec.c_family {
-        out.push(("c_family.declarator_field", cf.declarator_field.to_string()));
+        out.extend(naming_field_names("c_family.naming", cf.naming));
     }
-    // The C++ declarator field (the function/method name lives under it).
     if let Some(cf) = spec.cpp_family {
+        out.extend(naming_field_names("cpp_family.naming", cf.naming));
         out.push((
-            "cpp_family.declarator_field",
-            cf.declarator_field.to_string(),
+            "cpp_family.qualified_scope_field",
+            cf.qualified_scope_field.to_string(),
         ));
     }
     // The ObjC field names read by its walker (declarator/category/superclass).
@@ -342,6 +309,18 @@ fn spec_field_names(spec: &LangSpec) -> Vec<(&'static str, String)> {
         out.push(("ts_family.alias_field", tf.alias_field.to_string()));
     }
     out
+}
+
+/// The field names a `DeclaratorNaming` sub-table references, tagged with its
+/// path. One helper for both C-family rows (mirrors `naming_node_kinds`).
+fn naming_field_names(
+    prefix: &'static str,
+    naming: &DeclaratorNaming,
+) -> Vec<(&'static str, String)> {
+    vec![
+        (prefix, naming.declarator_field.to_string()),
+        (prefix, naming.parameters_field.to_string()),
+    ]
 }
 
 /// Every node-kind string a shallow row references, tagged with its field.

@@ -6,12 +6,12 @@
 // methods, functions). Both consume the same `ObjcFamilySpec` sub-table and the
 // shared `WalkCtx`, at EXACT parity with the hand-written walker.
 //
-// The C-side name resolution deliberately differs from `walkers::clike`'s: the
-// hand-written ObjC walker named C structs/enums by the `name` field then the
-// first BARE `identifier` (NOT the parameter-skipping declarator chain), and
-// named typedefs by the LAST `type_identifier` under the declarator, and it did
-// NOT recurse a typedef's inline struct definition (issue #127). Those
-// differences are preserved here for parity.
+// The C-side name resolution deliberately differs from `walkers::clike`'s: this
+// lane names C structs/enums by the `name` field alone (NOT the
+// parameter-skipping declarator chain) and typedefs by the LAST `type_identifier`
+// under the declarator. Unlike the original hand-written walker, it DOES recurse
+// a typedef's inline struct definition (issue #127). Those differences are ObjC's
+// name resolution, not a defect.
 
 use tree_sitter::Node;
 
@@ -22,37 +22,32 @@ use crate::parser::{
     LABEL_FIELD, LABEL_STRUCT,
 };
 
-/// The text of the first direct child of exactly `plain_identifier_kind`
-/// (`identifier`), or empty. Matches the hand-written `first_identifier` — and
-/// is deliberately narrower than `objc/mod.rs`'s `find_name` (see
-/// `plain_identifier_kind`): an anonymous C type has no bare `identifier` child,
-/// so it resolves to empty and is skipped.
-fn first_identifier(of: &ObjcFamilySpec, source: &str, node: Node) -> String {
-    let mut cursor = node.walk();
-    let text = node
-        .children(&mut cursor)
-        .find(|c| c.kind() == of.plain_identifier_kind)
-        .map(|c| node_text(source, c))
-        .unwrap_or_default();
-    text
-}
-
-/// The name of a C struct/union/enum: the `name_field` text, or the first bare
-/// `identifier`. Matches the hand-written `node_field_text(node,"name")`-then-
-/// `first_identifier` fallback (an anonymous C type resolves to empty here).
-fn c_type_name(spec: &LangSpec, of: &ObjcFamilySpec, source: &str, node: Node) -> String {
-    let n = node_field_text(source, node, spec.name_field);
-    if n.is_empty() {
-        first_identifier(of, source, node)
-    } else {
-        n
-    }
+/// The name of a C struct/union/enum (or an enumerator): the `name_field` text,
+/// empty when the specifier is anonymous.
+///
+/// Preconditions: `node` is a struct/union/enum specifier or an enumerator.
+/// Postconditions: the declared name, or `""` for an anonymous specifier — which
+/// every caller treats as "emit nothing".
+///
+/// This used to fall back to "the first bare `identifier` child" when the `name`
+/// field was absent. That fallback was unreachable: in tree-sitter-objc 3.0.2 a
+/// struct/union/enum specifier's only non-field children are `attribute_specifier`
+/// and `ms_declspec_modifier`, so a bare `identifier` is never a direct child and
+/// the fallback could only ever return `""`. Mutation testing proved it — every
+/// mutant that made the helper return empty SURVIVED, which is the signature of
+/// dead code, so it is removed rather than pinned (§9, §12.1). Absorbed from
+/// fix/cpp-extraction-123-124 commit f7c4fb2.
+/// source: tree-sitter-objc 3.0.2 node-types.json (struct_specifier /
+/// union_specifier / enum_specifier: fields `name`/`body`, children
+/// `attribute_specifier`/`ms_declspec_modifier`; enumerator: field `name`).
+fn c_type_name(spec: &LangSpec, source: &str, node: Node) -> String {
+    node_field_text(source, node, spec.name_field)
 }
 
 /// Emits a C `struct`/`union` as a `Struct` + `Defines` and, from its
 /// `body_field`, one `Field` + `HasField` per declared member. The name is the
-/// `name_field` text then the first bare `identifier` (anonymous ⇒ skipped).
-/// Matches the hand-written `extract_c_struct`.
+/// `name_field` text (anonymous ⇒ skipped). Matches the hand-written
+/// `extract_c_struct`.
 pub(super) fn emit_c_struct(
     spec: &LangSpec,
     of: &ObjcFamilySpec,
@@ -60,9 +55,29 @@ pub(super) fn emit_c_struct(
     node: Node,
     scope: &str,
 ) {
-    let name = c_type_name(spec, of, ctx.source, node);
+    emit_c_struct_named(spec, of, ctx, node, scope, None);
+}
+
+/// `emit_c_struct` with an optional name override for an ANONYMOUS specifier.
+///
+/// `typedef struct { int x; } T;` declares a type whose only usable name is the
+/// typedef alias (issue #127). Without the override the specifier has no `name`
+/// field and no bare `identifier` child, so it resolves to empty and its FIELDS
+/// are dropped. Mirrors the C walker's `emit_struct_named` (#107).
+fn emit_c_struct_named(
+    spec: &LangSpec,
+    of: &ObjcFamilySpec,
+    ctx: &mut WalkCtx,
+    node: Node,
+    scope: &str,
+    override_name: Option<&str>,
+) {
+    let name = match override_name {
+        Some(n) => n.to_string(),
+        None => c_type_name(spec, ctx.source, node),
+    };
     if name.is_empty() {
-        return; // anonymous struct (e.g. inside a typedef) — skip
+        return; // anonymous struct with no alias to borrow — skip
     }
     let qn = qual(scope, &name);
     ctx.nodes.push(ExtractedNode {
@@ -167,7 +182,24 @@ pub(super) fn emit_c_enum(
     node: Node,
     scope: &str,
 ) {
-    let name = c_type_name(spec, of, ctx.source, node);
+    emit_c_enum_named(spec, of, ctx, node, scope, None);
+}
+
+/// `emit_c_enum` with an optional name override for an ANONYMOUS specifier —
+/// `typedef enum { A } E;`, whose only name is the alias (issue #127), the enum
+/// analog of `emit_c_struct_named`.
+fn emit_c_enum_named(
+    spec: &LangSpec,
+    of: &ObjcFamilySpec,
+    ctx: &mut WalkCtx,
+    node: Node,
+    scope: &str,
+    override_name: Option<&str>,
+) {
+    let name = match override_name {
+        Some(n) => n.to_string(),
+        None => c_type_name(spec, ctx.source, node),
+    };
     if name.is_empty() {
         return;
     }
@@ -195,7 +227,7 @@ pub(super) fn emit_c_enum(
         if !kind_in(of.enum_member_kinds, child.kind()) {
             continue;
         }
-        let en = c_type_name(spec, of, ctx.source, child);
+        let en = c_type_name(spec, ctx.source, child);
         if en.is_empty() {
             continue;
         }
@@ -217,13 +249,81 @@ pub(super) fn emit_c_enum(
     }
 }
 
-/// Emits a C `typedef` as a `Constant` (`typedef=true`) + `Defines`. The name is
-/// the LAST `typedef_name_kind` (`type_identifier`) reached through the
-/// `declarator_field` (unwrapping pointer/array declarators), falling back to a
-/// full-node DFS. The inline struct definition of a `typedef struct { … } T;` is
-/// deliberately NOT recursed — its fields are dropped, a pre-existing defect
-/// preserved for parity (issue #127). Matches `extract_c_typedef` +
-/// `find_c_typedef_name`.
+/// What `emit_typedef_inline_type` found, so `emit_c_typedef` knows whether the
+/// alias name has already been consumed by an anonymous type.
+#[derive(PartialEq, Eq)]
+enum InlineType {
+    /// No inline DEFINITION (absent, or a bare reference like `struct Node`).
+    None,
+    /// A named inline definition (`typedef struct Node { … } T;`).
+    Named,
+    /// An anonymous inline definition, emitted under the alias.
+    Anonymous,
+}
+
+/// Emits the struct/union/enum DEFINITION carried inline in a typedef's `type`
+/// field (`typedef struct Node { int v; } NodeT;`), scoped under the file —
+/// exactly what the ObjC walker never did, so the inline type and its fields were
+/// dropped (issue #127; the C walker fixed the analog in #107 with
+/// `emit_inline_type`).
+///
+/// Preconditions: `node` is a `typedef_kinds` node; `alias` is the typedef's own
+/// name. Postconditions: emits the inner specifier (and its fields/members) iff
+/// the `type_field` child is a struct/union/enum specifier WITH a body; emits
+/// nothing for a bare reference (`typedef struct Node NodeT;`, no body). Returns
+/// which case fired so the caller can suppress the duplicate `Constant` when the
+/// anonymous type has taken the alias name.
+fn emit_typedef_inline_type(
+    spec: &LangSpec,
+    of: &ObjcFamilySpec,
+    ctx: &mut WalkCtx,
+    node: Node,
+    scope: &str,
+    alias: &str,
+) -> InlineType {
+    let Some(inner) = node.child_by_field_name(spec.type_field) else {
+        return InlineType::None;
+    };
+    // Only a DEFINITION (a specifier carrying a body) is emitted, never a bare
+    // reference to an existing type — re-emitting the reference would duplicate
+    // the real definition's node on its qualified name (#107's lesson).
+    if spec
+        .body_field
+        .and_then(|f| inner.child_by_field_name(f))
+        .is_none()
+    {
+        return InlineType::None;
+    }
+    let is_anonymous = c_type_name(spec, ctx.source, inner).is_empty();
+    let override_name = if is_anonymous && !alias.is_empty() {
+        Some(alias)
+    } else {
+        None
+    };
+    if kind_in(of.struct_kinds, inner.kind()) {
+        emit_c_struct_named(spec, of, ctx, inner, scope, override_name);
+    } else if kind_in(of.enum_kinds, inner.kind()) {
+        emit_c_enum_named(spec, of, ctx, inner, scope, override_name);
+    } else {
+        return InlineType::None;
+    }
+    if override_name.is_some() {
+        InlineType::Anonymous
+    } else {
+        InlineType::Named
+    }
+}
+
+/// Emits a C `typedef`. The name is the LAST `typedef_name_kind`
+/// (`type_identifier`) reached through the `declarator_field` (unwrapping
+/// pointer/array declarators), falling back to a full-node DFS.
+///
+/// The inline struct/union/enum DEFINITION carried in the `type` field is now
+/// recursed (issue #127): `typedef struct Node { int v; } NodeT;` emits
+/// `Struct|Node` + `Field|v` (`HasField`) as well as `Constant|NodeT`. An
+/// ANONYMOUS body (`typedef struct { int v; } T;`) is emitted under the alias and
+/// then NO separate `Constant` is emitted — two nodes on one qualified name would
+/// be a duplicated key (mirrors the C walker's `emit_typedef`).
 pub(super) fn emit_c_typedef(
     spec: &LangSpec,
     of: &ObjcFamilySpec,
@@ -233,6 +333,9 @@ pub(super) fn emit_c_typedef(
 ) {
     let name = find_typedef_name(of, ctx.source, node);
     if name.is_empty() {
+        return;
+    }
+    if emit_typedef_inline_type(spec, of, ctx, node, scope, &name) == InlineType::Anonymous {
         return;
     }
     let qn = qual(scope, &name);

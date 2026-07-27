@@ -55,6 +55,101 @@ adheres to [Semantic Versioning](https://semver.org/).
     now has its method and arrow-property bodies scanned for calls, keyed under
     the enclosing const's QN, so `fetch`/`send` produce `Calls` edges (#142).
 
+- **C++ declaration names, and five C++ extraction-shape gaps (issues #123,
+  #124). BREAKING for consumers of C++ nodes: names, labels, and qualified names
+  change.** Re-index any C++ repository — a stored graph built before this
+  release carries the old names and QNs.
+
+  **Names came from the last parameter, not the declaration (#123).** The name
+  search was a right-to-left DFS over the whole declarator, so it returned the
+  deepest-rightmost identifier: `int freeFunction(int a, int b)` was named `b`,
+  `Shape operator+(const Shape& other)` was `other`, and `void add(T item)` was
+  `item`. Names now come from what the declarator BINDS, following the
+  `declarator` field chain and never descending into the parameter list. This is
+  the same fix #106 made for C, and it is now literally the same code: the search
+  lives once in `walkers/declarator` and both C-family walkers drive it with a
+  `DeclaratorNaming` row, so the skip stays data. `operator+` and `~Point` keep
+  their declared spelling (an `operator_name` / `destructor_name` node IS the
+  name; descending into it yielded `Point`, colliding with the constructor).
+
+  **Enum members were dropped.** `enum Color { RED, GREEN, BLUE };` emitted a
+  bare `Enum` with no members. Each member is now a `Constant` (`enum_entry=true`)
+  scoped under its enum, matching the C model. `enum class` behaves identically.
+  A member's name comes from its `name` field, so `GREEN = 5` resolves to `GREEN`.
+
+  **Constructors and destructors were dropped.** In a class body the grammar
+  spells them as a bare `declaration` (no return type), not a `field_declaration`,
+  so the walker never saw them. They are now prototype `Method`s attached to their
+  class.
+
+  **`using X = Y;` was dropped.** An `alias_declaration` is a different node kind
+  from the `using_declaration` the walker matched, so C++ type aliases were
+  invisible. It is now a `TypeAlias` carrying the aliased type as
+  `type_annotation` — the label this graph already uses for the same construct in
+  TypeScript, Rust, and Go. `using namespace std;` remains an `Import`.
+
+  **Data members were `Constant` + `Defines`; they are now `Field` + `HasField`**
+  with a `type_annotation`, matching the flat C model. Every declarator is
+  emitted, so `int a, b;` yields two fields (it previously yielded one, named `b`).
+  Pointer and reference declarators unwrap to the bare member name.
+
+  **Out-of-body definitions were scoped to the file.** `double
+  geometry::Circle::area() const { … }` became a file-level `Function` named
+  `area`, detached from its class. It is now a `Method` re-attached to the owner
+  its qualifier names, with the matching `HasMethod` edge and `receiver_type`.
+
+  Also fixed while in these files (boy-scout rule): a bodiless class/struct/enum
+  specifier — a forward declaration such as `class Shape;` — emitted a duplicate
+  node on the SAME qualified name as the real definition, spanning only the
+  declaration line. A forward declaration declares no type and now contributes
+  nothing, at file scope and in a class body alike. This is the guard #107 added
+  for C, which C++ lacked.
+
+  C++ ground truth: 41 nodes / 44 refs → 52 / 55. Every changed row was verified
+  in both directions against an issue clause (the derivation is documented in
+  `cpp_ground_truth.rs`); per-edge-kind F1 is 1.000, and `graph_accuracy` stays
+  41/41.
+
+- **A C++ function-pointer data member is a `Field`, not a method prototype
+  (issue #135); the identical C defect is fixed too.** A member such as
+  `void (*cb)(int);` has a `function_declarator` as its OUTERMOST declarator, so
+  the prototype discriminator classified it as a `Method` (`is_prototype=true`).
+  But a `pointer_declarator` sits between that `function_declarator` and the name
+  (`(*cb)`), which makes it a pointer TO a function — data. Classification is now
+  positional: a member is a prototype only when a `function_declarator` is reached
+  with NO pointer/reference wrapper between it and the name, so `void (*cb)(int);`
+  is a `Field` + `HasField` (`type_annotation="void"`) while `void f(int);` and a
+  pointer-RETURN prototype (`int *g();`) stay `Method`s. **Consumer-visible for
+  C:** the identical looseness misclassified a file-scope function-pointer
+  variable (`int (*signal_handler)(int) = 0;`) as a prototype `Function`; the flat
+  C walker does not model file-scope variables, so it now emits NOTHING for it —
+  the single `Function|signal_handler#13` node and its `Defines` edge are removed
+  from the C graph (`#13` was the highest `seq`, so no other QN shifts). The
+  discriminator lives once in `walkers/declarator::binds_function_prototype`,
+  driven by each family's `DeclaratorNaming` (`indirection_declarator_kinds`).
+
+- **Objective-C: a typedef of an inline struct no longer drops the struct and
+  its fields (issue #127).** `typedef struct Node { int v; } NodeT;` emitted ONLY
+  `Constant|NodeT` — the walker never recursed the inline type in the typedef's
+  `type` field, unlike the C walker (#107). It now also emits `Struct|Node` +
+  `Field|v` (`HasField`), and an anonymous body (`typedef struct { int v; } T;`)
+  is emitted under the alias with no duplicate `Constant`. **Consumer-visible:**
+  the ObjC graph gains the previously invisible inline-struct types and fields
+  (2 nodes / 2 refs on the parity corpus).
+
+- **Objective-C: a keyword-selector method name is now the full selector
+  (issue #128).** `- (int)areaWithWidth:(int)w height:(int)h;` extracted as
+  `areaWithWidth` — only the first keyword — while message SENDS already
+  reconstructed the full selector, an asymmetry. tree-sitter-objc shapes the
+  selector as bare `identifier` keywords interleaved with `method_parameter`
+  nodes (no `keyword_declarator`); the name is now reconstructed exactly as a
+  send is, joining each keyword with a trailing `:` when there is at least one
+  argument. **Consumer-visible/BREAKING for ObjC method names:** a keyword method
+  is renamed to its full selector (`areaWithWidth:height:`) and a single-keyword
+  selector keeps its colon (`shapeNamed:`); a unary selector (`start`) is
+  unchanged. QNs and `HasMethod`/`Calls` edges re-key on the full selector.
+  Re-index any Objective-C repository.
+
 - **C preprocessor macros and inline struct definitions reach the graph
   (issue #107).** `#define MAX 10` and `#define SQUARE(x) ((x)*(x))` produced
   nothing at all, so macro-defined symbols were invisible to the graph and to
