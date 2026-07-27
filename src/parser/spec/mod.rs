@@ -19,6 +19,7 @@ mod families;
 mod go;
 mod java;
 mod kotlin;
+mod kotlin_conventions;
 mod lang_spec;
 mod objc;
 mod python;
@@ -53,6 +54,8 @@ mod guard_grammar;
 #[cfg(test)]
 mod java_parity_tests;
 #[cfg(test)]
+mod kotlin_ground_truth;
+#[cfg(test)]
 mod kotlin_parity_tests;
 #[cfg(test)]
 mod objc_extraction_tests;
@@ -70,6 +73,8 @@ mod rust_parity_tests;
 mod rust_walker_tests;
 #[cfg(test)]
 mod shallow_tests;
+#[cfg(test)]
+mod swift_ground_truth;
 #[cfg(test)]
 mod swift_parity_tests;
 #[cfg(test)]
