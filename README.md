@@ -219,6 +219,23 @@ claude plugin marketplace add cdeust/ai-architect-mcp-codebase
 claude plugin install ai-architect-mcp-codebase@ai-architect-mcp-codebase-marketplace
 ```
 
+Fresh marketplace installs require GitHub CLI 2.68 or newer. The bootstrap
+verifies the release's attached Sigstore bundle against the fixed
+`cdeust/ai-architect-mcp-codebase/.github/workflows/release.yml` signer before
+installing any executable; it never accepts a manifest-provided trust anchor.
+The bundle avoids a Rekor transparency-log lookup, but `gh` can still need the
+network to refresh Sigstore's TUF trust root on a cold cache.
+This protects the official package and makes a minimal-diff fork that changes
+only metadata fail closed; it cannot make arbitrary code from a hostile fork
+trustworthy, because such a fork can also replace the bootstrap itself. Verify
+that the marketplace slug is exactly `cdeust/ai-architect-mcp-codebase`.
+
+Contributors working on a clone that sets `CLAUDE_PLUGIN_ROOT` may also set
+`AI_ARCHITECT_SOURCE_CHECKOUT=1` to retain the local Cargo build path. The
+bootstrap honors that override only when the plugin root contains `.git`, and
+always reports the verification bypass on stderr. Marketplace manifests may
+not supply environment overrides for this server entry.
+
 If the former Automatised Pipeline plugin is installed, remove it before
 installing the canonical package:
 
@@ -227,11 +244,24 @@ claude plugin uninstall automatised-pipeline@automatised-pipeline-marketplace
 claude plugin marketplace remove automatised-pipeline-marketplace
 ```
 
-Claude MCP allowlists and permissions must also replace
-`mcp__plugin_automatised-pipeline_automatised-pipeline__<tool>` with
+Claude MCP allowlists and permissions must also replace every prefix listed in
+`revoked_claude_tool_prefixes` in the contract with
 `mcp__plugin_ai-architect-mcp-codebase_ai-architect__<tool>`. The final
 `ai-architect` segment is intentionally stable: it is the MCP server key, not
-the plugin's distribution name.
+the plugin's distribution name. The machine-readable source of truth is
+[`mcp-contract.json`](mcp-contract.json); consumer repositories validate their
+allowlists against its derived `claude_tool_prefix` instead of maintaining an
+independent spelling.
+
+Contract schema 1 requires `distribution`, `claude_plugin`,
+`claude_marketplace`, `mcp_server`, `claude_tool_prefix`, and
+`revoked_claude_tool_prefixes`. Consumers must pin the raw contract URL to the
+full commit SHA (tags can be moved), validate that the prefix equals
+`mcp__plugin_<claude_plugin>_<mcp_server>__`, and remove revoked prefixes from
+allowlists rather than retaining them as aliases. Consumer PRs record the full
+producer commit in their contract URL; the v0.9.0 release must not be assumed
+available until its verified-release workflow completes.
+The same contract is included in the crate, MCPB, and signed release assets.
 
 **OpenAI Codex CLI** (also picked up by the ChatGPT desktop app and Codex IDE extension — they share `~/.codex/config.toml`)
 

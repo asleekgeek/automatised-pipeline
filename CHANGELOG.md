@@ -33,7 +33,19 @@ adheres to [Semantic Versioning](https://semver.org/).
   README documents the exact Claude tool-prefix and host migration commands.
   Fresh Claude marketplace installs fetch and checksum-verify the matching
   release binary before MCP startup, avoiding a cold Rust build inside the
-  handshake timeout; unreleased source checkouts retain the build fallback.
+  handshake timeout. They now fail fast when that release is unavailable;
+  unreleased source checkouts retain the build fallback. A machine-readable
+  `mcp-contract.json` publishes the Claude plugin, server key, and tool prefix,
+  and the identity gate derives the prefix from the actual manifests.
+  Release publication now stays draft until every archive, checksum, Sigstore
+  attestation, SBOM, and MCPB has been verified; only then is it published and
+  fetched once through the same anonymous URL used by the plugin bootstrap.
+  The bootstrap fixes the trusted repository and signer workflow independently
+  of plugin metadata, requires a GitHub CLI 2.68+ verifier with `--source-ref`, rejects
+  archive link types by streaming one member into a regular file, and persists
+  and rechecks the installed version and binary digest on every marketplace
+  launch to detect cache corruption or partial replacement. The adjacent
+  digest is not a trust boundary against an actor able to rewrite both files.
 
 ### Fixed
 
@@ -81,9 +93,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   Each attest step now captures its `bundle-path` output and publishes the
   Sigstore bundle beside the artifact it signs — `<asset>.sigstore.json` for
   all four platform tarballs, the `.mcpb`, and the CycloneDX SBOM. That also
-  buys a property the API never could: `gh attestation verify` needs the network
-  and needs GitHub to answer, whereas the bundle is the same signed statement as
-  a file an archival or air-gapped consumer can keep.
+  keeps the signed provenance statement with the artifact and avoids a Rekor
+  transparency-log lookup. Verification can still require network access to
+  refresh Sigstore's TUF trust root on a cold cache.
 
 - **Tag-signing is configured, and `v0.8.3` is still unsigned — stated rather
   than implied.** `v0.8.0` was annotated but unsigned and `v0.8.1`/`v0.8.2` were

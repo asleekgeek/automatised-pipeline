@@ -58,10 +58,32 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Verify tag matches the plugin version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json"))["version"])')
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "plugin version $VERSION is not stable SemVer" >&2; exit 1; }
+          if [ "$TAG" = "v$VERSION" ]; then
+            :
+          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-rc[0-9]+$ ]] \
+            && [ "${BASH_REMATCH[1]}" = "$VERSION" ]; then
+            :
+          else
+            echo "tag $TAG does not match plugin version $VERSION" >&2
+            exit 1
+          fi
+
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
 
   build:
     name: build (${{ matrix.target_tag }})
@@ -258,6 +280,7 @@ jobs:
           # upload here. tag_name pins the upload to that release so
           # softprops never tries to create a sibling draft.
           tag_name: ${{ github.ref_name }}
+          draft: true
           files: |
             ai-architect-mcp-codebase-${{ matrix.target_tag }}.tar.gz
             ai-architect-mcp-codebase-${{ matrix.target_tag }}.tar.gz.sha256
@@ -287,7 +310,7 @@ jobs:
           toolchain: "1.95.0"
 
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked --version ^0.5
+        run: cargo install cargo-cyclonedx --locked --version 0.5.9
 
       - name: Generate SBOM
         run: |
@@ -319,6 +342,7 @@ jobs:
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ github.ref_name }}
+          draft: true
           files: |
             ai-architect-mcp-codebase.cdx.json
             ai-architect-mcp-codebase.cdx.json.sha256
@@ -342,12 +366,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download platform binaries from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          TAG="${{ github.ref_name }}"
-          BASE="https://github.com/cdeust/ai-architect-mcp-codebase/releases/download/${TAG}"
+          set -euo pipefail
           for TARGET in macos-aarch64 linux-x86_64 linux-aarch64; do
-            curl -fsSL "${BASE}/ai-architect-mcp-codebase-${TARGET}.tar.gz" \
-              -o "ai-architect-mcp-codebase-${TARGET}.tar.gz"
+            ASSET="ai-architect-mcp-codebase-${TARGET}.tar.gz"
+            gh release download "$TAG" --repo "$REPOSITORY" \
+              --pattern "$ASSET" --pattern "$ASSET.sha256"
+            sha256sum --check "$ASSET.sha256"
+            gh attestation verify "$ASSET" --repo "$REPOSITORY" \
+              --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG"
           done
 
       - name: Assemble staging directory
@@ -360,6 +392,7 @@ jobs:
           cp README.md     "$STAGING/"
           cp LICENSE       "$STAGING/"
           cp PRIVACY.md    "$STAGING/"
+          cp mcp-contract.json "$STAGING/"
           cp launch.sh     "$STAGING/"
           chmod +x "$STAGING/launch.sh"
 
@@ -369,8 +402,9 @@ jobs:
           # Extract platform binaries into bin/<platform>/
           for TARGET in macos-aarch64 linux-x86_64 linux-aarch64; do
             mkdir -p "$STAGING/bin/${TARGET}"
-            tar -xzf "ai-architect-mcp-codebase-${TARGET}.tar.gz" \
-              -C "$STAGING/bin/${TARGET}/"
+            tar -xzOf "ai-architect-mcp-codebase-${TARGET}.tar.gz" \
+              ai-architect-mcp-codebase \
+              > "$STAGING/bin/${TARGET}/ai-architect-mcp-codebase"
             chmod +x "$STAGING/bin/${TARGET}/ai-architect-mcp-codebase"
           done
 
@@ -378,15 +412,14 @@ jobs:
 
       - name: Pack .mcpb bundle
         run: |
-          # .mcpb is a ZIP archive with manifest.json at root.
-          # Try the official packer first; fall back to zip.
-          if npx -y @anthropic-ai/mcpb@latest pack "$STAGING" ai-architect-mcp-codebase.mcpb 2>/dev/null; then
-            echo "Packed via @anthropic-ai/mcpb"
-          else
-            cd "$STAGING" && zip -r "$OLDPWD/ai-architect-mcp-codebase.mcpb" . && cd "$OLDPWD"
-            echo "Packed via zip (mcpb CLI unavailable)"
-          fi
+          # .mcpb is a ZIP archive with manifest.json at root. Use the runner's
+          # fixed zip tool rather than executing an unpinned package inside the
+          # release job immediately before attestation.
+          cd "$STAGING"
+          zip -r "$OLDPWD/ai-architect-mcp-codebase.mcpb" .
+          cd "$OLDPWD"
           shasum -a 256 ai-architect-mcp-codebase.mcpb | tee ai-architect-mcp-codebase.mcpb.sha256
+          shasum -a 256 mcp-contract.json | tee mcp-contract.json.sha256
           ls -la ai-architect-mcp-codebase.mcpb ai-architect-mcp-codebase.mcpb.sha256
 
       - name: Attest build provenance (.mcpb)
@@ -394,6 +427,12 @@ jobs:
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: ai-architect-mcp-codebase.mcpb
+
+      - name: Attest MCP contract
+        id: attest_contract
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: mcp-contract.json
 
       # Same reason as the tarball leg: the bundle has to be ON the release
       # for an offline consumer (and Scorecard) to see a signature at all.
@@ -404,12 +443,185 @@ jobs:
           cp "$ATTESTATION_BUNDLE" ai-architect-mcp-codebase.mcpb.sigstore.json
           ls -la ai-architect-mcp-codebase.mcpb.sigstore.json
 
+      - name: Stage MCP contract attestation bundle
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest_contract.outputs.bundle-path }}
+        run: cp "$ATTESTATION_BUNDLE" mcp-contract.json.sigstore.json
+
       - name: Upload .mcpb to release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ github.ref_name }}
+          draft: true
           files: |
             ai-architect-mcp-codebase.mcpb
             ai-architect-mcp-codebase.mcpb.sha256
             ai-architect-mcp-codebase.mcpb.sigstore.json
+            mcp-contract.json
+            mcp-contract.json.sha256
+            mcp-contract.json.sigstore.json
           fail_on_unmatched_files: true
+
+  # The plugin bootstrap resolves these public URLs during Claude's MCP
+  # handshake. Manifest consistency alone cannot prove that a fresh install is
+  # usable, so the release is incomplete until every URL and checksum resolves.
+  verify_staged_assets:
+    name: verify staged release contract
+    needs: [build, sbom, package_mcpb]
+    outputs:
+      checksums: ${{ steps.verify.outputs.checksums }}
+      inventory_sha: ${{ steps.verify.outputs.inventory_sha }}
+    runs-on: ubuntu-latest
+    permissions:
+      # Draft releases are visible only to callers with push access. This job
+      # does not mutate them, but contents:write is required by GitHub's draft
+      # release visibility rule.
+      contents: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download and verify every launcher asset
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open(".claude-plugin/plugin.json"))["version"])')
+          [[ "$MANIFEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "plugin version $MANIFEST_VERSION is not stable SemVer" >&2; exit 1; }
+          if [ "$TAG" = "v$MANIFEST_VERSION" ]; then
+            :
+          elif [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-rc[0-9]+$ ]] \
+            && [ "${BASH_REMATCH[1]}" = "$MANIFEST_VERSION" ]; then
+            :
+          else
+            echo "tag $TAG does not match plugin version $MANIFEST_VERSION" >&2
+            exit 1
+          fi
+          mkdir -p release-assets
+          cd release-assets
+          for TARGET in macos-aarch64 linux-x86_64 linux-aarch64 windows-x86_64; do
+            ASSET="ai-architect-mcp-codebase-${TARGET}.tar.gz"
+            gh release download "$TAG" --repo "$REPOSITORY" \
+              --pattern "$ASSET" --pattern "$ASSET.sha256" --pattern "$ASSET.sigstore.json"
+            sha256sum --check "$ASSET.sha256"
+            gh attestation verify "$ASSET" --repo "$REPOSITORY" \
+              --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG" \
+              --bundle "$ASSET.sigstore.json"
+          done
+          gh release download "$TAG" --repo "$REPOSITORY" \
+            --pattern 'ai-architect-mcp-codebase.mcpb' \
+            --pattern 'ai-architect-mcp-codebase.mcpb.sha256' \
+            --pattern 'ai-architect-mcp-codebase.mcpb.sigstore.json' \
+            --pattern 'ai-architect-mcp-codebase.cdx.json' \
+            --pattern 'ai-architect-mcp-codebase.cdx.json.sha256' \
+            --pattern 'ai-architect-mcp-codebase.cdx.json.sigstore.json' \
+            --pattern 'mcp-contract.json' \
+            --pattern 'mcp-contract.json.sha256' \
+            --pattern 'mcp-contract.json.sigstore.json'
+          sha256sum --check ai-architect-mcp-codebase.mcpb.sha256
+          sha256sum --check ai-architect-mcp-codebase.cdx.json.sha256
+          sha256sum --check mcp-contract.json.sha256
+          gh attestation verify ai-architect-mcp-codebase.mcpb --repo "$REPOSITORY" \
+            --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$TAG" \
+            --bundle ai-architect-mcp-codebase.mcpb.sigstore.json
+          gh attestation verify ai-architect-mcp-codebase.cdx.json --repo "$REPOSITORY" \
+            --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$TAG" \
+            --bundle ai-architect-mcp-codebase.cdx.json.sigstore.json
+          gh attestation verify mcp-contract.json --repo "$REPOSITORY" \
+            --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "refs/tags/$TAG" \
+            --bundle mcp-contract.json.sigstore.json
+
+          EXPECTED=$(printf '%s\n' \
+            ai-architect-mcp-codebase-macos-aarch64.tar.gz \
+            ai-architect-mcp-codebase-macos-aarch64.tar.gz.sha256 \
+            ai-architect-mcp-codebase-macos-aarch64.tar.gz.sigstore.json \
+            ai-architect-mcp-codebase-linux-x86_64.tar.gz \
+            ai-architect-mcp-codebase-linux-x86_64.tar.gz.sha256 \
+            ai-architect-mcp-codebase-linux-x86_64.tar.gz.sigstore.json \
+            ai-architect-mcp-codebase-linux-aarch64.tar.gz \
+            ai-architect-mcp-codebase-linux-aarch64.tar.gz.sha256 \
+            ai-architect-mcp-codebase-linux-aarch64.tar.gz.sigstore.json \
+            ai-architect-mcp-codebase-windows-x86_64.tar.gz \
+            ai-architect-mcp-codebase-windows-x86_64.tar.gz.sha256 \
+            ai-architect-mcp-codebase-windows-x86_64.tar.gz.sigstore.json \
+            ai-architect-mcp-codebase.cdx.json \
+            ai-architect-mcp-codebase.cdx.json.sha256 \
+            ai-architect-mcp-codebase.cdx.json.sigstore.json \
+            ai-architect-mcp-codebase.mcpb \
+            ai-architect-mcp-codebase.mcpb.sha256 \
+            ai-architect-mcp-codebase.mcpb.sigstore.json \
+            mcp-contract.json \
+            mcp-contract.json.sha256 \
+            mcp-contract.json.sigstore.json | sort)
+          ACTUAL=$(gh release view "$TAG" --repo "$REPOSITORY" --json assets \
+            --jq '.assets[].name' | sort)
+          test "$ACTUAL" = "$EXPECTED"
+          CHECKSUMS=$(python3 -c 'import glob,json; print(json.dumps({line.split()[1].lstrip("*"): line.split()[0] for path in glob.glob("*.sha256") for line in open(path)}))')
+          echo "checksums=$CHECKSUMS" >> "$GITHUB_OUTPUT"
+          INVENTORY_SHA=$(printf '%s\n' "$EXPECTED" | sha256sum | awk '{print $1}')
+          echo "inventory_sha=$INVENTORY_SHA" >> "$GITHUB_OUTPUT"
+
+  publish_verified_release:
+    name: publish verified release
+    needs: verify_staged_assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish, then verify the anonymous plugin URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          VERIFIED_CHECKSUMS: ${{ needs.verify_staged_assets.outputs.checksums }}
+          VERIFIED_INVENTORY_SHA: ${{ needs.verify_staged_assets.outputs.inventory_sha }}
+        run: |
+          set -Eeuo pipefail
+          gh release edit "$TAG" --repo "$REPOSITORY" --draft=false
+          rollback_required=yes
+          rollback() {
+            if [ "$rollback_required" = yes ]; then
+              gh release edit "$TAG" --repo "$REPOSITORY" --draft=true
+            fi
+          }
+          trap rollback ERR INT TERM
+          BASE="https://github.com/${REPOSITORY}/releases/download/${TAG}"
+          verify_public_asset() {
+            local ASSET=$1
+            curl --fail --location --silent --show-error \
+              --connect-timeout 5 --max-time 120 --retry 5 --retry-all-errors \
+              "$BASE/$ASSET" -o "$ASSET"
+            EXPECTED_SHA=$(python3 -c 'import json,os,sys; print(json.loads(os.environ["VERIFIED_CHECKSUMS"])[sys.argv[1]])' "$ASSET")
+            ACTUAL_SHA=$(sha256sum "$ASSET" | awk '{print $1}')
+            test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+            curl --fail --location --silent --show-error \
+              --connect-timeout 5 --max-time 60 --retry 5 --retry-all-errors \
+              "$BASE/$ASSET.sigstore.json" -o "$ASSET.sigstore.json"
+            gh attestation verify "$ASSET" --repo "$REPOSITORY" \
+              --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG" --bundle "$ASSET.sigstore.json"
+          }
+          for ASSET in \
+            ai-architect-mcp-codebase-macos-aarch64.tar.gz \
+            ai-architect-mcp-codebase-linux-x86_64.tar.gz \
+            ai-architect-mcp-codebase-linux-aarch64.tar.gz \
+            ai-architect-mcp-codebase-windows-x86_64.tar.gz \
+            ai-architect-mcp-codebase.mcpb \
+            ai-architect-mcp-codebase.cdx.json \
+            mcp-contract.json; do
+            verify_public_asset "$ASSET"
+          done
+          ACTUAL_INVENTORY=$(gh release view "$TAG" --repo "$REPOSITORY" --json assets \
+            --jq '.assets[].name' | sort)
+          ACTUAL_INVENTORY_SHA=$(printf '%s\n' "$ACTUAL_INVENTORY" | sha256sum | awk '{print $1}')
+          test "$ACTUAL_INVENTORY_SHA" = "$VERIFIED_INVENTORY_SHA"
+          rollback_required=no
+          trap - ERR INT TERM
