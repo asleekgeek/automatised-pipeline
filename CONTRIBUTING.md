@@ -1,7 +1,7 @@
 # Contributing to ai-architect-mcp-codebase
 
 Thanks for considering a contribution. This is a Rust MCP server with
-**23 tools, 220 tests, zero warnings, every constant sourced**. Every
+**26 tools, 1100+ tests, zero warnings, every constant sourced**. Every
 change is held to that bar.
 
 ---
@@ -31,13 +31,22 @@ cargo build --release
 # First build: ~5 minutes (compiles LadybugDB C++ core)
 # Subsequent builds: <1 second incremental
 
-cargo test --release        # full test suite (220+ tests)
+cargo test --release        # full test suite (1100+ tests)
 cargo clippy --release -- -D warnings   # zero warnings policy
 cargo fmt --check
 ```
 
 The `.mcp.json` shipped at the repo root registers the binary with Claude
 Code automatically when you open the directory.
+
+**Iterating on the installed plugin instead of the repo's `.mcp.json`:** if
+you develop against a marketplace-installed plugin (so you can dogfood the
+exact install path other users hit), the plugin cache's binary digest pin
+will reject your rebuilds unless you opt out with
+`AI_ARCHITECT_SOURCE_CHECKOUT=1` — see [README §Developer escape
+hatch](README.md#developer-escape-hatch-running-a-local-dev-build-in-place-of-the-release)
+for the two accepted checkout shapes, what the flag does and does not skip,
+and the non-interactive-shell gotcha (`~/.zshenv`, not `~/.zshrc`).
 
 ---
 
