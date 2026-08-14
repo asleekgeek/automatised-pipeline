@@ -268,6 +268,46 @@ pub(crate) fn parse_dependency_scope(
     }
 }
 
+/// Parses and validates the `exclude_dirs` argument (issue #249): each entry
+/// is either a bare directory name (matched anywhere in the tree, like the
+/// built-in build/dependency skip list) or a path relative to `path` (matched
+/// as exactly one subtree) — see `indexer::ExcludeSet::new` for how the split
+/// is decided. Absent/`null` -> an empty set (no exclusions). Rejects a
+/// non-array value, a non-string entry, an absolute path, or any `..`
+/// component: this is the security boundary for what a caller may exclude,
+/// mirroring `require_absolute`'s `..`-rejection (spec §5.1.4).
+pub(crate) fn parse_exclude_dirs(args: &Map<String, Value>) -> Result<indexer::ExcludeSet, String> {
+    let raw = match args.get("exclude_dirs") {
+        None | Some(Value::Null) => return Ok(indexer::ExcludeSet::default()),
+        Some(Value::Array(items)) => items,
+        Some(other) => {
+            return Err(format!(
+                "field 'exclude_dirs' must be an array of strings, got {other}"
+            ))
+        }
+    };
+    let mut entries = Vec::with_capacity(raw.len());
+    for item in raw {
+        let s = item
+            .as_str()
+            .ok_or_else(|| format!("field 'exclude_dirs' entries must be strings, got {item}"))?;
+        let p = Path::new(s);
+        if p.is_absolute() {
+            return Err(format!(
+                "exclude_dirs entry must be a bare name or a path relative to 'path' \
+                 (spec §5.1.4): got absolute path {s:?}"
+            ));
+        }
+        if p.components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err(format!(
+                "exclude_dirs entry must not contain '..' (spec §5.1.4): got {s:?}"
+            ));
+        }
+        entries.push(s.to_string());
+    }
+    Ok(indexer::ExcludeSet::new(&entries))
+}
+
 /// Parses an optional boolean argument, defaulting when absent and rejecting a
 /// present-but-non-boolean value (rather than silently coercing it).
 pub(crate) fn parse_bool_arg(
@@ -346,4 +386,52 @@ pub(crate) fn io_err<E: std::fmt::Display>(msg: E) -> StageErr {
 }
 pub(crate) fn unsafe_id_err(msg: String) -> StageErr {
     ("unsafe_id".to_string(), msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // Negative-path coverage for parse_exclude_dirs — PR #250 review, MAJOR
+    // finding: the function is the security boundary for what a caller may
+    // exclude (spec §5.1.4), so every rejection branch is pinned here.
+
+    fn args_with(v: Value) -> Map<String, Value> {
+        let mut m = Map::new();
+        m.insert("exclude_dirs".to_string(), v);
+        m
+    }
+
+    #[test]
+    fn absent_or_null_exclude_dirs_is_the_empty_set() {
+        assert!(parse_exclude_dirs(&Map::new()).unwrap().is_empty());
+        assert!(parse_exclude_dirs(&args_with(Value::Null))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn absolute_path_entry_is_rejected() {
+        let err = parse_exclude_dirs(&args_with(json!(["/etc/secrets"]))).unwrap_err();
+        assert!(err.contains("absolute"), "{err}");
+    }
+
+    #[test]
+    fn parent_dir_component_is_rejected() {
+        let err = parse_exclude_dirs(&args_with(json!(["config/../secrets"]))).unwrap_err();
+        assert!(err.contains(".."), "{err}");
+    }
+
+    #[test]
+    fn non_array_value_is_rejected() {
+        let err = parse_exclude_dirs(&args_with(json!("secrets"))).unwrap_err();
+        assert!(err.contains("array"), "{err}");
+    }
+
+    #[test]
+    fn non_string_entry_is_rejected() {
+        let err = parse_exclude_dirs(&args_with(json!([42]))).unwrap_err();
+        assert!(err.contains("strings"), "{err}");
+    }
 }
