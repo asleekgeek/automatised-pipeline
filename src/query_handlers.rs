@@ -20,7 +20,10 @@ mod read_only_gate;
 pub(crate) use graph_paths::{
     remove_stale_graph_artifact, validate_graph_path_safe, write_graph_meta,
 };
-use read_only_gate::{forbidden_cypher_keyword, is_multi_statement, READ_QUERY_TIMEOUT_MS};
+use read_only_gate::{
+    forbidden_cypher_keyword, is_multi_statement, is_separator, keyword_token_positions,
+    mask_non_executable, IdentifierExemption, READ_QUERY_TIMEOUT_MS,
+};
 
 // ---------------------------------------------------------------------------
 // Stage 3a — query_graph
@@ -294,32 +297,72 @@ pub(crate) fn inject_limit_if_absent(query: &str) -> (String, bool) {
     if has_limit_clause(query) {
         return (query.to_string(), false);
     }
-    // Strip a trailing semicolon/whitespace before appending so we don't emit
-    // `... ; LIMIT n`, which Cypher rejects.
-    let trimmed = query.trim_end().trim_end_matches(';').trim_end();
-    (format!("{trimmed} LIMIT {QUERY_GRAPH_ROW_LIMIT}"), true)
+    // The LIMIT goes on its OWN LINE, after everything that can execute.
+    //
+    // Appended inline it landed inside a trailing line comment —
+    // `MATCH (n) RETURN n // note` became `... // note LIMIT 500` — so the
+    // bound was swallowed by the comment, the query ran unbounded, and the
+    // response still reported `limit_injected: true`. A guard that reports
+    // success while doing nothing is worse than no guard.
+    let executable = executable_prefix(query);
+    (format!("{executable}\nLIMIT {QUERY_GRAPH_ROW_LIMIT}"), true)
+}
+
+/// `query` truncated just past its last EXECUTABLE byte, with one trailing
+/// statement terminator removed.
+///
+/// Both cuts are located through the masked view, so a `;` inside a literal or
+/// a comment is left alone and a trailing comment cannot hide the end of the
+/// statement. Dropping trailing non-executable text is deliberate: it is the
+/// only way the appended clause is guaranteed to sit outside a comment, and
+/// nothing downstream reads it.
+fn executable_prefix(query: &str) -> &str {
+    let Some(masked) = mask_non_executable(query) else {
+        // Unterminated literal — refused upstream by the keyword gate. Fall
+        // back to the whole query rather than guessing where it ends.
+        return query;
+    };
+    // Trim only SEPARATORS. A masked token (a trailing string literal or
+    // backticked identifier) is content: trimming it amputated the query —
+    // `RETURN n.name, 'tag'` became `RETURN n.name,`.
+    let bytes = masked.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && is_separator(bytes[end - 1]) {
+        end -= 1;
+    }
+    if end > 0 && bytes[end - 1] == b';' {
+        end -= 1;
+    }
+    // `end` indexes the raw query, whose kept bytes are byte-identical to the
+    // mask's. A multi-byte character in executable position could still put it
+    // mid-sequence, so slice fallibly instead of assuming.
+    query.get(..end).unwrap_or(query)
 }
 
 /// Detects whether a Cypher query already declares a `LIMIT` clause.
 ///
 /// Matches the keyword `LIMIT` (case-insensitive) only when it stands as a word
-/// — not as a substring of an identifier like `node_limit`. This is a syntactic
-/// guard, not a full parser: the graph engine itself rejects malformed Cypher.
+/// — not as a substring of an identifier like `node_limit` — and only in
+/// EXECUTABLE text: string literals, backticked identifiers and comments are
+/// masked out first, exactly as the read-only keyword gate does.
+///
+/// The masking is load-bearing, not cosmetic. This decides whether
+/// `inject_limit_if_absent` bounds the query, so a caller searching for a
+/// symbol BY NAME — `WHERE n.name = 'limit'`, the same shape that broke the
+/// keyword gate in issue #200 — used to look like a query that had already
+/// declared its own LIMIT. No LIMIT was injected and the MATCH ran unbounded,
+/// which is the row-flood the injection exists to prevent.
+///
+/// An unterminated literal is treated as "no LIMIT declared", so the query
+/// still gets one; it is refused upstream by the keyword gate anyway.
 pub(crate) fn has_limit_clause(query: &str) -> bool {
-    let lower = query.to_ascii_lowercase();
-    let bytes = lower.as_bytes();
-    let mut idx = 0;
-    while let Some(pos) = lower[idx..].find("limit") {
-        let start = idx + pos;
-        let end = start + "limit".len();
-        let prev_ok = start == 0 || !is_ident_char(bytes[start - 1]);
-        let next_ok = end >= bytes.len() || !is_ident_char(bytes[end]);
-        if prev_ok && next_ok {
-            return true;
-        }
-        idx = end;
-    }
-    false
+    let executable = mask_non_executable(query).unwrap_or_default();
+    !keyword_token_positions(
+        &executable.to_ascii_lowercase(),
+        "limit",
+        IdentifierExemption::SigilOrAlias,
+    )
+    .is_empty()
 }
 
 pub(crate) fn is_ident_char(b: u8) -> bool {
@@ -332,35 +375,33 @@ pub(crate) fn is_ident_char(b: u8) -> bool {
 /// over the rows is only safe when the caller pinned a deterministic order with
 /// `ORDER BY` (without it, the engine's row order is unspecified). Matches the
 /// two keywords `order` and `by` as whole words separated only by whitespace,
-/// case-insensitively. This is a syntactic guard, not a full parser — it can be
-/// fooled by `ORDER BY` inside a string literal, which is acceptable for an
-/// advisory flag (the engine remains the source of truth for the query plan).
+/// case-insensitively, and only in EXECUTABLE text — string literals,
+/// backticked identifiers and comments are masked out first.
+///
+/// The masking matters here for a different reason than in `has_limit_clause`:
+/// this flag tells the caller its offset cursor is safe to page with. A query
+/// carrying the words in a literal (`WHERE n.doc = 'order by date'`) used to
+/// report `order_stable: true` while declaring no ordering at all, so the
+/// caller paged an unspecified row order and its cursor could skip or
+/// duplicate rows. Over-reporting stability is worse than under-reporting it.
 pub(crate) fn has_order_by_clause(query: &str) -> bool {
-    let lower = query.to_ascii_lowercase();
+    let executable = mask_non_executable(query).unwrap_or_default();
+    let lower = executable.to_ascii_lowercase();
     let bytes = lower.as_bytes();
-    let mut idx = 0;
-    while let Some(pos) = lower[idx..].find("order") {
-        let start = idx + pos;
-        let end = start + "order".len();
-        let prev_ok = start == 0 || !is_ident_char(bytes[start - 1]);
-        if prev_ok {
-            // Skip whitespace after "order", then require the word "by".
-            let mut j = end;
+    keyword_token_positions(&lower, "order", IdentifierExemption::SigilOrAlias)
+        .into_iter()
+        .any(|start| {
+            // `by` must follow as its own word, separated by whitespace.
+            let mut j = start + "order".len();
             let had_ws = j < bytes.len() && bytes[j].is_ascii_whitespace();
             while j < bytes.len() && bytes[j].is_ascii_whitespace() {
                 j += 1;
             }
-            if had_ws && lower[j..].starts_with("by") {
-                let by_end = j + "by".len();
-                let next_ok = by_end >= bytes.len() || !is_ident_char(bytes[by_end]);
-                if next_ok {
-                    return true;
-                }
-            }
-        }
-        idx = end;
-    }
-    false
+            let by_end = j + "by".len();
+            had_ws
+                && lower[j..].starts_with("by")
+                && (by_end >= bytes.len() || !is_ident_char(bytes[by_end]))
+        })
 }
 
 pub(crate) fn format_query_result(columns: &[String], rows: &[Vec<String>]) -> String {

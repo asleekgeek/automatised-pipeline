@@ -10,12 +10,24 @@
 use super::DefinitionResult;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // Content-Length framing — LSP wire protocol
 // source: LSP spec §Base Protocol
 // ---------------------------------------------------------------------------
+
+/// Prefix every timeout this module raises carries, so a caller classifies a
+/// timed-out request by an EXACT match on a value this module owns rather than
+/// by sniffing for the word "timeout" anywhere in an error string. A server
+/// error that merely mentions the word — a symbol named `timeout`, a message
+/// quoting one — is not a timeout, and counting it as one silently moved a
+/// real failure into the `skipped` bucket.
+pub(crate) const LSP_TIMEOUT_PREFIX: &str = "lsp_timeout:";
+
+/// True when `e` is a timeout this module raised.
+pub(crate) fn is_lsp_timeout(e: &str) -> bool {
+    e.starts_with(LSP_TIMEOUT_PREFIX)
+}
 
 pub(super) fn write_lsp_message(
     stdin: &mut std::process::ChildStdin,
@@ -32,12 +44,37 @@ pub(super) fn write_lsp_message(
     Ok(())
 }
 
+/// Reads ONE framed message, blocking until it has one or the stream ends.
+///
+/// This is deliberately unbounded: it runs on the reader thread
+/// [`spawn_frame_reader`] owns, and the caller's deadline is enforced on the
+/// channel instead. It used to carry an `Instant`-based deadline checked at the
+/// top of the header loop, which could not bound anything — `read_line` and
+/// `read_exact` block in the kernel, so a server that sent a partial header and
+/// then stopped never reached the check again and the whole indexer hung on it.
+/// A timeout that is only consulted between blocking calls is not a timeout.
+/// Why a frame could not be produced, and — the part that matters — whether the
+/// stream is still usable afterwards.
+pub(super) enum FrameError {
+    /// The body was read in full and the stream is still byte-aligned; only the
+    /// PAYLOAD was unusable. The next frame can be read normally.
+    Payload(String),
+    /// Framing or IO failed, so the stream position is unknown and no later
+    /// frame can be trusted.
+    Fatal(String),
+}
+
+impl FrameError {
+    pub(super) fn message(self) -> String {
+        match self {
+            FrameError::Payload(m) | FrameError::Fatal(m) => m,
+        }
+    }
+}
+
 pub(super) fn read_lsp_message(
     reader: &mut BufReader<std::process::ChildStdout>,
-    timeout: Duration,
-) -> Result<Value, String> {
-    let deadline = Instant::now() + timeout;
-
+) -> Result<Value, FrameError> {
     // Read headers until empty line. If the server closes stdout (EOF)
     // before we see a Content-Length header, callers must be able to tell
     // that apart from a real protocol message — we surface it via
@@ -45,19 +82,20 @@ pub(super) fn read_lsp_message(
     let mut content_length: Option<usize> = None;
     let mut saw_any_byte = false;
     loop {
-        if Instant::now() > deadline {
-            return Err("timeout reading LSP header".to_string());
-        }
         let mut line = String::new();
         let n = reader
             .read_line(&mut line)
-            .map_err(|e| format!("read header line: {e}"))?;
+            .map_err(|e| FrameError::Fatal(format!("read header line: {e}")))?;
         if n == 0 {
             // EOF — child closed stdout.
             if saw_any_byte {
-                return Err("eof_before_body: partial header then EOF".to_string());
+                return Err(FrameError::Fatal(
+                    "eof_before_body: partial header then EOF".to_string(),
+                ));
             }
-            return Err("eof_before_header: child stdout closed without LSP framing".to_string());
+            return Err(FrameError::Fatal(
+                "eof_before_header: child stdout closed without LSP framing".to_string(),
+            ));
         }
         saw_any_byte = true;
         let trimmed = line.trim();
@@ -69,13 +107,16 @@ pub(super) fn read_lsp_message(
         }
     }
 
-    let len = content_length.ok_or("missing Content-Length header")?;
+    let len = content_length
+        .ok_or_else(|| FrameError::Fatal("missing Content-Length header".to_string()))?;
     let mut body = vec![0u8; len];
     reader
         .read_exact(&mut body)
-        .map_err(|e| format!("read body ({len} bytes): {e}"))?;
+        .map_err(|e| FrameError::Fatal(format!("read body ({len} bytes): {e}")))?;
 
-    serde_json::from_slice(&body).map_err(|e| format!("parse JSON body: {e}"))
+    // The body was consumed in full, so the stream is still aligned: a
+    // malformed PAYLOAD costs this one frame, not the connection.
+    serde_json::from_slice(&body).map_err(|e| FrameError::Payload(format!("parse JSON body: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -96,9 +137,7 @@ pub(super) fn classify_probe_err(e: String) -> String {
         "found on PATH but dropped the connection mid-header (partial LSP framing then EOF)"
     } else if e.contains("missing Content-Length") {
         "found on PATH but sent non-LSP output (no Content-Length header)"
-    } else if e.contains("timeout reading LSP header")
-        || e.contains("no response within probe timeout")
-    {
+    } else if is_lsp_timeout(&e) || e.contains("no response within probe timeout") {
         "found on PATH but didn't respond within the probe window (not an LSP server or hung)"
     } else if e.contains("parse JSON body") {
         "found on PATH but sent non-JSON-RPC bytes as the first frame"

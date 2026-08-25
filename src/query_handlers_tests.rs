@@ -7,7 +7,7 @@ fn limit_injection_appends_when_absent() {
     assert!(injected);
     assert_eq!(
         q,
-        format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}")
+        format!("MATCH (n) RETURN n\nLIMIT {QUERY_GRAPH_ROW_LIMIT}")
     );
 }
 
@@ -17,7 +17,7 @@ fn limit_injection_strips_trailing_semicolon() {
     assert!(injected);
     assert_eq!(
         q,
-        format!("MATCH (n) RETURN n LIMIT {QUERY_GRAPH_ROW_LIMIT}")
+        format!("MATCH (n) RETURN n\nLIMIT {QUERY_GRAPH_ROW_LIMIT}")
     );
 }
 
@@ -210,4 +210,95 @@ fn test_core_profile_rejects_unregistered_tool_call() {
         .expect("rejection must carry content[0].text");
     assert!(text.contains("Unknown tool"), "got: {text}");
     assert!(text.contains("'core' profile"), "got: {text}");
+}
+
+// ---------------------------------------------------------------------------
+// B.5 — both clause detectors read EXECUTABLE text only
+// ---------------------------------------------------------------------------
+
+/// The LIMIT detector decides whether `inject_limit_if_absent` bounds the
+/// query, so a `limit` appearing inside a string literal used to suppress the
+/// injection and let the MATCH run unbounded — the exact row-flood the
+/// injection exists to prevent. This is the same shape that broke the keyword
+/// gate in issue #200: a client looking a symbol up BY NAME.
+#[test]
+fn limit_detection_ignores_the_word_inside_a_literal() {
+    assert!(!has_limit_clause(
+        "MATCH (n:Function) WHERE n.name = 'limit' RETURN n"
+    ));
+    assert!(!has_limit_clause(
+        "MATCH (n) WHERE n.doc = \"limit 5\" RETURN n"
+    ));
+    assert!(!has_limit_clause("MATCH (n) RETURN n // LIMIT 5"));
+    assert!(!has_limit_clause("MATCH (n) RETURN n /* LIMIT 5 */"));
+
+    // …and the injector therefore still bounds it.
+    let (injected, was_injected) =
+        inject_limit_if_absent("MATCH (n:Function) WHERE n.name = 'limit' RETURN n");
+    assert!(was_injected, "an unbounded query must still get a LIMIT");
+    assert!(injected
+        .trim_end()
+        .ends_with(&QUERY_GRAPH_ROW_LIMIT.to_string()));
+
+    // A real, executable LIMIT is still detected and left alone.
+    assert!(has_limit_clause(
+        "MATCH (n) WHERE n.name = 'limit' RETURN n LIMIT 7"
+    ));
+}
+
+/// The ORDER BY detector reports `order_stable`, which tells a caller its
+/// offset cursor is safe to page with. Over-reporting stability is worse than
+/// under-reporting it: the caller pages an unspecified row order and its
+/// cursor skips or duplicates rows.
+#[test]
+fn order_by_detection_ignores_the_words_inside_a_literal() {
+    assert!(!has_order_by_clause(
+        "MATCH (n) WHERE n.doc = 'order by date' RETURN n"
+    ));
+    assert!(!has_order_by_clause("MATCH (n) RETURN n // ORDER BY n.id"));
+    assert!(!has_order_by_clause(
+        "MATCH (n) RETURN n /* ORDER BY n.id */"
+    ));
+
+    // A real, executable ORDER BY is still detected.
+    assert!(has_order_by_clause(
+        "MATCH (n) WHERE n.doc = 'order by date' RETURN n ORDER BY n.id"
+    ));
+}
+
+/// Review finding 2. Both clause detectors gained masking but not the
+/// identifier-sigil exemption the keyword gate already had, so a PROPERTY named
+/// `limit` — `WHERE n.limit > 0`, or a projection `AS limit` — read as a
+/// declared LIMIT and suppressed the injection. Same unbounded row-flood the
+/// masking fix had just closed from the literal side.
+#[test]
+fn limit_detection_ignores_a_property_or_alias_named_limit() {
+    for query in [
+        "MATCH (n:Function) WHERE n.limit > 0 RETURN n",
+        "MATCH (n) RETURN n.limit",
+        "MATCH (n) RETURN count(n) AS limit",
+        "MATCH (n:limit) RETURN n",
+    ] {
+        assert!(
+            !has_limit_clause(query),
+            "a sigil-introduced `limit` is an identifier, not a clause: {query}"
+        );
+        assert!(
+            inject_limit_if_absent(query).1,
+            "so the query must still be bounded: {query}"
+        );
+    }
+    // A real clause is still detected alongside the identifier.
+    assert!(has_limit_clause("MATCH (n) RETURN n.limit LIMIT 5"));
+}
+
+/// The same asymmetry on the ORDER BY side, where over-reporting means the
+/// caller pages an unspecified row order believing its cursor is safe.
+#[test]
+fn order_by_detection_ignores_a_property_named_order() {
+    assert!(!has_order_by_clause("MATCH (n) WHERE n.order > 1 RETURN n"));
+    assert!(!has_order_by_clause("MATCH (n:order) RETURN n"));
+    assert!(has_order_by_clause(
+        "MATCH (n) WHERE n.order > 1 RETURN n ORDER BY n.id"
+    ));
 }

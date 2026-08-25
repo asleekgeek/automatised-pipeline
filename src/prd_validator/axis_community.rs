@@ -31,13 +31,11 @@ pub(super) fn communities_for_resolved(
 /// alternation); the order is `clustering::SYMBOL_LABELS` and it is behaviour,
 /// because this returns the first hit.
 fn community_of(store: &GraphStore, qualified_name: &str) -> Option<String> {
-    crate::clustering::SYMBOL_LABELS
-        .iter()
-        .find_map(|label| {
-            graph_community_of(store, label, SymbolMatch::QualifiedName(qualified_name))
-        })
-        .map(|c| c.id)
-        .filter(|cid| !cid.is_empty())
+    crate::clustering::SYMBOL_LABELS.iter().find_map(|label| {
+        // `community_of` reports an empty id as no community, so a degenerate
+        // row does not stop the scan — the next label still gets its turn.
+        graph_community_of(store, label, SymbolMatch::QualifiedName(qualified_name)).map(|c| c.id)
+    })
 }
 
 pub(super) fn emit_community_consistency(

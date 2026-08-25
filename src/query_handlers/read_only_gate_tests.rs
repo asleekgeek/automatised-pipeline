@@ -350,3 +350,124 @@ fn readonly_gate_fails_closed_on_unterminated_literal() {
     let err = do_query_graph(&args).expect_err("must reject unterminated literal");
     assert!(err.contains("read_only_query_required"), "got: {err}");
 }
+
+// ---------------------------------------------------------------------------
+// B.2 re-audit / B.3 allowlist / B.5 mask-awareness
+// ---------------------------------------------------------------------------
+
+/// 2026-08-25 mechanical re-audit of the filesystem denylist against lbug
+/// 0.19.1's own headers. `visitDetachDatabase` and `visitUseDatabase` are base
+/// no-ops (parsed_statement_visitor.h:60-61) exactly like the four already
+/// listed, so the engine classifies both as read-only — and the lexical list
+/// stopped at ATTACH, letting them through BOTH gates.
+#[test]
+fn readonly_gate_blocks_detach_and_use_database() {
+    for query in [
+        "DETACH DATABASE other",
+        "USE DATABASE other",
+        "detach database other",
+    ] {
+        assert!(
+            forbidden_cypher_keyword(query).is_some(),
+            "must be refused: {query}"
+        );
+    }
+    // `DETACH DELETE` was already caught through DELETE; it stays caught.
+    assert!(forbidden_cypher_keyword("MATCH (n) DETACH DELETE n").is_some());
+}
+
+/// Schema introspection is reachable through `query_graph`: the two catalog
+/// readers are admitted by NAME.
+#[test]
+fn readonly_gate_admits_allowlisted_introspection_procedures() {
+    for query in [
+        "CALL table_info('Function') RETURN *",
+        "CALL TABLE_INFO('Function') RETURN *",
+        "CALL show_tables() RETURN *",
+    ] {
+        assert_eq!(
+            forbidden_cypher_keyword(query),
+            None,
+            "must be admitted: {query}"
+        );
+    }
+}
+
+/// Everything else a `CALL` can reach stays refused — including the
+/// configuration form, which lbug's own analyzer reports as read-only
+/// (`visitStandaloneCall` -> readOnly = true), so this lexical layer is the
+/// only barrier that exists against it.
+#[test]
+fn readonly_gate_refuses_unlisted_procedures_and_config_calls() {
+    for query in [
+        "CALL threads = 8",
+        "CALL storage_info('Function') RETURN *",
+        "CALL show_connection('x') RETURN *",
+        "CALL",
+        "MATCH (n) CALL something_else() RETURN n",
+    ] {
+        assert!(
+            forbidden_cypher_keyword(query).is_some(),
+            "must be refused: {query}"
+        );
+    }
+}
+
+/// A procedure name reached through `.` or `:` is an identifier, not a call —
+/// the same exemption every other keyword gets.
+#[test]
+fn readonly_gate_allows_call_shaped_identifiers() {
+    assert_eq!(
+        forbidden_cypher_keyword("MATCH (n:Function) RETURN n.call_count"),
+        None
+    );
+    assert_eq!(
+        forbidden_cypher_keyword("MATCH (n) WHERE n.name = 'CALL threads = 8' RETURN n"),
+        None,
+        "a procedure name inside a literal is data, not a call"
+    );
+}
+
+/// Documents what adding DETACH and USE to the denylist COSTS, so the
+/// narrowing is a known quantity rather than a surprise in a bug report.
+///
+/// Both are whole-word matches on executable text, so the ordinary ways these
+/// letters appear in a read query are unaffected: inside a literal, as a
+/// property, as a label, or inside a relationship-table name. What IS newly
+/// refused is a bare `use`/`detach` in executable position — most plausibly a
+/// pattern VARIABLE named `use`. That shape is rare, the workaround is a
+/// rename or backticks, and the alternative was leaving two statements that
+/// slip both the lexical gate and the engine's own read-only classifier.
+#[test]
+fn detach_and_use_narrowing_spares_identifier_positions() {
+    for still_allowed in [
+        // In a literal — masked before the scan.
+        "MATCH (n:Function) WHERE n.name = 'use' RETURN n",
+        "MATCH (n) WHERE n.doc = 'detach the volume' RETURN n",
+        // As a property or a label — identifier positions.
+        "MATCH (n:Function) RETURN n.use",
+        "MATCH (n:Use) RETURN n",
+        // Inside a relationship-table name this schema actually declares.
+        "MATCH (f:Function)-[:Uses_Function_Struct]->(s:Struct) RETURN s.id",
+        // In a comment.
+        "MATCH (n) RETURN n // detach database later",
+    ] {
+        assert_eq!(
+            forbidden_cypher_keyword(still_allowed),
+            None,
+            "must remain allowed: {still_allowed}"
+        );
+    }
+
+    // The cost, stated explicitly: a bare identifier spelled like the keyword.
+    assert!(
+        forbidden_cypher_keyword("MATCH (use:Function) RETURN use").is_some(),
+        "a pattern variable named `use` is refused — the accepted cost of \
+         closing the DETACH/USE gap"
+    );
+    // Backticking it is the workaround, and it works because backticks mask.
+    assert_eq!(
+        forbidden_cypher_keyword("MATCH (`use`:Function) RETURN `use`"),
+        None
+    );
+}
