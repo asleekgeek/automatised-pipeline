@@ -175,6 +175,127 @@ fn get_impact_pages_callers_through_everything() {
     assert_eq!(a["callers"], b["callers"], "callers order must be stable");
 }
 
+/// fleet-watch#19: get_impact must resolve the caller's qualified_name before
+/// its strict-equality blast-radius query, exactly as get_symbol/get_context
+/// do. The parser strips the leading path component when building
+/// qualified_names, so the README's own `src/main.rs::foo` form matched no node
+/// and get_impact returned an empty caller set with `status: ok` — a vacuous,
+/// misleading result rather than the real blast radius (or an honest error).
+/// Here the same symbol is queried by its stored qualified_name and by a
+/// `src/`-prefixed variant the stored form does not carry; both must return the
+/// identical, non-empty caller set.
+///
+/// Adds one `Imports_File_File` edge from `svc.rs` to `helpers.rs` and returns
+/// the latter's `File.id`. File-level fan-in is what a File target is FOR, so
+/// the fixture states it explicitly rather than depending on which import
+/// shape the resolver happens to emit for `use crate::helpers;`.
+fn with_file_level_import_edge(graph: &std::path::Path) -> String {
+    let store = graph_store::GraphStore::open_or_create(graph).unwrap();
+    let file_id = |name: &str| -> String {
+        let qr = store
+            .execute_query(&format!(
+                "MATCH (f:File) WHERE f.name = {} RETURN f.id",
+                graph_store::cypher_str(name)
+            ))
+            .unwrap();
+        assert!(!qr.rows.is_empty(), "the fixture must index {name}");
+        qr.rows[0][0].clone()
+    };
+    let helpers = file_id("helpers.rs");
+    let svc = file_id("svc.rs");
+    store
+        .insert_edge(
+            "Imports_File_File",
+            &svc,
+            &helpers,
+            &[("confidence", "1.0")],
+        )
+        .expect("insert file-level import edge");
+    helpers
+}
+
+#[test]
+fn get_impact_on_a_file_target_is_not_symbol_not_found() {
+    // Review finding 2 (regression), end to end. `get_impact` answers
+    // file-level fan-in for a File target (issue #205), but the resolve gate
+    // added in this branch probed only the eight symbol labels — so every
+    // File target came back `symbol_not_found` and that whole capability was
+    // unreachable through the tool.
+    let (_guard, graph) = build_fixture("impact_file_target");
+    let gp = graph.to_str().unwrap().to_string();
+    let helpers = with_file_level_import_edge(&graph);
+
+    let out = do_get_impact(&json!({"graph_path": gp, "qualified_name": helpers.clone()})).unwrap();
+    assert_eq!(
+        out["status"],
+        json!("ok"),
+        "a File target must be answered, not refused: {out}"
+    );
+    assert_eq!(
+        out["qualified_name"],
+        json!(helpers),
+        "the response must name the File the numbers describe"
+    );
+    assert_eq!(
+        out["importers_total"],
+        json!(1),
+        "the File target's file-level fan-in must be computed: {out}"
+    );
+
+    // An unknown path is still refused — the resolve gate is widened, not removed.
+    let missing =
+        do_get_impact(&json!({"graph_path": gp, "qualified_name": "no/such/file.rs"})).unwrap();
+    assert_eq!(missing["reason"], json!("symbol_not_found"));
+}
+
+#[test]
+fn get_impact_resolves_src_prefixed_qualified_name() {
+    let (_guard, graph) = build_fixture("impact_src_prefix");
+    let gp = graph.to_str().unwrap().to_string();
+
+    // The stored qualified_name (parser has already stripped the leading path
+    // component), then the README-style `src/`-prefixed variant of it.
+    let store = graph_store::GraphStore::open_or_create(&graph).unwrap();
+    let qr = store
+        .execute_query("MATCH (f:Function) WHERE f.name = 'sanitize' RETURN f.qualified_name")
+        .unwrap();
+    assert!(!qr.rows.is_empty(), "sanitize node must exist");
+    let stored = qr.rows[0][0].clone();
+    drop(store);
+    let prefixed = format!("src/{stored}");
+    assert_ne!(
+        prefixed, stored,
+        "the prefixed form must differ from the stored one"
+    );
+
+    let stored_impact =
+        do_get_impact(&json!({"graph_path": gp, "qualified_name": stored})).unwrap();
+    let prefixed_impact =
+        do_get_impact(&json!({"graph_path": gp, "qualified_name": prefixed})).unwrap();
+
+    let stored_total = stored_impact["callers_total"].as_u64().unwrap();
+    assert!(
+        stored_total >= 3,
+        "stored form must resolve to sanitize's >=3 callers, got {stored_total}"
+    );
+
+    // The src/-prefixed form must resolve to the SAME blast radius — not the
+    // pre-fix vacuous empty-but-"ok" result.
+    assert_eq!(
+        prefixed_impact["status"],
+        json!("ok"),
+        "src/-prefixed form must resolve, not error"
+    );
+    assert_eq!(
+        prefixed_impact["callers_total"], stored_impact["callers_total"],
+        "src/-prefixed form must yield the same callers_total as the stored form"
+    );
+    assert_eq!(
+        prefixed_impact["callers"], stored_impact["callers"],
+        "resolved callers must be identical for both name forms"
+    );
+}
+
 // -- search_codebase ---------------------------------------------------
 
 #[test]
