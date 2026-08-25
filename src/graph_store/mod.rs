@@ -13,13 +13,16 @@ use std::path::Path;
 mod columns;
 mod config;
 mod ddl;
+mod membership;
 mod recovery;
 mod schema;
 mod serialize;
 mod writes;
+pub use columns::label_declares_column;
 use columns::*;
 pub use config::*;
 use ddl::*;
+pub use membership::{community_ids, community_of, process_names, CommunityRow, SymbolMatch};
 // Only `tests.rs` reaches these via `use super::*` (production code calls
 // `Self::recover_from_stale_sidecars`/`is_stale_sidecar_db_id_error` through
 // their full paths) — gated to match, so a non-test build has no unused-import warning.
@@ -207,13 +210,7 @@ impl GraphStore {
     /// `do_get_impact` / `do_get_processes`, and the per-relation LIMITs in
     /// `search::find_related_out` / `find_related_in`.
     pub fn execute_query(&self, cypher: &str) -> Result<QueryResult, String> {
-        let mut result = self.run(cypher)?;
-        let columns = result.get_column_names();
-        let rows: Vec<Vec<String>> = result
-            .by_ref()
-            .map(|tuple| tuple.iter().map(value_to_string).collect())
-            .collect();
-        Ok(QueryResult { columns, rows })
+        Ok(drain_result(&mut self.run(cypher)?))
     }
 
     /// Executes untrusted, user-supplied Cypher (the `query_graph` tool) under
@@ -305,12 +302,7 @@ impl GraphStore {
             .conn
             .execute(stmt, Vec::<(&str, Value)>::new())
             .map_err(|e| format!("query failed [{cypher}]: {e}"))?;
-        let columns = result.get_column_names();
-        let rows: Vec<Vec<String>> = result
-            .by_ref()
-            .map(|tuple| tuple.iter().map(value_to_string).collect())
-            .collect();
-        Ok(QueryResult { columns, rows })
+        Ok(drain_result(&mut result))
     }
 
     /// Returns the total number of nodes across all node tables.
@@ -413,3 +405,19 @@ impl GraphStore {
 mod read_only_tests;
 #[cfg(test)]
 mod tests;
+
+/// Drains an engine result set into the owned [`QueryResult`] the rest of the
+/// crate speaks: the column names, then every row rendered through
+/// `value_to_string`.
+///
+/// Shared by the two paths that materialize a result — `execute_query` (ad-hoc
+/// Cypher) and `collect_prepared` (the read-only prepared path) — so a change
+/// to how a row is rendered cannot land on one and miss the other.
+fn drain_result(result: &mut lbug::QueryResult<'_>) -> QueryResult {
+    let columns = result.get_column_names();
+    let rows: Vec<Vec<String>> = result
+        .by_ref()
+        .map(|tuple| tuple.iter().map(value_to_string).collect())
+        .collect();
+    QueryResult { columns, rows }
+}
