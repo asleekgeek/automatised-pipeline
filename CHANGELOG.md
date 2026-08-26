@@ -8,6 +8,46 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Query-time staleness guard (fleet-watch#112): `search_codebase`, `get_symbol`,
+  and `get_impact` now report a `graph_freshness` object (`state: "fresh" |
+  "stale" | "unknown"`, `dirty_files`, `checked_files`, `commits_behind`,
+  `commits_ahead`) so a silently stale graph — the working tree has moved since
+  the last index — becomes a visible, reasoned-about condition instead of a
+  wrong answer presented with full confidence. It rides on EVERY response these
+  tools return — `symbol_not_found`, `query_failed`, and a failure to open the
+  store or run the query alike, the last being exactly what an in-progress
+  re-index looks like from a read tool. That is structural, not a matter of
+  remembering: the receipt is stamped at each tool's single exit, so a future
+  `?` anywhere in a handler body is covered by construction. The key is
+  deliberately NOT `graph_state`, which
+  `index_codebase` / `index_history` already use for a plain string
+  (`"fresh"` / `"accepted_stale"` / `"filled_to_working_tree"`) — one key with
+  two shapes would break any client that types the field once. The commit
+  signal is
+  bidirectional: `commits_ahead` counts commits the indexed sha has that HEAD
+  does not, so a checkout BACK to an older revision is reported as stale
+  instead of scoring 0 like an unmoved HEAD. Re-stats the
+  `file_manifest.json` sidecar's tracked files (no re-hashing, no directory
+  walk) — `O(manifested files)` `stat` calls per read-tool call, documented on
+  `count_dirty` — plus one `git rev-list --left-right --count` when the indexed
+  root is a git working tree. `meta.json` moves to schema 2, adding
+  `commit_sha`, and is now written atomically (temp file + rename, the temp
+  file named per writer) so neither a concurrent reader can be handed a torn
+  sidecar nor two concurrent indexers of one `output_dir` interleave through a
+  shared temp path; a schema-1 sidecar from an older index still parses, just
+  without the commit signal. The write goes through the repository's existing
+  `handler_util::atomic_write` rather than a local reimplementation of it, which
+  restores the `fsync` a hand-rolled version had dropped — without it a crash
+  between the write and the rename could publish an empty or truncated sidecar.
+- `write_graph_meta` reports a failed sidecar write instead of logging it and
+  carrying on (fleet-watch#112). That was defensible while the sidecar was only
+  a convenience for path reconstruction; it is not, now that the staleness
+  receipt reads it. On Windows a rename over a destination another process holds
+  open can fail with a sharing violation, and a swallowed failure there leaves
+  the PREVIOUS `meta.json` in place while the caller is told a fresh index
+  completed. `index_codebase` now carries a `meta_write_error` field on the
+  response when this happens; the index itself still succeeds.
+
 - BM25 doc/prose content search (fleet-watch#112): `search_codebase` now also
   finds matches in the full text of markdown/plain-text/similar doc files —
   previously BM25 covered symbol nodes only, so a query whose only evidence
@@ -29,6 +69,88 @@ adheres to [Semantic Versioning](https://semver.org/).
   ranking rather than two. A query that matches a doc semantically but shares no
   term with it lexically will not surface it. Extending vector indexing over doc
   bodies is deliberately left to its own change.
+
+### Fixed
+
+- `analyze_codebase` writes the file manifest, not just `meta.json`
+  (fleet-watch#112). It and `index_codebase` are documented as interchangeable
+  entry points over one `output_dir`, so an analyze run on top of an earlier
+  index froze that index's manifest in place and every file added afterwards was
+  permanently invisible to the staleness check — the graph read `fresh` while
+  missing them, with no race involved.
+- `file_manifest.json` is written through the same atomic helper as `meta.json`,
+  which adds the `fsync` and the per-writer temp name it previously lacked. The
+  two sidecars are compared against each other, so the pairing defence was only
+  as strong as the weaker of the two writes. That helper now lives in one place
+  (`atomic_file`) instead of being reimplemented per call site.
+- A failed sidecar write is reported by every path that writes one — the two
+  bootstrap paths and `analyze_codebase` previously logged it and carried on, so
+  only `index_codebase` surfaced it to the caller.
+
+- The query-time staleness receipt no longer reports a verdict it cannot stand
+  behind (fleet-watch#112). Three cases now read `"unknown"` instead: the graph
+  artifact itself is gone (previously `"fresh"` alongside the tool's own
+  `status: "error"`); the two sidecars do not belong to the same index; and the
+  manifest is empty with no git provenance, where nothing was examined at all.
+- `meta.json` and `file_manifest.json` are written in one order by both indexing
+  paths — manifest first, `meta.json` last — making `meta.json` an index's
+  commit point, and it now records which manifest it accompanies. The full
+  re-index wrote them the other way round from the incremental path, so a read
+  landing between the two paired a fresh commit sha with the previous manifest
+  and called a just-rebuilt graph stale, single-process, with no concurrent
+  writer involved. `meta.json` moves to schema 3; a schema-1/2 sidecar still
+  parses and simply skips the pairing check.
+
+### Security
+
+- The sidecar-pairing check can no longer be switched off by the sidecar
+  (fleet-watch#112). It trusted a `schema_version` the sidecar declares about
+  ITSELF, inside a module whose whole threat model is that the sidecar is
+  attacker-writable — so a forged `meta.json` carrying nothing but a root, a
+  commit sha and `"schema_version": 2` bypassed the entire round-4 pairing
+  defence with one field and no race at all. The version is no longer consulted:
+  a sidecar that records no manifest identity does not pair, whatever it says
+  about itself. A graph indexed by an older build therefore reads as
+  `"unknown"` until re-indexed — the honest answer, rather than a bypass
+  reporting `"fresh"`.
+
+- The staleness check no longer trusts `meta.json`'s `root` as a filesystem
+  join base (fleet-watch#112). `root` is the base for every `stat` and the `-C`
+  argument to `git`, so an unvalidated value walked straight past the manifest-key
+  containment below it: `"root": "/"` with an ordinary key like `"etc/shadow"`
+  resolved to an absolute system path and the dirty count reported whether that
+  file matched the attacker's guess. The root must now be absolute, resolvable,
+  a directory, and not one of the system paths the server already refuses
+  elsewhere.
+
+  The blacklist is matched against the CANONICAL form of each entry as well as
+  its literal one. Comparing a canonicalized root against literal strings did
+  not work and silently did not: on macOS `/etc`, `/tmp`, `/var` and `/home` are
+  themselves symlinks, so `"root": "/etc"` canonicalized to `/private/etc` — a
+  path the literal list never named — and was accepted, reopening the oracle for
+  a real directory rather than the degenerate `/`.
+
+  This is a BOUNDED mitigation, not a closure, and the residual is exactly
+  this: **an attacker with write access to `output_dir` can still direct `root`
+  at any real, absolute, resolvable, non-blacklisted directory on the host and
+  use `dirty_files` / `state` as an existence, size and mtime oracle for files
+  under it.** What no longer works is a non-existent, non-canonicalizable,
+  non-directory, or blacklisted-system-root value. No on-disk sidecar can
+  authenticate the root; the two real closures — a caller-supplied
+  `codebase_path` on the read tools, or a signed sidecar — are a breaking
+  schema change and a break of the portable-artifact use case respectively, and
+  are deliberately deferred as design decisions. See the note on
+  `validated_root`.
+- The query-time staleness check no longer resolves `file_manifest.json` keys
+  that escape the indexed root (fleet-watch#112). `Path::join` discards its base
+  when handed an absolute component, so a crafted sidecar key — `/etc/shadow`,
+  or a `../` traversal — was `stat`ed outside the indexed tree, and the reported
+  dirty count then told the caller whether that file's mtime and size matched
+  the value they had planted: an existence-and-attributes oracle over the host
+  filesystem, one guess per read-tool call. Manifest keys must now be relative
+  paths of ordinary components, which is what the indexer has always written;
+  anything else is refused before the `stat` and counted as unverifiable rather
+  than silently treated as evidence of freshness.
 
 ## [0.11.1] — Ingestion must never abort on graph size
 

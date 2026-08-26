@@ -20,12 +20,17 @@ use std::path::Path;
 // ---------------------------------------------------------------------------
 
 pub(crate) fn run_get_impact(arguments: &Value) -> Value {
-    match do_get_impact(arguments) {
+    let mut out = match do_get_impact(arguments) {
         Ok(v) => v,
         Err(msg) => json!({
             "stage": 3, "status": "error", "reason": "impact_failed", "message": msg
         }),
-    }
+    };
+    // fleet-watch#112: the tool's single exit, so the freshness receipt reaches
+    // every answer — including a store-open or query failure, which is what an
+    // in-progress re-index looks like from here.
+    crate::graph_freshness::attach_from_arguments(&mut out, arguments);
+    out
 }
 
 /// Scalar columns of a reverse-dependency handle, in tabular-projection order
@@ -103,19 +108,27 @@ pub(crate) fn do_get_impact(arguments: &Value) -> Result<Value, String> {
     // answers File-target fan-in (issue #205) — see that module.
     let target = match search::resolve_impact_target(&store, qn) {
         Ok(t) => t,
-        Err(nf) => {
-            return Ok(json!({
-                "stage": 3,
-                "status": "error",
-                "reason": "symbol_not_found",
-                "message": format!("not found: {}", nf.input),
-                "did_you_mean": nf.did_you_mean,
-            }));
-        }
+        Err(nf) => return Ok(target_not_found_response(nf)),
     };
     Ok(impact_response(
         &store, arguments, args, graph_path, &target, offset,
     ))
+}
+
+/// The answer when neither a symbol nor a file in this graph matches the
+/// caller's target.
+///
+/// The freshness receipt is NOT attached here: `run_get_impact` stamps it onto
+/// whatever this tool returns, so every exit carries it without each exit
+/// having to remember (fleet-watch#112 review round 3).
+fn target_not_found_response(nf: search::SymbolNotFound) -> Value {
+    json!({
+        "stage": 3,
+        "status": "error",
+        "reason": "symbol_not_found",
+        "message": format!("not found: {}", nf.input),
+        "did_you_mean": nf.did_you_mean,
+    })
 }
 
 /// Assembles the `get_impact` response for an already-resolved target.

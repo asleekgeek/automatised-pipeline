@@ -13,6 +13,9 @@ use crate::indexer;
 use crate::indexing_handlers::*;
 use crate::query_handlers::*;
 
+/// Node labels a runtime trace endpoint may resolve to (callables).
+pub(crate) const CALLABLE_LABELS: &[&str] = &["Function", "Method"];
+
 /// The callable label ("Function"/"Method") of the node with id `qn`, or `None`
 /// if no such callable node exists.
 pub(crate) fn callable_label(store: &graph_store::GraphStore, qn: &str) -> Option<&'static str> {
@@ -286,7 +289,9 @@ pub(crate) fn bootstrap_import(
         );
         return BootstrapOutcome::Reindex(None);
     }
-    write_graph_meta(output_dir, codebase);
+    let meta_err = write_graph_meta(output_dir, codebase).err().inspect(|e| {
+        eprintln!("[ap] graph meta sidecar write failed (bootstrap succeeded): {e}");
+    });
     let (node_count, edge_count) = graph_counts(graph_dir);
     let mut resp = json!({
         "stage": 3,
@@ -308,6 +313,9 @@ pub(crate) fn bootstrap_import(
     // Coverage (issue #57): the bootstrapped graph inherits the exporter's
     // coverage sidecar (bundled in the artifact, unpacked beside the graph).
     resp["coverage"] = coverage_summary_for_graph(graph_dir);
+    if let Some(e) = meta_err {
+        resp["meta_write_error"] = json!(e);
+    }
     BootstrapOutcome::Imported(resp)
 }
 
@@ -333,7 +341,6 @@ pub(crate) fn bootstrap_import_and_fill(
         );
         return BootstrapOutcome::Reindex(None);
     }
-    write_graph_meta(output_dir, codebase);
     // The bundled manifest (unpacked alongside the graph) is the artifact-sha
     // baseline the content-hash fallback classifies against when git can't diff.
     let imported_manifest = indexer::manifest::load(manifest_path);
@@ -353,6 +360,12 @@ pub(crate) fn bootstrap_import_and_fill(
             return BootstrapOutcome::Reindex(Some(note));
         }
     };
+    // `meta.json` last, as everywhere else: the fill rewrites the manifest, so a
+    // sidecar written before it would name the imported manifest rather than the
+    // filled one and read as a torn pair forever (fleet-watch#112 review round 4).
+    let meta_err = write_graph_meta(output_dir, codebase).err().inspect(|e| {
+        eprintln!("[ap] graph meta sidecar write failed (bootstrap succeeded): {e}");
+    });
     let fill_method = match fill.method {
         indexer::FillMethod::GitDiff => "git_diff",
         indexer::FillMethod::ContentHash => "content_hash",
@@ -384,6 +397,9 @@ pub(crate) fn bootstrap_import_and_fill(
     }
     // Coverage (issue #57): refreshed by the fill (carry-forward + reparsed gaps).
     resp["coverage"] = coverage_summary_for_graph(graph_dir);
+    if let Some(e) = meta_err {
+        resp["meta_write_error"] = json!(e);
+    }
     BootstrapOutcome::Imported(resp)
 }
 

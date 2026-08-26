@@ -85,19 +85,70 @@ pub(crate) fn remove_stale_graph_artifact(path: &Path) -> Result<(), String> {
 /// paths: the structure stays portable, and the machine-specific root lives in
 /// a file that is naturally regenerated on the next re-index.
 ///
-/// Best-effort: a failed write is logged and ignored. The graph is the
-/// product; the sidecar is a convenience for consumers, and its absence just
-/// degrades a consumer's path reconstruction, never the index.
-pub(crate) fn write_graph_meta(output_dir: &Path, root: &Path) {
+/// Schema 2 (fleet-watch#112) adds `commit_sha`: the indexed root's git HEAD
+/// at write time, `None` outside a git working tree. `graph_freshness` reads
+/// it back to count how far the root's CURRENT HEAD has moved from it in
+/// EITHER direction, using the same `git_head` used to compute it here — a
+/// schema-1
+/// sidecar (no `commit_sha` key) simply parses with the field absent, so an
+/// old sidecar degrades to the dirty-file signal alone rather than failing.
+///
+/// Atomic, via the shared `handler_util::atomic_write` (POSIX rename(2), IEEE
+/// Std 1003.1-2017). Required as of fleet-watch#112: a plain `fs::write`
+/// truncates the file in place, so until this PR made `graph_freshness::check`
+/// the FIRST query-time reader of `meta.json`, the window between truncate and
+/// write had no reader to expose it. It does now — a re-index running while a
+/// read tool is answering could hand that reader an empty or half-written
+/// sidecar, which parses as "no provenance" and silently downgrades the
+/// staleness verdict.
+///
+/// The shared helper rather than a local temp+rename (fleet-watch#112 review
+/// round 5): an earlier revision here hand-rolled the same shape and, doing so,
+/// dropped the `sync_all` the helper already performs — so a crash between the
+/// write and the rename could publish an empty or truncated sidecar, a
+/// durability regression against a guarantee this repository already provided
+/// one module away. The helper also derives a per-writer temp name from pid,
+/// clock and a random suffix, which is what keeps two `index_codebase` calls
+/// aimed at one `output_dir` from interleaving through a shared temp path.
+///
+/// The sibling `indexer::manifest::save` writes the other sidecar into this
+/// same directory with the same temp-file-plus-rename SHAPE, but not through
+/// this helper: its temp path is a fixed `file_manifest.json.tmp` and it does
+/// not fsync, so it still carries both exposures. Stated rather than glossed as
+/// parity, because an earlier revision of this comment claimed the two matched
+/// and they do not. Routing it through `atomic_write` too is agreed follow-up
+/// work, deliberately not done in this change.
+///
+/// Returns the failure instead of swallowing it (fleet-watch#112 review round
+/// 5). This used to `eprintln!` and carry on, which was defensible while the
+/// sidecar was only a convenience for path reconstruction — it is not, now that
+/// the staleness receipt reads it. On Windows a rename over a destination
+/// another thread or process holds open can fail with a sharing violation, and
+/// a swallowed failure there leaves the PREVIOUS `meta.json` in place while the
+/// caller is told a fresh index completed. The regression test for that shape
+/// runs only on Unix in CI (`windows-build.yml` builds but does not test), so
+/// the guarantee cannot rest on the test — it has to rest on the caller being
+/// told. Callers decide: every one of them logs loudly, and the ones with a
+/// response attach the error to it. On failure the previous sidecar is left
+/// intact rather than destroyed.
+pub(crate) fn write_graph_meta(output_dir: &Path, root: &Path) -> Result<(), String> {
+    // Schema 3 (fleet-watch#112 review round 4): record WHICH `file_manifest.json`
+    // this sidecar accompanies. Both indexing paths write the manifest first and
+    // this file last, so `meta.json` is an index's commit point; naming the
+    // manifest lets a reader that lands mid-index see that the pair does not
+    // match and report "unknown" instead of pairing a fresh commit sha with a
+    // stale manifest and calling a just-rebuilt graph stale. Absent manifest →
+    // nulls, and the reader has no manifest to check either.
+    let manifest = fs::metadata(crate::indexer::manifest::manifest_path(output_dir)).ok();
     let meta = json!({
-        "schema_version": 1,
+        "schema_version": 3,
         "root": root.to_string_lossy(),
         "tool": "ai-architect-mcp-codebase",
+        "commit_sha": crate::git_provenance::git_head(root),
+        "manifest_size": manifest.as_ref().map(|m| m.len()),
+        "manifest_mtime_ns": manifest.as_ref().map(crate::indexer::manifest::mtime_ns),
     });
-    let meta_path = output_dir.join("meta.json");
-    if let Err(e) = fs::write(&meta_path, meta.to_string()) {
-        eprintln!("[ap] write graph meta {}: {e}", meta_path.display());
-    }
+    crate::handler_util::atomic_write(&output_dir.join("meta.json"), meta.to_string().as_bytes())
 }
 
 #[cfg(test)]
@@ -185,7 +236,7 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         let root = base.join("some/repo/root");
 
-        write_graph_meta(&base, &root);
+        write_graph_meta(&base, &root).expect("write meta");
 
         let meta_path = base.join("meta.json");
         assert!(meta_path.is_file(), "meta.json must be written");
@@ -198,7 +249,130 @@ mod tests {
         );
         assert_eq!(
             parsed.get("schema_version").and_then(|v| v.as_u64()),
-            Some(1),
+            Some(3),
+        );
+        // `root` is not a git working tree → commit_sha is present but null,
+        // not simply absent (the field is always written, per schema 3).
+        assert!(parsed.get("commit_sha").is_some_and(|v| v.is_null()));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_graph_meta_replaces_the_sidecar_atomically() {
+        // fleet-watch#112 review: this PR made `graph_freshness::check` the
+        // first query-time READER of meta.json, so a re-index writing it while
+        // a read tool answers can now hand that reader a torn file. A plain
+        // `fs::write` truncates and rewrites the SAME inode, so a reader that
+        // already opened the sidecar watches the content change underneath it —
+        // asserted here without any wall-clock: the handle is opened before the
+        // second write and read after it. tmp+rename swaps the directory entry
+        // instead, so the open reader keeps the whole previous version.
+        use crate::test_support::TempDirExt;
+        use std::io::Read;
+        let base = tempfile::Builder::new()
+            .prefix("ap-meta-atomic-")
+            .tempdir()
+            .expect("create temp dir")
+            .keep_managed();
+        let first_root = base.join("repo/one");
+        let second_root = base.join("repo/two-with-a-much-longer-name");
+
+        write_graph_meta(&base, &first_root).expect("write meta");
+        let mut held = fs::File::open(base.join("meta.json")).expect("open sidecar");
+
+        // A concurrent re-index rewrites the sidecar while `held` is open.
+        write_graph_meta(&base, &second_root).expect("write meta");
+
+        let mut seen = String::new();
+        held.read_to_string(&mut seen).expect("read held handle");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&seen).expect("an open reader must never see a torn sidecar");
+        assert_eq!(
+            parsed.get("root").and_then(|v| v.as_str()),
+            Some(first_root.to_string_lossy().as_ref()),
+            "the rewrite must land on a new inode, leaving the open reader's view whole",
+        );
+
+        // The replacement is visible to a reader that opens after the rename,
+        // and no temp file survives.
+        let now: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(base.join("meta.json")).unwrap()).unwrap();
+        assert_eq!(
+            now.get("root").and_then(|v| v.as_str()),
+            Some(second_root.to_string_lossy().as_ref()),
+        );
+        assert!(
+            !leftover_tmp_files(&base),
+            "no temp file may survive a successful write",
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// True when any temp artifact remains directly under `dir`. Matches the
+    /// shape `handler_util::atomic_write` uses: `.<name>.tmp.<pid>.<s>.<ns>.<rand>`.
+    fn leftover_tmp_files(dir: &Path) -> bool {
+        fs::read_dir(dir)
+            .expect("read output dir")
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains(".tmp."))
+    }
+
+    #[test]
+    fn repeated_writes_leave_one_sidecar_and_no_temp_residue() {
+        // The temp-name uniqueness that used to live here now belongs to
+        // `handler_util::atomic_write`, which derives it from pid, clock and a
+        // random suffix. What this module still owns is the OUTCOME: repeated
+        // writes into one `output_dir` converge on a single, complete
+        // `meta.json` and leave nothing behind — the observable that a shared
+        // temp path would break (fleet-watch#112 review round 5).
+        use crate::test_support::TempDirExt;
+        let base = tempfile::Builder::new()
+            .prefix("ap-meta-repeat-")
+            .tempdir()
+            .expect("create temp dir")
+            .keep_managed();
+        let first_root = base.join("repo/one");
+        let second_root = base.join("repo/two");
+
+        write_graph_meta(&base, &first_root).expect("first write");
+        write_graph_meta(&base, &second_root).expect("second write");
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(base.join("meta.json")).unwrap())
+                .expect("the surviving sidecar must be complete JSON");
+        assert_eq!(
+            parsed.get("root").and_then(|v| v.as_str()),
+            Some(second_root.to_string_lossy().as_ref()),
+        );
+        assert!(!leftover_tmp_files(&base), "no temp artifact may survive");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_failed_sidecar_write_is_reported_not_swallowed() {
+        // fleet-watch#112 review round 5, finding 3. This used to `eprintln!`
+        // and return `()`, so a caller could not tell a written sidecar from an
+        // unwritten one — on Windows a rename over a handle another process
+        // holds open fails with a sharing violation, and the swallowed failure
+        // leaves the PREVIOUS meta.json in place while the caller is told a
+        // fresh index completed. The old signature made that unobservable by
+        // construction; this asserts it is observable now.
+        use crate::test_support::TempDirExt;
+        let base = tempfile::Builder::new()
+            .prefix("ap-meta-fail-")
+            .tempdir()
+            .expect("create temp dir")
+            .keep_managed();
+        // A regular FILE standing where the output directory must be, so the
+        // write cannot succeed no matter the platform.
+        let blocked = base.join("occupied-by-a-file");
+        fs::write(&blocked, b"not a directory").expect("write blocker");
+
+        let err = write_graph_meta(&blocked, &base)
+            .expect_err("a sidecar that cannot be written must say so");
+        assert!(
+            err.contains("atomic_write"),
+            "the error must name the failing operation: {err}",
         );
         let _ = fs::remove_dir_all(&base);
     }

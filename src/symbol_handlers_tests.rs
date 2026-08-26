@@ -207,6 +207,77 @@ fn a_symbol_absent_everywhere_yields_no_sibling_claim() {
     assert!(out.get("foreign_definitions").is_none(), "response: {out}");
 }
 
+/// Indexes a one-file codebase defining `only_in_the_sibling`, a symbol the
+/// main `build_fixture` graph does not contain. Returns the graph dir, which
+/// the caller passes as a `sibling_graphs` entry.
+fn build_sibling_only_graph(tag: &str) -> (crate::test_support::TestTempDir, std::path::PathBuf) {
+    use crate::test_support::TempDirExt;
+    let tmp_root = tempfile::Builder::new()
+        .prefix(&format!("symbol_sibling_{tag}_"))
+        .tempdir()
+        .expect("create temp dir")
+        .keep_managed();
+    let _ = fs::remove_dir_all(&tmp_root);
+    let src = tmp_root.join("fixture/src");
+    fs::create_dir_all(&src).expect("create sibling src");
+    fs::write(src.join("only.rs"), "pub fn only_in_the_sibling() {}\n").unwrap();
+    let graph_dir = tmp_root.join("graph");
+    indexer::index_codebase(&src, &graph_dir).expect("index sibling");
+    (tmp_root, graph_dir)
+}
+
+#[test]
+fn every_get_symbol_exit_carries_the_freshness_receipt() {
+    // fleet-watch#112 review finding 1: the receipt was attached only to the
+    // final success return, so the two early exits — `symbol_not_found` and the
+    // cross-repo `resolved_in: "sibling"` answer — shipped without it. Those
+    // are the responses that need it most: an agent that adds a function and
+    // queries before re-indexing is told the symbol does not exist, with
+    // nothing in the response to suggest the graph is simply older than the
+    // symbol.
+    let (_guard, graph) = build_fixture("freshness_exits");
+    let (_sib_guard, sibling) = build_sibling_only_graph("freshness_exits");
+    let gp = graph.to_str().unwrap().to_string();
+
+    let receipt = |out: &Value, which: &str| {
+        let got = out
+            .get(crate::graph_freshness::RESPONSE_KEY)
+            .unwrap_or_else(|| panic!("{which} exit carries no freshness receipt: {out}"));
+        assert!(
+            got.get("state").and_then(|s| s.as_str()).is_some(),
+            "{which} receipt must name a state: {got}",
+        );
+        // The new key must not collide with index_codebase's string-valued one.
+        assert!(
+            out.get("graph_state").is_none(),
+            "{which} must not publish the nested object under the string key: {out}",
+        );
+    };
+
+    let found = run_get_symbol(&json!({
+        "graph_path": gp, "qualified_name": "helpers.rs::sanitize",
+    }));
+    assert_eq!(found["status"], "ok");
+    receipt(&found, "success");
+
+    let missing = run_get_symbol(&json!({
+        "graph_path": gp, "qualified_name": "helpers.rs::saniti",
+    }));
+    assert_eq!(missing["reason"], "symbol_not_found");
+    receipt(&missing, "symbol_not_found");
+
+    let foreign = run_get_symbol(&json!({
+        "graph_path": gp,
+        "qualified_name": "only.rs::only_in_the_sibling",
+        "sibling_graphs": [sibling.to_str().unwrap()],
+    }));
+    assert_eq!(
+        foreign["resolved_in"], "sibling",
+        "the sibling bridge must answer, or this exit is untested: {foreign}",
+    );
+    receipt(&foreign, "resolved_in:sibling");
+}
+
 // ---------------------------------------------------------------------------
 // resolve_graph
 // ---------------------------------------------------------------------------
@@ -402,5 +473,77 @@ fn every_triple_builds_a_query_the_store_accepts() {
          edges are silently dropped:\n  {}",
         rejected.len(),
         rejected.join("\n  ")
+    );
+}
+
+/// Builds an output dir whose `graph` EXISTS but is not a database, alongside
+/// `meta.json` + `file_manifest.json` describing a root whose file has since
+/// changed. Opening the graph therefore fails for real, and the freshness
+/// receipt has a substantive verdict to carry: `stale`.
+fn unopenable_graph_over_a_moved_tree() -> (crate::test_support::TestTempDir, std::path::PathBuf) {
+    use crate::indexer::manifest;
+    use crate::test_support::TempDirExt;
+    let base = tempfile::Builder::new()
+        .prefix("symbol_unopenable_")
+        .tempdir()
+        .expect("create temp dir")
+        .keep_managed();
+    let _ = fs::remove_dir_all(&base);
+    let output_dir = base.join("out");
+    let root = base.join("repo");
+    fs::create_dir_all(&output_dir).expect("mk out");
+    fs::create_dir_all(&root).expect("mk repo");
+
+    let abs = root.join("a.rs");
+    fs::write(&abs, b"fn a() {}\n").expect("write a.rs");
+    let meta = fs::metadata(&abs).expect("stat a.rs");
+    let mut m = manifest::FileManifest::new();
+    m.files.insert(
+        "a.rs".to_string(),
+        manifest::FileState {
+            mtime_ns: manifest::mtime_ns(&meta),
+            size: meta.len(),
+            content_hash: String::new(),
+        },
+    );
+    manifest::save(&manifest::manifest_path(&output_dir), &m).expect("save manifest");
+    // Manifest first, `meta.json` last — the order both indexing paths use, and
+    // the order the sidecar-pairing check requires.
+    crate::query_handlers::write_graph_meta(&output_dir, &root).expect("write meta");
+    // The tree moves after the snapshot, so the graph is provably stale.
+    fs::write(&abs, b"fn a() { changed(); }\n").expect("edit a.rs");
+
+    let graph = output_dir.join("graph");
+    fs::write(&graph, b"not a database").expect("write junk graph");
+    (base, graph)
+}
+
+#[test]
+fn a_store_that_cannot_be_opened_still_reports_freshness() {
+    // fleet-watch#112 review round 3. The receipt used to be attached at the
+    // NAMED early returns inside `do_get_symbol`, which left every
+    // `?`-propagated failure BEFORE them uncovered — `graph_cache::open_cached`
+    // above the name lookup, and the three `find_symbol_*` calls below it. A
+    // store that will not open is exactly what an in-progress re-index looks
+    // like from a read tool, so it is the case where "is this graph still
+    // current?" matters most, and it was the one shipping without an answer.
+    let (_guard, graph) = unopenable_graph_over_a_moved_tree();
+
+    let out = run_get_symbol(&json!({
+        "graph_path": graph.to_str().unwrap(),
+        "qualified_name": "a.rs::a",
+    }));
+
+    assert_eq!(
+        out["status"], "error",
+        "the store must genuinely fail to open, or this exit is untested: {out}"
+    );
+    let receipt = out
+        .get(crate::graph_freshness::RESPONSE_KEY)
+        .unwrap_or_else(|| panic!("a `?`-propagated failure carries no receipt: {out}"));
+    assert_eq!(
+        receipt["state"],
+        json!("stale"),
+        "the receipt must carry the real verdict, not a placeholder: {receipt}"
     );
 }
