@@ -6,6 +6,17 @@
 
 use serde_json::{json, Value};
 
+#[path = "tool_schemas_shared_params.rs"]
+mod shared_params;
+
+#[path = "tool_schemas_index_codebase.rs"]
+mod index_codebase;
+use index_codebase::index_codebase_schema;
+
+#[path = "tool_schemas_analyze_codebase.rs"]
+mod analyze_codebase;
+use analyze_codebase::analyze_codebase_schema;
+
 /// Returns the full `tools/list` response payload.
 pub fn tools_list() -> Value {
     json!({
@@ -297,99 +308,6 @@ fn index_status_schema() -> Value {
     })
 }
 
-fn index_codebase_schema() -> Value {
-    json!({
-        "name": "index_codebase",
-        "description": "Stage 3a — Index a codebase. Walks the directory, parses source files with tree-sitter (Rust, Python, TypeScript), and persists a code-intelligence graph (nodes: functions, structs/classes, enums, traits/interfaces, etc.; edges: contains, defines, has_method, etc.) into a LadybugDB database at <output_dir>/graph/. Returns node/edge counts, elapsed time, and a COVERAGE report (issue #57) listing files that were parse-incomplete, skipped, or quarantined — absence of a flag is NOT a completeness guarantee; query the full report any time via index_status or query_graph(graph=\"missed\").",
-        "annotations": { "destructiveHint": true },
-        "inputSchema": {
-            "type": "object",
-            "required": ["path", "output_dir"],
-            "additionalProperties": false,
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute path to the codebase root to index."
-                },
-                "language": {
-                    "type": "string",
-                    "enum": ["auto", "rust", "python", "typescript", "java", "kotlin", "swift", "objc", "c", "cpp", "go"],
-                    "default": "auto",
-                    "description": "Language to parse. 'auto' detects per-file by extension (.rs, .py, .ts/.tsx, .java, .kt/.kts, .swift, .m/.mm, .c/.h, .cc/.cpp/.hpp, .go). Specific values restrict to that language only."
-                },
-                "output_dir": {
-                    "type": "string",
-                    "description": "Absolute directory where the graph will be stored (at <output_dir>/graph/)."
-                },
-                "dependency_scope": {
-                    "type": "string",
-                    "enum": ["none", "public_api", "full"],
-                    "default": "none",
-                    "description": "Tri-tier control over dependency-directory ingestion. 'none': prune build/dependency dirs (node_modules, .venv, vendor, target, dist, …); only .git is always skipped. 'public_api': descend into those dirs but persist only publicly-visible symbols from files under them — project files are still indexed in full. 'full': descend and persist everything (equivalent to the deprecated include_dependencies=true). Supersedes 'include_dependencies'; if both are given, dependency_scope wins."
-                },
-                "include_dependencies": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
-                },
-                "export_artifact": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Issue #55 — after a successful index, write a team-shared compressed graph snapshot to <path>/.ai-architect-mcp-codebase/graph.zst (+ graph.meta.json sidecar with git sha, tool version, node/edge counts) and a .gitattributes 'merge=ours' entry so the committed blob never produces merge conflicts. Uses the best-ratio (zstd-9) tier. Export failure is logged but does not fail the index."
-                },
-                "bootstrap": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Issue #55/#62 — when there is no local graph at <output_dir>/graph but a committed artifact exists at <path>/.ai-architect-mcp-codebase/graph.zst, import (decompress) that snapshot instead of cold-indexing, so a fresh clone skips the full index. Staleness is checked first: a FRESH artifact (sha == HEAD) is imported as-is (response source='artifact_bootstrap', graph_state='fresh'). A STALE artifact is, by DEFAULT, imported AND then incrementally filled up to the working tree — only the artifact→HEAD diff is re-parsed (response source='artifact_bootstrap_fill', graph_state='filled_to_working_tree', with fill_method and {changed,added,deleted,renamed,unchanged} counts). The fill derives its change set from 'git diff <artifact_sha> <working tree>' (renames included), falling back to the bundled manifest's content hashes when the repo is not a git tree. If the import or fill fails, it falls back to a full index explicitly (logged, with a 'bootstrap_skipped' note)."
-                },
-                "accept_stale": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Issue #55/#62 — only meaningful with bootstrap=true. Repurposed by the incremental-fill contract: when the committed artifact is stale, accept_stale=true imports the snapshot AS-IS and SKIPS the incremental fill (a deliberate fast path when HEAD-accuracy is not needed). The response carries graph_state='accepted_stale' and a 'stale_artifact' object {artifact_sha, head_sha, commits_behind} so the caller can never mistake the stale graph for a current one; the skipped delta is filled on the next local index_codebase run (which classifies the working tree against the bundled manifest). Leave false (the default) to bootstrap-then-fill up to the working tree."
-                },
-                "full": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Issue #62 — force a from-scratch full rebuild. By DEFAULT index_codebase is incremental: when a prior graph at <output_dir>/graph and its file_manifest.json exist, only the files that changed since the last index are re-parsed (the response carries mode='incremental' and {changed, added, deleted, renamed, unchanged} counts). Pass full=true to bypass that and rebuild everything — required when you change 'language', 'dependency_scope', or 'exclude_dirs', none of which the manifest captures."
-                },
-                "exclude_dirs": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "default": [],
-                    "description": "Issue #249 — directory paths (relative to 'path', no leading '/' or '..') or bare directory names to prune from the walk, in addition to the built-in build/dependency skip list. An entry WITHOUT a path separator (e.g. \"secrets\") is a bare name matched anywhere in the tree, like the built-in list; an entry WITH one (e.g. \"config/secrets\") matches exactly that one subtree relative to 'path'. No glob support. Exclusion WINS over every 'dependency_scope' tier, including 'full' — this is for directories that must never be read, not a performance prune. Pruned directories are NEVER silently dropped: each is reported in the coverage sidecar as skipped (reason 'user_excluded'), and the response's coverage.skipped.user_excluded_count carries the total. Changing this value on an existing graph requires full=true (the manifest does not capture it, same caveat as 'dependency_scope'). A directory the OS refuses to read (permission denied) is handled independently and automatically — see the coverage 'unreadable' reason — even without listing it here."
-                },
-                "cochange": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Issue #58 — after indexing, mine git temporal coupling into FILE_CHANGES_WITH File→File edges (Tornhill-style: files that change together, thresholded at >=3 co-changes and >=0.30 coupling degree over a 1-year window). Default true; self-skips on a non-git tree. A full index re-mines the window; an incremental index EXTENDS the mined aggregates with only the new commits (append-only). The response carries a 'cochange' block {mode, commits_scanned, edges_written}. Query the edges via query_graph: `MATCH (a:File)-[r:FILE_CHANGES_WITH]-(b:File) WHERE r.coupling > 0.5 RETURN a.id, b.id, r.cochange_count`."
-                }
-            }
-        }
-    })
-}
-
-/// The `detail` token-surface parameter (issue #56), shared by list-returning
-/// tools. `full` (default) is unchanged behavior; `ids` returns bare identifiers.
-fn detail_param() -> Value {
-    json!({
-        "type": "string",
-        "enum": ["full", "ids"],
-        "default": "full",
-        "description": "Token surface (issue #56). 'full' (default): each result as a complete object. 'ids': return ONLY the bare identifiers (qualified names) plus the total — a cheap wide sweep to enumerate what exists before drilling into specific symbols with get_symbol/get_context. Overrides 'format' (an id list needs no table)."
-    })
-}
-
-/// The `format` token-surface parameter (issue #56), shared by list-returning
-/// tools. `json` (default) is objects; `tabular` streams rows as arrays.
-fn format_param() -> Value {
-    json!({
-        "type": "string",
-        "enum": ["json", "tabular"],
-        "default": "json",
-        "description": "Token surface (issue #56). 'json' (default): results as objects. 'tabular': declare the columns ONCE (in the response's 'columns' header) and stream each result as an array of cells in that column order — homogeneous result sets stop repeating field names, cutting tokens. Read each row positionally against 'columns'. Ignored when detail='ids'."
-    })
-}
-
 fn query_graph_schema() -> Value {
     json!({
         "name": "query_graph",
@@ -607,7 +525,7 @@ fn index_history_schema() -> Value {
 fn search_codebase_schema() -> Value {
     json!({
         "name": "search_codebase",
-        "description": "Stage 3d — Ranked keyword search over the code graph. USE THIS INSTEAD OF grep/ripgrep when you know a name or concept but not the exact qualified name: it ranks symbols by hybrid lexical+structural relevance and returns structural context grep cannot — kind, file path, community, process participation, score. Response: 'results' (ranked, cursor-paged), 'total_count', 'by_process' (results grouped by execution flow), and 'next_offset' when more remain — page by re-calling with offset=next_offset until it is absent (stable order: score desc, then qualified_name). TOKEN SURFACE (issue #56): detail='ids' returns only qualified names for a cheap wide sweep before drilling in; format='tabular' streams rows as arrays under a one-line 'columns' header. Narrow with label_filter (Function/Method/Struct/…). COVERAGE CAVEAT (issue #57): a symbol absent from results may simply be UNINDEXED — the graph can be parse-incomplete; if a negative result matters, check index_status / query_graph(graph=\"missed\") and grep the flagged files. Prereqs: index_codebase + resolve_graph + cluster_graph (or analyze_codebase for all-in-one).",
+        "description": "Stage 3d — Ranked keyword search over the code graph. USE THIS INSTEAD OF grep/ripgrep when you know a name or concept but not the exact qualified name: it ranks symbols by hybrid lexical+structural relevance and returns structural context grep cannot — kind, file path, community, process participation, score. Response: 'results' (ranked, cursor-paged), 'total_count', 'by_process' (results grouped by execution flow), and 'next_offset' when more remain — page by re-calling with offset=next_offset until it is absent (stable order: score desc, then qualified_name). TOKEN SURFACE (issue #56): detail='ids' returns only qualified names for a cheap wide sweep before drilling in; format='tabular' streams rows as arrays under a one-line 'columns' header. Narrow with label_filter (Function/Method/Struct/…). COVERAGE CAVEAT (issue #57): a symbol absent from results may simply be UNINDEXED — the graph can be parse-incomplete; if a negative result matters, check index_status / query_graph(graph=\"missed\") and grep the flagged files. DOC CONTENT (fleet-watch#112): also searches the full text of markdown/plain-text/similar doc files (label 'File' in results, kind of hit rather than a symbol) — so a query whose only evidence lives in README/skill/doc prose still returns something, not just code symbols. Built by analyze_codebase's search-index phase; a graph built without it (bare index_codebase/resolve_graph/cluster_graph) falls back to substring search over symbols only. DOC RECALL IS LEXICAL ONLY: doc bodies are indexed by BM25 but NOT by the semantic vector half, so a doc is found by words it actually contains — a query that matches it in meaning but shares no term with it will not surface it, even though a symbol can be found that way. Prereqs: index_codebase + resolve_graph + cluster_graph (or analyze_codebase for all-in-one).",
         "annotations": { "readOnlyHint": true },
         "inputSchema": {
             "type": "object",
@@ -635,8 +553,8 @@ fn search_codebase_schema() -> Value {
                 },
                 "label_filter": {
                     "type": "string",
-                    "enum": ["Function", "Method", "Struct", "Enum", "Trait", "Module", "Constant", "TypeAlias"],
-                    "description": "Optional: only return symbols of this kind."
+                    "enum": ["Function", "Method", "Struct", "Enum", "Trait", "Module", "Constant", "TypeAlias", "File"],
+                    "description": "Optional: only return symbols of this kind. 'File' (fleet-watch#112) restricts to doc/prose content hits — markdown, plain text, and similar files the parser does not turn into symbols — rather than code. 'File' REQUIRES the search index built by analyze_codebase: doc text lives only in that index, never in the graph, so on a graph built without it this value is refused with an explanatory error rather than returning an empty result you could mistake for 'no doc matched'."
                 },
                 "detail": detail_param(),
                 "format": format_param(),
@@ -667,62 +585,6 @@ fn get_context_schema() -> Value {
                 "qualified_name": {
                     "type": "string",
                     "description": "The qualified name of the symbol (e.g., 'src/main.rs::handle_tool_call')."
-                }
-            }
-        }
-    })
-}
-
-fn analyze_codebase_schema() -> Value {
-    json!({
-        "name": "analyze_codebase",
-        "description": "Stage 3 — All-in-one: runs index_codebase + resolve_graph + cluster_graph in sequence, producing a fully searchable, resolved, clustered graph in ONE call. USE THIS FIRST on a new repo instead of calling the three stages separately. Auto-detects language by extension (Rust, Python, TypeScript, Java, Kotlin, Swift, Obj-C, C, C++, Go). Returns combined statistics from every phase (nodes/edges, resolution counts, communities/processes) AND a coverage report (issue #57) listing files that were parse-incomplete / skipped / quarantined. COVERAGE CAVEAT: absence of a flag is NOT a completeness guarantee — before trusting a negative graph result on a specific file, consult index_status or query_graph(graph=\"missed\") and grep the flagged files/ranges. Afterward, explore with search_codebase / get_context / get_impact / query_graph; re-run after edits (indexing is incremental by default).",
-        "annotations": { "destructiveHint": true },
-        "inputSchema": {
-            "type": "object",
-            "required": ["path", "output_dir"],
-            "additionalProperties": false,
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute path to the codebase root to index."
-                },
-                "language": {
-                    "type": "string",
-                    "enum": ["auto", "rust", "python", "typescript", "java", "kotlin", "swift", "objc", "c", "cpp", "go"],
-                    "default": "auto",
-                    "description": "Language to parse. 'auto' detects per-file by extension (.rs, .py, .ts/.tsx, .java, .kt/.kts, .swift, .m/.mm, .c/.h, .cc/.cpp/.hpp, .go). Specific values restrict to that language only."
-                },
-                "output_dir": {
-                    "type": "string",
-                    "description": "Absolute directory where the graph will be stored (at <output_dir>/graph/)."
-                },
-                "resolution_param": {
-                    "type": "number",
-                    "default": 1.0,
-                    "description": "Resolution parameter for community detection. Higher = more, smaller communities."
-                },
-                "lsp": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Enable LSP-enhanced resolution after the static resolve pass. Requires the language server to be installed. Default: false."
-                },
-                "dependency_scope": {
-                    "type": "string",
-                    "enum": ["none", "public_api", "full"],
-                    "default": "none",
-                    "description": "Tri-tier control over dependency-directory ingestion. 'none': prune build/dependency dirs (node_modules, .venv, vendor, target, dist, …); only .git is always skipped. 'public_api': descend into those dirs but persist only publicly-visible symbols from files under them — project files are still indexed in full. 'full': descend and persist everything (equivalent to the deprecated include_dependencies=true). Supersedes 'include_dependencies'; if both are given, dependency_scope wins."
-                },
-                "include_dependencies": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Deprecated — use 'dependency_scope' instead ('true' maps to 'full', 'false' maps to 'none'). Kept as a compatibility alias for one release; emits a deprecation warning."
-                },
-                "exclude_dirs": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "default": [],
-                    "description": "Issue #249 — directory paths (relative to 'path', no leading '/' or '..') or bare directory names to prune from the walk, in addition to the built-in build/dependency skip list. An entry WITHOUT a path separator (e.g. \"secrets\") is a bare name matched anywhere in the tree, like the built-in list; an entry WITH one (e.g. \"config/secrets\") matches exactly that one subtree relative to 'path'. No glob support. Exclusion WINS over every 'dependency_scope' tier, including 'full' — this is for directories that must never be read, not a performance prune. Pruned directories are NEVER silently dropped: each is reported in the coverage sidecar as skipped (reason 'user_excluded'), and the response's coverage.skipped.user_excluded_count carries the total. A directory the OS refuses to read (permission denied) is handled independently and automatically — see the coverage 'unreadable' reason — even without listing it here."
                 }
             }
         }
@@ -880,5 +742,27 @@ fn detect_changes_schema() -> Value {
                 }
             }
         }
+    })
+}
+
+/// The `detail` token-surface parameter (issue #56), shared by list-returning
+/// tools. `full` (default) is unchanged behavior; `ids` returns bare identifiers.
+fn detail_param() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["full", "ids"],
+        "default": "full",
+        "description": "Token surface (issue #56). 'full' (default): each result as a complete object. 'ids': return ONLY the bare identifiers (qualified names) plus the total — a cheap wide sweep to enumerate what exists before drilling into specific symbols with get_symbol/get_context. Overrides 'format' (an id list needs no table)."
+    })
+}
+
+/// The `format` token-surface parameter (issue #56), shared by list-returning
+/// tools. `json` (default) is objects; `tabular` streams rows as arrays.
+fn format_param() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["json", "tabular"],
+        "default": "json",
+        "description": "Token surface (issue #56). 'json' (default): results as objects. 'tabular': declare the columns ONCE (in the response's 'columns' header) and stream each result as an array of cells in that column order — homogeneous result sets stop repeating field names, cutting tokens. Read each row positionally against 'columns'. Ignored when detail='ids'."
     })
 }
