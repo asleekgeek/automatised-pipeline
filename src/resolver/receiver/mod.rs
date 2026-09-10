@@ -1,14 +1,24 @@
-// resolver::receiver — Rust `self`/`Self` receiver-call static binding.
+// resolver::receiver — Rust `self`/`Self`/local-variable receiver-call
+// static binding.
 //
-// source: tasks/plan-issues-282-283-284.md §2.2/§2.3 (lot 4) and ADR-9840,
-// which carries the rationale and the arbitrated confidences.
+// source: tasks/plan-issues-282-283-284.md §2.2/§2.3 (lots 4 and 6) and
+// ADR-9840 (paliers 1-2) / ADR-<pending> (palier 3, content in the lot-6 PR
+// body — coordinator note 2026-09-09: wiki_adr unavailable this session).
 //
-// Implements paliers 1-2 only: `self.<m>` / `Self::<m>` receivers on a
-// `Method` caller. Local-binding receivers (`s.<m>` where `s` is a
-// once-bound local) are classified here for a stable, exhaustive match but
-// are NOT resolved yet — that is palier 3, lot 6 (issue #283 b2).
+// Paliers 1-2 (`self.<m>` / `Self::<m>` on a `Method` caller,
+// `resolve_receiver_bound`, this file) and palier 3 (`s.<m>` where `s` is a
+// once-bound-and-typed local, ANY caller, `resolve_local_receiver_bound`,
+// the `local` submodule — split out to keep this file under the §4.1
+// 500-line cap) are two independent gates in `resolver::calls`: palier 3
+// does not require a `Method` caller (a free function's local variable
+// qualifies exactly as well as a method's), and it consumes the
+// parser-attached `CallSite.receiver_hint` rather than the caller's own
+// enclosing `impl`.
 
 use super::*;
+
+mod local;
+pub(super) use local::resolve_local_receiver_bound;
 
 /// The receiver shape of a callee as spelled at the call site. `classify`
 /// never inspects surrounding context (types, scope) — only the callee
@@ -20,10 +30,9 @@ pub(super) enum ReceiverForm {
     /// `Self::<m>` — type-relative associated call.
     SelfType(String),
     /// `<ident>.<m>` where `ident` is a plain identifier (not `self`) —
-    /// classified now so this enum stays exhaustive for lot 6, which
-    /// resolves it via a parser-attached `receiver_hint`. Unused by this
-    /// lot's resolution path.
-    #[allow(dead_code)]
+    /// resolved by palier 3 (lot 6) via the parser-attached `receiver_hint`
+    /// keyed on `ident`'s bound type, not on `ident` itself (two locals of
+    /// the same type at different call sites share no state here).
     Local { ident: String, m: String },
     /// Anything else: chained calls, index expressions, tuple/field
     /// access chains, or an already-qualified (`::`) path.
@@ -374,4 +383,8 @@ mod tests {
         let form = ReceiverForm::SelfValue("response_of".to_string());
         assert_eq!(resolve_receiver_bound(&idx, &form, None), None);
     }
+
+    // `resolve_local_receiver_bound` (palier 3) tests live in the `local`
+    // submodule alongside the function they exercise — split out to keep
+    // this file under the §4.1 500-line cap.
 }

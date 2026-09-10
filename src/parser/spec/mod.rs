@@ -28,7 +28,9 @@ mod python;
 mod registry;
 mod ruby;
 mod rust;
+mod rust_call_site;
 mod rust_macro_calls;
+mod rust_receiver;
 mod rust_scope;
 mod shallow;
 mod swift;
@@ -95,6 +97,8 @@ mod rust_call_shape_tests;
 mod rust_parity_corpus;
 #[cfg(test)]
 mod rust_parity_tests;
+#[cfg(test)]
+mod rust_receiver_tests;
 #[cfg(test)]
 mod rust_walker_tests;
 #[cfg(test)]
