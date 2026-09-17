@@ -96,18 +96,21 @@ only by a second maintainer.
 
 ## Contribution licensing
 
-Contributions are accepted under the project's [MIT licence](LICENSE). There is
-**no** DCO sign-off requirement and **no** CLA today: all non-trivial code to
-date is the maintainer's own work, so a legal mechanism would formalise an
-agreement with one party. If outside contributors begin submitting non-trivial
-changes, the intent is to adopt a
-[DCO](https://developercertificate.org/) (`git commit -s`) rather than a CLA —
-it is tracked in the source history, easy to verify, and does not ask
-contributors to assign rights.
+Contributions are accepted under the project's [MIT licence](LICENSE), and
+every commit must be signed off under the
+[Developer Certificate of Origin](https://developercertificate.org/)
+(`git commit -s`). The sign-off states that the contributor wrote the change or
+otherwise has the right to submit it under the MIT licence. It is tracked in the
+source history and easy to verify. It does not assign rights: each contributor
+keeps the copyright on their contribution. There is no CLA.
 
-This is stated so the position is refutable rather than assumed. Until the DCO
-exists, the OpenSSF silver criterion `dco` is reported **Unmet** rather than
-argued around.
+The `DCO` workflow checks every commit of a pull request for a `Signed-off-by:`
+trailer matching the commit author. The only exemption is for pull requests
+opened by a GitHub login listed in `.github/workflows/dco.yml`, which today
+holds `dependabot[bot]`. It keys on the login that opened the pull request;
+the git author name, which anyone can set, is only a second condition.
+The requirement applies from the change that introduced it; earlier history is
+the maintainer's own work and is not rewritten.
 
 ## Code of conduct
 
