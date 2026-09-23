@@ -9,13 +9,14 @@ use serde_json::{json, Value};
 use crate::epistemic;
 use crate::indexing_handlers;
 
-/// The five gap buckets `indexing_handlers::coverage_summary` reports. Any
+/// The six gap buckets `indexing_handlers::coverage_summary` reports. Any
 /// non-zero count means the index knows it did not cover something.
-const GAP_BUCKETS: [&str; 5] = [
+const GAP_BUCKETS: [&str; 6] = [
     "parse_incomplete",
     "skipped",
     "quarantined",
     "outside_build_targets",
+    "unlinked_file",
     "feature_gated",
 ];
 
@@ -113,6 +114,7 @@ mod tests {
             "skipped": { "count": 0 },
             "quarantined": { "count": 0 },
             "outside_build_targets": { "count": 0 },
+            "unlinked_file": { "count": 0 },
             "feature_gated": { "count": 0 },
         });
         assert!(missing_evidence_reason(&summary).is_none());
@@ -128,6 +130,7 @@ mod tests {
                 "skipped": { "count": 0 },
                 "quarantined": { "count": 0 },
                 "outside_build_targets": { "count": 0 },
+                "unlinked_file": { "count": 0 },
                 "feature_gated": { "count": 0 },
             });
             summary[bucket]["count"] = json!(3);

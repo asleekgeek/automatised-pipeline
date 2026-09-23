@@ -24,6 +24,7 @@ struct CoverageFileBuckets {
     skipped_files: Vec<Value>,
     quarantined_files: Vec<Value>,
     outside_build_target_files: Vec<Value>,
+    unlinked_files: Vec<Value>,
     feature_gated_files: Vec<Value>,
     user_excluded_count: u64,
 }
@@ -38,6 +39,7 @@ fn bucket_coverage_files(report: &indexer::coverage::CoverageReport) -> Coverage
         skipped_files: Vec::new(),
         quarantined_files: Vec::new(),
         outside_build_target_files: Vec::new(),
+        unlinked_files: Vec::new(),
         feature_gated_files: Vec::new(),
         user_excluded_count: 0,
     };
@@ -67,6 +69,11 @@ fn bucket_coverage_files(report: &indexer::coverage::CoverageReport) -> Coverage
             CoverageKind::OutsideBuildTargets => {
                 if b.outside_build_target_files.len() < COVERAGE_LIST_CAP {
                     b.outside_build_target_files.push(json!(rel));
+                }
+            }
+            CoverageKind::UnlinkedFile => {
+                if b.unlinked_files.len() < COVERAGE_LIST_CAP {
+                    b.unlinked_files.push(json!(rel));
                 }
             }
             CoverageKind::FeatureGated => {
@@ -114,6 +121,7 @@ pub(crate) fn coverage_summary(report: &indexer::coverage::CoverageReport) -> Va
             "count": counts.outside_build_targets,
             "files": b.outside_build_target_files
         },
+        "unlinked_file": { "count": counts.unlinked_file, "files": b.unlinked_files },
         "feature_gated": {
             "count": counts.feature_gated,
             "files": b.feature_gated_files

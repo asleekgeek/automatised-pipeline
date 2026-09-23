@@ -28,18 +28,24 @@ use std::collections::BTreeMap;
 /// touched (a `[[test]]` added to `Cargo.toml`), so carrying a prior file's
 /// verdict forward would let it go stale silently. The caller
 /// (`save_incremental_coverage`) recomputes them fresh every pass via
-/// `overlay_cargo_attributions`.
+/// `overlay_cargo_attributions`. `UnlinkedFile` entries (issue #292) are
+/// excluded for the same reason — a `mod` added in another file links an
+/// untouched one — but only the next LSP pass can recompute them (ADR-9845).
 fn merge_coverage(
-    prior: Option<&coverage::CoverageReport>,
+    carry: &CarryForward<'_>,
     reparsed_gaps: BTreeMap<String, FileCoverage>,
-    reparsed_rels: &HashSet<String>,
-    current_rels: &HashSet<String>,
     index_mode: &str,
     files_indexed: u64,
 ) -> coverage::CoverageReport {
+    let CarryForward {
+        prior,
+        reparsed_rels,
+        current_rels,
+    } = *carry;
     let mut report = coverage::CoverageReport::new(index_mode, files_indexed);
     // Carry forward prior gaps for files that still exist and were not
-    // reparsed — except the cargo-derived kinds, recomputed every pass (see doc).
+    // reparsed — except the cargo-derived kinds and UnlinkedFile, all
+    // recomputed every pass (see doc).
     if let Some(prior) = prior {
         for (rel, cov) in &prior.files {
             if current_rels.contains(rel)
@@ -47,6 +53,7 @@ fn merge_coverage(
                 && !matches!(
                     cov.kind,
                     coverage::CoverageKind::OutsideBuildTargets
+                        | coverage::CoverageKind::UnlinkedFile
                         | coverage::CoverageKind::FeatureGated
                 )
             {
@@ -64,6 +71,15 @@ fn merge_coverage(
     let counts = report.counts();
     report.files_indexed = files_indexed.saturating_sub(counts.skipped + counts.quarantined);
     report
+}
+
+/// What `merge_coverage` carries forward from: the prior report and the two
+/// file sets that decide which of its entries survive (§4.4 parameter object).
+#[derive(Clone, Copy)]
+struct CarryForward<'a> {
+    prior: Option<&'a coverage::CoverageReport>,
+    reparsed_rels: &'a HashSet<String>,
+    current_rels: &'a HashSet<String>,
 }
 
 /// Recomputes `OutsideBuildTargets` coverage gaps (issue #284) for the CURRENT
@@ -150,14 +166,12 @@ pub(super) fn save_incremental_coverage(
     for r in &changes.renamed {
         reparsed_rels.insert(r.new_file.rel.clone());
     }
-    let mut report = merge_coverage(
-        prior.as_ref(),
-        reparsed_gaps,
-        &reparsed_rels,
-        &current_rels,
-        index_mode,
-        current.len() as u64,
-    );
+    let carry = CarryForward {
+        prior: prior.as_ref(),
+        reparsed_rels: &reparsed_rels,
+        current_rels: &current_rels,
+    };
+    let mut report = merge_coverage(&carry, reparsed_gaps, index_mode, current.len() as u64);
     // The prunes this pass observed, so the incremental sidecar names what the
     // walk refused exactly as the full index does. Recomputed every pass rather
     // than carried forward: the pruned set changes the moment a directory is
@@ -166,5 +180,54 @@ pub(super) fn save_incremental_coverage(
     overlay_cargo_attributions(&mut report, codebase, current);
     if let Err(e) = coverage::save(&cov_path, &report) {
         eprintln!("[ap] coverage sidecar write failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gap(kind: coverage::CoverageKind) -> FileCoverage {
+        FileCoverage {
+            kind,
+            detail: String::new(),
+            error_ranges: Vec::new(),
+        }
+    }
+
+    /// Issue #292 (ADR-9845): an `unlinked-file` verdict depends on OTHER files
+    /// (a `mod` added elsewhere links an untouched one), and only an LSP pass
+    /// can recompute it — so an incremental pass must drop it, not carry it.
+    #[test]
+    fn an_unlinked_file_verdict_is_not_carried_forward_but_a_parse_gap_is() {
+        let mut prior = coverage::CoverageReport::new("full", 2);
+        prior.files.insert(
+            "src/orphan.rs".into(),
+            gap(coverage::CoverageKind::UnlinkedFile),
+        );
+        prior.files.insert(
+            "src/partial.rs".into(),
+            gap(coverage::CoverageKind::ParsePartial),
+        );
+        let current: HashSet<String> = ["src/orphan.rs", "src/partial.rs"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let carry = CarryForward {
+            prior: Some(&prior),
+            reparsed_rels: &HashSet::new(),
+            current_rels: &current,
+        };
+        let merged = merge_coverage(&carry, BTreeMap::new(), "incremental", 2);
+
+        assert!(
+            !merged.files.contains_key("src/orphan.rs"),
+            "a stale unlinked-file verdict must not survive an index pass"
+        );
+        assert_eq!(
+            merged.files["src/partial.rs"].kind,
+            coverage::CoverageKind::ParsePartial
+        );
     }
 }

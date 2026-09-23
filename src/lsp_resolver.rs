@@ -8,13 +8,17 @@
 
 use crate::graph_store::GraphStore;
 use crate::indexer::cargo_targets::{self, TargetMap};
-use crate::lsp_client::{self, LspClient, LspResolutionResult, ServerHealth, ServerHealthLevel};
+use crate::lsp_client::{
+    self, CargoAttribution, LspClient, LspResolutionResult, ServerHealth, ServerHealthLevel,
+    UnlinkedFileCheck,
+};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 mod edges;
 mod pass;
 mod sites;
+mod unlinked;
 
 use edges::SiteContext;
 use pass::LspPass;
@@ -22,6 +26,7 @@ use sites::{
     build_node_position_index, collect_unresolved_callsites, group_by_file, language_id_for,
     UnresolvedCallSite,
 };
+use unlinked::FileRef;
 
 #[cfg(test)]
 #[path = "lsp_resolver/health_gate_tests.rs"]
@@ -30,6 +35,10 @@ mod health_gate_tests;
 #[cfg(test)]
 #[path = "lsp_resolver/outside_targets_tests.rs"]
 mod outside_targets_tests;
+
+#[cfg(test)]
+#[path = "lsp_resolver/unlinked_tests.rs"]
+mod unlinked_tests;
 
 /// Budget reserved for the in-flight request when deciding whether another one
 /// still fits inside `timeout`.
@@ -61,16 +70,7 @@ pub fn resolve_with_lsp(
 
     let unresolved = collect_unresolved_callsites(store)?;
     if unresolved.is_empty() {
-        return Ok(LspResolutionResult {
-            resolved_count: 0,
-            failed_count: 0,
-            skipped_count: 0,
-            outside_targets_count: 0,
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            // No client was ever started — there is nothing to resolve, so
-            // there is no server opinion to report either.
-            server_health: ServerHealth::not_probed(),
-        });
+        return Ok(nothing_to_resolve(start));
     }
 
     // fleet-watch#18: definition URIs come back absolute (and on macOS the
@@ -99,8 +99,33 @@ pub fn resolve_with_lsp(
         target_map: &target_map,
     };
 
-    let mut client = LspClient::start(cmd, default_args, codebase_path, timeout)?;
-    let outcome = resolve_with_client(store, &mut client, &plan, &unresolved);
+    let client = LspClient::start(cmd, default_args, codebase_path, timeout)?;
+    run_pass(store, client, &plan, &unresolved)
+}
+
+/// The result when no site is unresolved: no client was ever started, so
+/// there is no server opinion to report either.
+fn nothing_to_resolve(start: Instant) -> LspResolutionResult {
+    LspResolutionResult {
+        resolved_count: 0,
+        failed_count: 0,
+        skipped_count: 0,
+        outside_targets_count: 0,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        server_health: ServerHealth::not_probed(),
+        unlinked_check: UnlinkedFileCheck::default(),
+    }
+}
+
+/// Drives the pass on a started client, then shuts it down — split out of
+/// `resolve_with_lsp` (§4.2) when issue #292 pushed it past 50 lines.
+fn run_pass(
+    store: &GraphStore,
+    mut client: LspClient,
+    plan: &PassPlan<'_>,
+    unresolved: &[UnresolvedCallSite],
+) -> Result<LspResolutionResult, String> {
+    let outcome = resolve_with_client(store, &mut client, plan, unresolved);
     // Capture the server's own verdict, and shut it down, regardless of
     // whether the health gate stopped the pass early — `Drop for LspClient`
     // is a safety net, not a substitute for the cooperative handshake.
@@ -108,7 +133,7 @@ pub fn resolve_with_lsp(
     let _ = client.shutdown();
     let pass = outcome?;
     pass.mark_resolved(store)?;
-    Ok(pass.into_result(start.elapsed().as_millis() as u64, server_health))
+    Ok(pass.into_result(plan.start.elapsed().as_millis() as u64, server_health))
 }
 
 /// Everything the per-file loop needs that is fixed for the whole pass,
@@ -154,7 +179,7 @@ fn resolve_with_client(
     if let Some(err) = health_gate_error(client.server_health()) {
         return Err(err);
     }
-    Ok(drive_pass(store, client, plan, unresolved, plan.start))
+    Ok(drive_pass(store, client, plan, unresolved))
 }
 
 /// `Some(error)` when the server's last-observed health is `Error` — the
@@ -184,60 +209,77 @@ fn health_gate_error(health: &ServerHealth) -> Option<String> {
 }
 
 /// Asks the server about every unresolved site, file by file, until the sites
-/// run out or the budget does.
+/// run out or the budget does. With pull diagnostics, each opened file also
+/// gets rust-analyzer's `unlinked-file` verdict (issue #292, ADR-9845).
 fn drive_pass(
     store: &GraphStore,
     client: &mut LspClient,
     plan: &PassPlan<'_>,
     unresolved: &[UnresolvedCallSite],
-    start: Instant,
 ) -> LspPass {
-    let mut pass = LspPass::new(unresolved.len());
+    let mut pass = LspPass::new(unresolved.len(), client.supports_pull_diagnostics());
     // Grouped by file so one `didOpen` serves every site in it.
     'files: for (file_path, sites) in &group_by_file(unresolved) {
+        let file = FileRef {
+            rel: file_path,
+            attribution: unlinked::cargo_attribution(plan.target_map, file_path),
+        };
         // Issue #284 (lot 5): a file outside every compiled Cargo target is
-        // never in rust-analyzer's crate graph — every `textDocument/definition`
-        // request against it would answer `[]` (probe C,
-        // `tasks/plan-issues-282-283-284.md` §0.2), indistinguishable from a
-        // real "not found". Attribute and move on without issuing the
-        // `didOpen`/`definition` round trip that would only confirm the same
-        // thing 634 times over on the dy-wcet corpus.
-        if plan.target_map.is_outside_targets(Path::new(file_path)) {
+        // never in rust-analyzer's crate graph — every definition request
+        // would answer `[]`. Attribute its sites without asking; only the
+        // #292 cross-check (one pull per file) may still open it.
+        if file.attribution == CargoAttribution::OutsideBuildTargets {
             pass.mark_outside_targets(sites);
+            if client.supports_pull_diagnostics() && plan.start.elapsed() <= plan.deadline {
+                check_unlinked(client, plan, &mut pass, &file);
+            }
             continue;
         }
-        let abs_path = plan.codebase_path.join(file_path);
-        let file_uri = lsp_client::path_to_file_uri(&abs_path);
-        let Ok(content) = std::fs::read_to_string(&abs_path) else {
-            // Missing or unreadable: its sites go unanswered, which the
-            // skipped identity accounts for without a per-branch counter.
+        // Missing, unreadable, or refused: its sites go unanswered, which the
+        // skipped identity accounts for without a per-branch counter.
+        let Some(file_uri) = open_document(client, plan, file_path) else {
             continue;
         };
-        if client
-            .did_open(&file_uri, language_id_for(plan.language), &content)
-            .is_err()
-        {
-            continue;
+        if client.supports_pull_diagnostics() {
+            unlinked::check_file(client, &mut pass.unlinked, &file_uri, &file);
         }
-
         for site in sites {
             let (line, col) = site.lsp_position();
-            pass.record(
-                store,
-                site,
-                client.get_definition(&file_uri, line, col),
-                &plan.ctx,
-            );
+            let definition = client.get_definition(&file_uri, line, col);
+            pass.record(store, site, definition, &plan.ctx);
             // Respect the overall budget. Breaking out of BOTH loops matters:
             // continuing to the next file spent one more `didOpen` plus one
-            // more definition request per remaining file, for a budget that
-            // was already exhausted.
-            if start.elapsed() > plan.deadline {
+            // more definition request per remaining file.
+            if plan.start.elapsed() > plan.deadline {
                 break 'files;
             }
         }
     }
     pass
+}
+
+/// `didOpen`s `file_path` and returns its URI, or `None` when it cannot be
+/// read or the server refused the notification.
+fn open_document(client: &mut LspClient, plan: &PassPlan<'_>, file_path: &str) -> Option<String> {
+    let abs_path = plan.codebase_path.join(file_path);
+    let file_uri = lsp_client::path_to_file_uri(&abs_path);
+    let content = std::fs::read_to_string(&abs_path).ok()?;
+    client
+        .did_open(&file_uri, language_id_for(plan.language), &content)
+        .ok()?;
+    Some(file_uri)
+}
+
+/// Opens a file the pass will not resolve sites in and pulls its verdict.
+fn check_unlinked(
+    client: &mut LspClient,
+    plan: &PassPlan<'_>,
+    pass: &mut LspPass,
+    file: &FileRef<'_>,
+) {
+    if let Some(file_uri) = open_document(client, plan, file.rel) {
+        unlinked::check_file(client, &mut pass.unlinked, &file_uri, file);
+    }
 }
 
 /// Resolves which language server to run.
