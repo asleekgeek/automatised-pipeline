@@ -43,9 +43,18 @@ impl UnresolvedCallSite {
     ///   starting at `col` (every `call_callee`/`call_entry` in
     ///   `src/parser/spec/*.rs` reads it straight from the source file), so
     ///   that offset is exactly the identifier's column.
+    /// - A chain split across lines (`Task::new(a)\n    .deadline`) carries
+    ///   its newlines in that verbatim substring, so the identifier sits on a
+    ///   later line than the stored one: advance one line per newline before
+    ///   it, and count the column from the last of them (issue #317).
     pub(super) fn lsp_position(&self) -> (u64, u64) {
-        let line0 = self.line.saturating_sub(1);
-        let col = self.col + last_segment_offset(&self.callee_name) as u64;
+        let offset = last_segment_offset(&self.callee_name);
+        let receiver = &self.callee_name[..offset];
+        let line0 = self.line.saturating_sub(1) + receiver.matches('\n').count() as u64;
+        let col = match receiver.rfind('\n') {
+            Some(newline) => (offset - newline - 1) as u64,
+            None => self.col + offset as u64,
+        };
         (line0, col)
     }
 
@@ -229,6 +238,10 @@ pub(super) fn build_node_position_index(
 }
 
 #[cfg(test)]
+#[path = "sites_position_tests.rs"]
+mod position_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::graph_store::NODE_CALL_SITE;
@@ -386,57 +399,6 @@ mod tests {
             extract_caller_from_callsite_id("src/foo.rs::bar"),
             "src/foo.rs::bar"
         );
-    }
-
-    /// Root cause 2 (fix/lsp-receiver-calls). `CallSite.col` (post the
-    /// `lsp_col` fix) still points at the START of the callee expression —
-    /// the RECEIVER for a method call — not the method identifier.
-    /// rust-analyzer resolves that position to the receiver's own binding,
-    /// not the method: verified 2026-09-03 on `self.response_of(i)`, column
-    /// 16 (`self`) -> the `self` binding, column 21 (`response_of`) -> the
-    /// method, same line. `lsp_position` must therefore target the LAST
-    /// `.`/`::`-separated segment, never the stored column verbatim.
-    #[test]
-    fn lsp_definition_targets_method_identifier_not_receiver() {
-        let cases: &[(&str, u64, u64, u64)] = &[
-            // (callee_name, line, col, expected identifier col)
-            ("self.response_of", 5, 8, 8 + "self.".len() as u64),
-            ("s.response_of", 5, 8, 8 + "s.".len() as u64),
-            ("trial.response_of", 5, 8, 8 + "trial.".len() as u64),
-            ("helpers::normalize", 5, 8, 8 + "helpers::".len() as u64),
-            // A chained call: the LAST segment is the identifier, not the
-            // first receiver nor an intermediate call's parens.
-            (
-                "input.trim().to_string",
-                5,
-                8,
-                8 + "input.trim().".len() as u64,
-            ),
-            // A bare function call has no separator: identifier == col.
-            ("helper", 5, 8, 8),
-        ];
-        for (callee_name, line, col, expected_col) in cases {
-            let site = UnresolvedCallSite {
-                id: "src/a.rs::caller::call@x".to_string(),
-                caller_qn: "src/a.rs::caller".to_string(),
-                caller_label: "Method".to_string(),
-                callee_name: callee_name.to_string(),
-                file_path: "src/a.rs".to_string(),
-                line: *line,
-                col: *col,
-            };
-            let (lsp_line, lsp_col) = site.lsp_position();
-            assert_eq!(
-                lsp_line,
-                line - 1,
-                "line must be converted from the graph's 1-based to LSP's \
-                 0-based: {callee_name}"
-            );
-            assert_eq!(
-                lsp_col, *expected_col,
-                "identifier column for callee_name={callee_name:?}"
-            );
-        }
     }
 
     #[test]
