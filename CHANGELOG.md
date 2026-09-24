@@ -6,37 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] — Per-site call rows, one edge count, one target per macro call
+
+This is a minor release: the graph gains a column (`CallSite.macro_arg_shape`), the
+responses gain fields (`call_site_target_count`, `analyze_codebase.graph`,
+`macro_sites_count`, `row_limit`), and `edge_count` is now defined without the
+per-site rows, so it reads lower than 0.12.0 on the same code.
+
 ### Fixed
 
-- The Rust macro table names only a callee that every form of the macro reaches
-  (#344). `println!` and `eprintln!` also listed `Arguments::new_v1`, an
-  internal the compiler no longer emits, and `assert!`, `debug_assert!`,
-  `panic!`, `todo!`, `unimplemented!` and `unreachable!` listed one
-  `core::panicking` function although the callee is `panic` or `panic_fmt` by
-  the arguments and the edition. Each callee was compared with the expansion of
-  rustc 1.93 to 1.98 and the std source of 1.95. `new_v1` is gone. The six
-  macros whose callee depends on the arguments have no target: a site of one is
-  an unresolved reference with the reason "callee depends on the arguments of
-  the macro", not a resolved edge to a guess. The list form of `vec!` keeps no
-  target, now with its own reason, "expansion calls compiler internals whose
-  paths change between versions". The four comparison asserts keep
-  `assert_failed`, which every form calls, and `debug_assert_ne!` gains its
-  entry. `resolution_rate` moves down on code that uses those macros, because
-  their sites were counted resolved before. The next resolve also deletes the
-  `StdlibSymbol` nodes that the purge of old macro rows leaves with no
-  relationship, so a graph written by an older build loses `new_v1` and the
-  old `panic` node; a node any edge still uses stays.
-- A macro that calls nothing is no longer an unresolved reference (#345).
-  `matches!`, `include_str!`, `include_bytes!`, `concat!`, `stringify!`, `env!`,
-  `option_env!`, `cfg!`, `line!`, `file!`, `column!` and `module_path!` expand to
-  a `match` or a literal. Their sites had no table entry and counted against
-  `resolution_rate`. They are now in neither `total_refs` nor `unresolved`, get
-  no edge, keep `is_resolved = false`, and are reported as `no_call_macro_sites`
-  in the `resolve_graph` result and the `analyze_codebase` `resolve` block. They
-  no longer count in `lsp_status.macro_sites_count`. A call written inside the
-  arguments (`matches!(f(x), ..)`) is still a call site of the enclosing function.
-
-- A macro call site now gets the one target its expansion calls, or none (#339).
+- The per-site call tables are now written (#335). `Calls_CallSite_Function`,
+  `Calls_CallSite_Method` and `Calls_CallSite_StdlibSymbol` were declared in the
+  schema but no writer existed, so a resolved `CallSite` had `is_resolved = true`
+  and no row naming its target. The static resolver, the macro-expansion pass and
+  the language-server pass now each write the per-site row beside the
+  definition-level `Calls_*` edge, with the same confidence and method. These
+  rows restate a resolution and are not counted in `resolve.total_edges`.
+  `get_context` leaves them out of `calls` and `called_by`, and a macro call site
+  that resolved now has `is_resolved` set. A bare call in Python is now resolved
+  by Python's scoping and never to a method (a module function that shares a
+  name with a method was dropped as ambiguous, and a call whose only same-named
+  symbol was a method got a false edge). The accuracy scorer counts a resolution
+  once, against the symbol-level edge.
+- `query_graph` now reports `truncated: true` when the row bound cut a result
+  (#334). A query with no `LIMIT` ran with `LIMIT 500` and returned 500 rows with
+  `total_count: 500` and `truncated: false`; only `limit_injected` hinted at the
+  cut, and no offset could reach row 501. The injected bound now reads one probe
+  row past the window, so a continuing result is reported and `next_offset` is
+  the end of the window. The response carries `row_limit: 500` whenever the bound
+  was injected, and `total_count` is a lower bound in that case.
+- A macro call site now gets the one target its expansion calls, or none (#339, #342).
   The macro layer wrote every target of an expansion as a call, whatever the
   receiver: `write!` on a `fmt::Formatter` also got `io::Write::write_fmt`,
   `writeln!` on a `BufWriter` also got `fmt::Write::write_fmt`, and `vec![0; n]`
@@ -79,7 +78,38 @@ adheres to [Semantic Versioning](https://semver.org/).
   index, and a bare name can still be placed wrongly, for example a `File` read
   as std because the file imports `std::fs::File`, when the source wrote
   `tokio::fs::File` in full. Re-index to get the qualified type.
-- `edge_count` no longer counts the per-call-site rows (#338). Since #335 filled
+- The Rust macro table names only a callee that every form of the macro reaches
+  (#344, #346). `println!` and `eprintln!` also listed `Arguments::new_v1`, an
+  internal the compiler no longer emits, and `assert!`, `debug_assert!`,
+  `panic!`, `todo!`, `unimplemented!` and `unreachable!` listed one
+  `core::panicking` function although the callee is `panic` or `panic_fmt` by
+  the arguments and the edition. Each callee was compared with the expansion of
+  rustc 1.93 to 1.98 and the std source of 1.95. `new_v1` is gone. The six
+  macros whose callee depends on the arguments have no target: a site of one is
+  an unresolved reference with the reason "callee depends on the arguments of
+  the macro", not a resolved edge to a guess. The list form of `vec!` keeps no
+  target, now with its own reason, "expansion calls compiler internals whose
+  paths change between versions". The four comparison asserts keep
+  `assert_failed`, which every form calls, and `debug_assert_ne!` gains its
+  entry. `resolution_rate` can move either way on the same code. It goes down
+  where a site that used to be resolved to a guess is now reported unresolved:
+  `panic!`, `todo!`, `unimplemented!`, `unreachable!`, `assert!`,
+  `debug_assert!`, a `write!` or `writeln!` whose destination type is not
+  determined, and a list `vec!`. It goes up where a macro that calls nothing
+  leaves the count (#345 below). The next resolve also deletes the
+  `StdlibSymbol` nodes that the purge of old macro rows leaves with no
+  relationship, so a graph written by an older build loses `new_v1` and the
+  old `panic` node; a node any edge still uses stays.
+- A macro that calls nothing is no longer an unresolved reference (#345, #346).
+  `matches!`, `include_str!`, `include_bytes!`, `concat!`, `stringify!`, `env!`,
+  `option_env!`, `cfg!`, `line!`, `file!`, `column!` and `module_path!` expand to
+  a `match` or a literal. Their sites had no table entry and counted against
+  `resolution_rate`. They are now in neither `total_refs` nor `unresolved`, get
+  no edge, keep `is_resolved = false`, and are reported as `no_call_macro_sites`
+  in the `resolve_graph` result and the `analyze_codebase` `resolve` block. They
+  no longer count in `lsp_status.macro_sites_count`. A call written inside the
+  arguments (`matches!(f(x), ..)`) is still a call site of the enclosing function.
+- `edge_count` no longer counts the per-call-site rows (#338, #341). Since #335 filled
   the `Calls_CallSite_*` tables, `index_status.edge_count` summed them and grew
   by about 3 percent with no new call in the code, while `analyze_codebase`
   reported an `index.edge_count` taken before resolve ran, so one graph gave two
@@ -128,6 +158,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   Closure parameters such as `i` are no longer emitted as call sites by the
   argument scan, which removes false caller edges to unrelated functions of the
   same name.
+
+### Changed
+
+- The README is rewritten around what this server does, with the operational
+  detail moved under `docs/` (#340). The changelog notes for 0.12.0 were
+  corrected (#333).
 
 ## [0.12.0] — Honest coverage for Rust builds; static receiver-call resolution; read-tool freshness receipt
 
