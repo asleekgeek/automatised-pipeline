@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 mod common;
+mod graph_accuracy_calls_scoring;
 mod graph_accuracy_receiver_calls;
 use common::TempDirExt;
 use graph_accuracy_receiver_calls::push_method_to_method_calls;
@@ -347,6 +348,9 @@ fn fixture_hash_py() -> Fixture {
 struct Observed {
     nodes: BTreeMap<String, String>, // qn -> label
     edges_by_kind: BTreeMap<String, BTreeSet<(String, String)>>, // kind -> {(from, to)}
+    /// `Calls_CallSite_*` rows as (caller, line, target) — see
+    /// graph_accuracy_calls_scoring.
+    per_site_calls: BTreeSet<graph_accuracy_calls_scoring::SiteTarget>,
 }
 
 /// Runs the real indexer + resolver over `fixture_root` into `graph_path`
@@ -471,8 +475,17 @@ fn print_populated_tables(table_counts: &BTreeMap<String, usize>) {
 fn collect_observed_edges(store: &GraphStore) -> BTreeMap<String, BTreeSet<(String, String)>> {
     let mut edges_by_kind: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
     let mut table_counts: BTreeMap<String, usize> = BTreeMap::new();
-    for (name, _from, _to) in REL_TABLES {
+    for (name, from, _to) in REL_TABLES {
         if name.contains("AstNode") {
+            continue;
+        }
+        // `Calls_CallSite_*` (issue #335) restate each resolved symbol-level
+        // `Calls_*` edge once per call site. The relaxed CallSite-sourced
+        // `Calls` expectations are already counted against the symbol-level
+        // edges, so folding the per-site rows into the same bucket would count
+        // one resolution twice. Their own contract (one row per resolved site,
+        // same target and provenance) is tests/callsite_target_rows_335.rs.
+        if *from == "CallSite" {
             continue;
         }
         fold_relation_table(store, name, &mut edges_by_kind, &mut table_counts);
@@ -486,6 +499,7 @@ fn index_fixture(fixture_root: &Path, graph_path: &Path) -> Observed {
     Observed {
         nodes: collect_observed_nodes(&store),
         edges_by_kind: collect_observed_edges(&store),
+        per_site_calls: graph_accuracy_calls_scoring::collect_per_site_calls(&store),
     }
 }
 
@@ -581,7 +595,9 @@ fn score_edges_by_kind(
 
     // Group expected by kind. For CallSite-targeting Defines edges and
     // CallSite-source Calls edges we relax matching (count-based) because
-    // the call-site QN suffix is producer-determined.
+    // the call-site QN suffix is producer-determined. `score_edges` then
+    // replaces the Calls score with the identity match against the per-site
+    // rows (graph_accuracy_calls_scoring, #335).
     let mut expected_by_kind: BTreeMap<&str, Vec<&ExpectedEdge>> = BTreeMap::new();
     for ee in expected {
         expected_by_kind.entry(ee.kind).or_default().push(ee);
@@ -731,6 +747,7 @@ fn print_diff(fixture: &Fixture, observed: &Observed) {
     print_observed_summary(fixture, observed);
     print_missing_nodes(fixture, observed);
     print_missing_edges(fixture, observed);
+    print_calls_mismatches(fixture, observed);
 }
 
 // ---------------------------------------------------------------------------
@@ -2057,9 +2074,18 @@ const PG_STORE_MEMORY_STORE_CLASS: ExpectedClassInput = ExpectedClassInput {
     ],
 };
 
-/// Post-build: resolver also emits cross-class/cross-kind edges that the
-/// builder's resolved_calls doesn't model directly. Adds them as relaxed
-/// CallSite-bearing expectations so the scorer counts them as TP.
+/// Post-build: cross-class/cross-kind calls the builder's resolved_calls
+/// doesn't model directly, as relaxed CallSite-bearing expectations.
+///
+/// All three Calls entries are real calls of the source, each checked
+/// against the file. `__init__` (line 111) calls the module-level
+/// `_get_database_url` (line 43, sole definition). `insert_memory` (line 343)
+/// and the static method `_now_iso` (line 321) call the bare `_now_iso()`,
+/// which Python binds to the module function (line 96), never to the
+/// same-named method: class scope does not reach method bodies (Python
+/// Language Reference §4.2.2). Until #335 the fixture listed only the 343
+/// call; count-based matching hid the two missing annotations and the
+/// resolver's drop of the `_now_iso()` calls as ambiguous.
 fn push_pg_store_cross_kind_edges(f: &mut Fixture) {
     f.edges.push(ExpectedEdge {
         kind: "Uses",
@@ -2073,6 +2099,18 @@ fn push_pg_store_cross_kind_edges(f: &mut Fixture) {
         from_qn:
             "infrastructure/pg_store.py::PgMemoryStore::insert_memory::callsite::__resolved__::0"
                 .to_string(),
+        to_qn: "infrastructure/pg_store.py::_now_iso".to_string(),
+    });
+    f.edges.push(ExpectedEdge {
+        kind: "Calls",
+        from_qn: "infrastructure/pg_store.py::PgMemoryStore::__init__::callsite::__resolved__::1"
+            .to_string(),
+        to_qn: "infrastructure/pg_store.py::_get_database_url".to_string(),
+    });
+    f.edges.push(ExpectedEdge {
+        kind: "Calls",
+        from_qn: "infrastructure/pg_store.py::PgMemoryStore::_now_iso::callsite::__resolved__::2"
+            .to_string(),
         to_qn: "infrastructure/pg_store.py::_now_iso".to_string(),
     });
 }
@@ -3618,6 +3656,65 @@ fn assert_regression_floors(fixture: &Fixture, measured: &F1Scores, floors: &Flo
     );
 }
 
+/// Scores every kind, `Calls` by identity against the per-site rows
+/// (graph_accuracy_calls_scoring) and the rest by `score_edges_by_kind`.
+/// Asserts first that the per-site rows restate the symbol-level `Calls`
+/// edges pair for pair (#335): each resolved call site writes both.
+fn score_edges(expected: &[ExpectedEdge], observed: &Observed) -> BTreeMap<String, Score> {
+    let symbol_calls = observed
+        .edges_by_kind
+        .get("Calls")
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        graph_accuracy_calls_scoring::per_site_pairs(&observed.per_site_calls),
+        symbol_calls,
+        "every symbol-level Calls edge must have its per-site rows, and no other"
+    );
+    let mut scores = score_edges_by_kind(expected, &observed.edges_by_kind);
+    if let Some(m) = match_expected_calls(expected, observed) {
+        scores.insert("Calls".to_string(), m.score());
+    }
+    scores
+}
+
+/// The identity match of the fixture's `Calls` expectations, or `None` when
+/// it expects no call (then `score_edges_by_kind` scores any observed call
+/// as a false positive of an unexpected kind).
+fn match_expected_calls(
+    expected: &[ExpectedEdge],
+    observed: &Observed,
+) -> Option<graph_accuracy_calls_scoring::CallsMatch> {
+    let calls: Vec<&ExpectedEdge> = expected.iter().filter(|e| e.kind == "Calls").collect();
+    if calls.is_empty() {
+        return None;
+    }
+    let symbol_calls = observed
+        .edges_by_kind
+        .get("Calls")
+        .cloned()
+        .unwrap_or_default();
+    Some(graph_accuracy_calls_scoring::match_calls(
+        &calls,
+        &symbol_calls,
+        &observed.per_site_calls,
+    ))
+}
+
+/// Names each `Calls` miss and surplus of the identity match: the strict
+/// diagnostic above skips every CallSite-sourced expectation.
+fn print_calls_mismatches(fixture: &Fixture, observed: &Observed) {
+    let Some(m) = match_expected_calls(&fixture.edges, observed) else {
+        return;
+    };
+    for (from, to) in &m.missing {
+        println!("    MISSING call  {from} -> {to}");
+    }
+    for (from, to) in &m.unexpected {
+        println!("    UNEXPECTED call  {from} -> {to}");
+    }
+}
+
 fn run_fixture(test_id: &str, fixture: Fixture, floors: Floors) {
     let (tmp, graph_path) = stage_fixture_source(test_id, &fixture);
     let observed = index_fixture(&tmp, &graph_path);
@@ -3625,7 +3722,7 @@ fn run_fixture(test_id: &str, fixture: Fixture, floors: Floors) {
     print_diff(&fixture, &observed);
 
     let node_score = score_nodes(&fixture.nodes, &observed.nodes);
-    let edge_scores = score_edges_by_kind(&fixture.edges, &observed.edges_by_kind);
+    let edge_scores = score_edges(&fixture.edges, &observed);
     print_scores(&node_score, &edge_scores);
 
     let measured = F1Scores {

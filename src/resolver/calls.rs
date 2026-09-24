@@ -5,7 +5,7 @@
 // resolution types/helpers exactly as when this lived in one module.
 
 use super::*;
-use crate::graph_store::call_rel_table;
+use crate::graph_store::{call_rel_table, call_site_rel_table};
 
 // ---------------------------------------------------------------------------
 // Phase 2: Call resolution
@@ -232,13 +232,14 @@ fn stage_call_edge(
     // All three `AddOutcome` variants mean the reference resolved to a real
     // target (see `AddOutcome` doc comment); they differ only in whether a
     // DB write is queued.
-    buf.add(
-        &rel,
-        site.caller_qn,
-        &target.id,
-        matched.confidence,
-        ambiguity_policy::resolution_label(matched.evidence),
-    );
+    let method = ambiguity_policy::resolution_label(matched.evidence);
+    buf.add(&rel, site.caller_qn, &target.id, matched.confidence, method);
+    // The per-site row (issue #335) records the same resolution at call-site
+    // granularity. It is not a second reference: `tally` stays untouched so
+    // `total_edges` keeps counting resolved references, not rows.
+    if let Some(site_rel) = call_site_rel_table(&target.label) {
+        buf.add(site_rel, site.cs_id, &target.id, matched.confidence, method);
+    }
     *tally.resolved += 1;
 }
 
@@ -332,12 +333,13 @@ fn rust_local_receiver_gate(
 /// `infrastructure/pg_store.py` has a bare `_now_iso()` call inside a
 /// method, name-ambiguous between the module-level function and an
 /// unrelated same-named method; Python's own scoping resolves it to the
-/// function, but neither candidate carries evidence our tiers model, so
-/// tiebreaking picked the wrong (method) target and introduced 2 false
-/// Calls edges (Calls F1 dropped 1.0 -> 0.5). Dropping the edge (labeled
-/// `ambiguous (N candidates)`) matches the pre-issue-#30 unqualified
-/// behavior exactly, so no real edges are lost — only the mislabeling and
-/// the qualified-path's arbitrary-`candidates[0]` guess are fixed.
+/// function, and at the time neither candidate carried evidence our tiers
+/// modelled, so tiebreaking picked the wrong (method) target and introduced
+/// 2 false Calls edges (Calls F1 dropped 1.0 -> 0.5). Dropping the edge
+/// (labeled `ambiguous (N candidates)`) kept precision but did lose that
+/// real edge; since #335 `visible_candidates` applies Python's scoping (a
+/// bare call never names a method), so the method is no longer a candidate
+/// and the call resolves to the function without any tiebreak.
 /// The tiebreaking variant (`resolve_deterministic`) was removed from
 /// ambiguity_policy as dead code (PR #38); recover it from git history if
 /// a future caller prefers recall over precision for its own ambiguity
@@ -385,29 +387,55 @@ fn resolve_single_call(
                 ctx.file_imports.get(file_id).cloned().unwrap_or_default(),
             )
         };
-    let candidates = match ctx.idx.by_name.get(last) {
-        Some(c) => c,
-        None => return PolicyResolution::NotFound,
+    let Some(candidates) = ctx.idx.by_name.get(last) else {
+        return PolicyResolution::NotFound;
     };
-    // Rust block-scoped fn items (issue #327): a nested fn shadows every
-    // other candidate inside its enclosing callable and is invisible outside.
-    let scoped: Vec<SymbolEntry>;
-    let candidates: &[SymbolEntry] = if ctx.provider.language() == "rust" {
-        scoped =
-            nested_scope::visible_candidates(ctx.idx, candidates, site.caller_qn, last != callee);
-        &scoped
-    } else {
-        candidates
-    };
+    let candidates = visible_candidates(ctx, site, candidates, last != callee);
     let ev = crate::call_evidence::CallEvidence {
         imports_hint: &imports_hint,
         caller_file: file_id,
     };
     crate::call_evidence::resolve_two_pass(
-        candidates,
+        &candidates,
         |e: &SymbolEntry| e.qualified_name.clone(),
         |e: &SymbolEntry| extract_file_prefix_or_self(&e.qualified_name),
         ctx.provider,
         &ev,
+    )
+}
+
+/// The candidates a call at `site` can actually name under the caller
+/// language's scoping rules, before any evidence is weighed.
+///
+/// Rust block-scoped fn items (issue #327): a nested fn shadows every other
+/// candidate inside its enclosing callable and is invisible outside. Python
+/// (`bare_call_binds_methods == false`): an unqualified call never names a
+/// method, so a same-named method is not a rival of the module function it
+/// really calls (pg_store.py `_now_iso()`, which the #30 policy used to drop
+/// as ambiguous, #335) and is never a target on its own.
+fn visible_candidates<'a>(
+    ctx: &ResolveContext,
+    site: &CallSite,
+    candidates: &'a [SymbolEntry],
+    qualified: bool,
+) -> std::borrow::Cow<'a, [SymbolEntry]> {
+    use std::borrow::Cow;
+    if ctx.provider.language() == "rust" {
+        return Cow::Owned(nested_scope::visible_candidates(
+            ctx.idx,
+            candidates,
+            site.caller_qn,
+            qualified,
+        ));
+    }
+    if qualified || ctx.provider.bare_call_binds_methods() {
+        return Cow::Borrowed(candidates);
+    }
+    Cow::Owned(
+        candidates
+            .iter()
+            .filter(|c| c.label != "Method")
+            .cloned()
+            .collect(),
     )
 }
