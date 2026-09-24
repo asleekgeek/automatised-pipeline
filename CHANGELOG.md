@@ -8,6 +8,34 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The Rust macro table names only a callee that every form of the macro reaches
+  (#344). `println!` and `eprintln!` also listed `Arguments::new_v1`, an
+  internal the compiler no longer emits, and `assert!`, `debug_assert!`,
+  `panic!`, `todo!`, `unimplemented!` and `unreachable!` listed one
+  `core::panicking` function although the callee is `panic` or `panic_fmt` by
+  the arguments and the edition. Each callee was compared with the expansion of
+  rustc 1.93 to 1.98 and the std source of 1.95. `new_v1` is gone. The six
+  macros whose callee depends on the arguments have no target: a site of one is
+  an unresolved reference with the reason "callee depends on the arguments of
+  the macro", not a resolved edge to a guess. The list form of `vec!` keeps no
+  target, now with its own reason, "expansion calls compiler internals whose
+  paths change between versions". The four comparison asserts keep
+  `assert_failed`, which every form calls, and `debug_assert_ne!` gains its
+  entry. `resolution_rate` moves down on code that uses those macros, because
+  their sites were counted resolved before. The next resolve also deletes the
+  `StdlibSymbol` nodes that the purge of old macro rows leaves with no
+  relationship, so a graph written by an older build loses `new_v1` and the
+  old `panic` node; a node any edge still uses stays.
+- A macro that calls nothing is no longer an unresolved reference (#345).
+  `matches!`, `include_str!`, `include_bytes!`, `concat!`, `stringify!`, `env!`,
+  `option_env!`, `cfg!`, `line!`, `file!`, `column!` and `module_path!` expand to
+  a `match` or a literal. Their sites had no table entry and counted against
+  `resolution_rate`. They are now in neither `total_refs` nor `unresolved`, get
+  no edge, keep `is_resolved = false`, and are reported as `no_call_macro_sites`
+  in the `resolve_graph` result and the `analyze_codebase` `resolve` block. They
+  no longer count in `lsp_status.macro_sites_count`. A call written inside the
+  arguments (`matches!(f(x), ..)`) is still a call site of the enclosing function.
+
 - A macro call site now gets the one target its expansion calls, or none (#339).
   The macro layer wrote every target of an expansion as a call, whatever the
   receiver: `write!` on a `fmt::Formatter` also got `io::Write::write_fmt`,
@@ -36,7 +64,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   `Vec::new` and `vec![x; n]` is `vec::from_elem`; a `vec![a, b]` list has no
   stable target. A site with no determined target gets no edge and no per-site
   row, stays unresolved and is reported as `destination type not determined` or
-  `no stable target for this expansion`. Every resolve first deletes the
+  `callee depends on the arguments of the macro` or
+  `expansion calls compiler internals whose paths change between versions`.
+  Every resolve first deletes the
   macro-expansion rows of earlier runs, so a graph written by an older build is
   corrected on its next resolve. Macro sites are no longer sent to the language
   server, which answered with the macro's own definition; `lsp_resolve` and
