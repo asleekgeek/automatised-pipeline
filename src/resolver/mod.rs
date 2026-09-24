@@ -230,6 +230,9 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
     let start = Instant::now();
     let idx = build_symbol_index(store)?;
     let file_imports = build_file_import_map(store)?;
+    // Before the existing edges are read: a macro row from an earlier run
+    // must not count as already resolved (issue #339).
+    store.reset_macro_expansion()?;
     let existing = load_existing_edges(store)?;
     let mut buf = EdgeBuffer::new(existing);
 
@@ -425,6 +428,19 @@ pub(crate) fn extract_caller_from_callsite_id(cs_id: &str) -> String {
     } else {
         cs_id.to_string()
     }
+}
+
+/// True when `file` defines a type (struct, enum, trait or alias) of that
+/// name. The macro pass resolves a `write!` destination's type in the scope of
+/// the file that holds the site, so a namesake defined elsewhere in the
+/// repository does not count (issue #339).
+fn is_type_defined_in_file(idx: &SymbolIndex, file: &str, name: &str) -> bool {
+    idx.by_name.get(name).is_some_and(|entries| {
+        entries.iter().any(|e| {
+            matches!(e.label.as_str(), "Struct" | "Enum" | "Trait" | "TypeAlias")
+                && extract_file_prefix_or_self(&e.qualified_name) == file
+        })
+    })
 }
 
 fn determine_caller_label(idx: &SymbolIndex, caller_qn: &str) -> String {

@@ -44,7 +44,8 @@ pub(super) fn resolve_calls(
         // lookup for every macro call, double-counting the same physical
         // CallSite into both phases' total_refs — the root cause of the
         // >1.0 / undercounted-denominator half of issue #28.
-        if callee.ends_with('!') {
+        // A Rust macro only: Ruby keeps the `!` of `save!` in its callee name.
+        if crate::graph_store::is_rust_macro_site(callee, &row[2]) {
             continue;
         }
         total += 1;

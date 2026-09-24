@@ -59,6 +59,34 @@ pub(super) fn bound_names_in_scope(source: &str, call_node: Node) -> HashSet<Str
     names
 }
 
+/// True when a `use` declaration inside the function that encloses `node`
+/// mentions any `::` segment of `path` as a whole word. The index records the
+/// `use` items of files and modules but not those of function bodies, so such
+/// a declaration may rebind the name in a way the resolver cannot see.
+/// source: measured on tree-sitter-rust 0.24.2 through `parse_file` (issue #339).
+pub(super) fn scope_use_mentions(source: &str, node: Node, path: &str) -> bool {
+    let Some(scope) = enclosing_scope(node) else {
+        return false;
+    };
+    let segments: Vec<&str> = path.split("::").collect();
+    let mut stack = vec![scope];
+    while let Some(current) = stack.pop() {
+        if current.kind() == "use_declaration" {
+            let text = node_text(source, current);
+            let mentioned = text
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|word| segments.contains(&word));
+            if mentioned {
+                return true;
+            }
+            continue;
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.children(&mut cursor));
+    }
+    false
+}
+
 /// The nearest enclosing `function_item`, `call_node` itself included; when
 /// none encloses it, the outermost enclosing closure.
 fn enclosing_scope(call_node: Node) -> Option<Node> {
@@ -164,6 +192,17 @@ const NAME_FIELD: &str = "name";
 /// initializer is simply absent from the map — never a `None` value, so
 /// callers can use plain `.get(name)`.
 pub(super) fn typed_local_bindings(source: &str, call_node: Node) -> HashMap<String, String> {
+    typed_local_map(source, call_node, false)
+}
+
+/// `typed_local_bindings` with each type as written, path included
+/// (`fmt::Formatter`, `std::fs::File`) instead of its last segment. The macro
+/// pass needs the qualifier to tell a std type from a namesake (issue #339).
+pub(super) fn typed_local_paths(source: &str, call_node: Node) -> HashMap<String, String> {
+    typed_local_map(source, call_node, true)
+}
+
+fn typed_local_map(source: &str, call_node: Node, full_path: bool) -> HashMap<String, String> {
     let mut counts: HashMap<String, u32> = HashMap::new();
     let mut typed: HashMap<String, String> = HashMap::new();
     let Some(scope) = enclosing_scope(call_node) else {
@@ -176,7 +215,7 @@ pub(super) fn typed_local_bindings(source: &str, call_node: Node) -> HashMap<Str
             *counts.entry(name.clone()).or_insert(0) += 1;
         }
         if let Some(simple_name) = simple_identifier_name(source, pattern) {
-            if let Some(ty) = binding_declared_type(source, node) {
+            if let Some(ty) = binding_declared_type(source, node, full_path) {
                 typed.insert(simple_name, ty);
             }
         }
@@ -212,7 +251,7 @@ fn simple_identifier_name(source: &str, pattern: Node) -> Option<String> {
 /// The simplified type ONE `parameter`/`let_declaration` binding declares or
 /// constructs, per plan §2.2 palier 3's three concrete forms:
 ///   1. `x: [&][mut] T` (parameter's required `type` field, or a `let`'s
-///      optional one) — `type_last_segment` strips the reference and any
+///      optional one) — `type_name` strips the reference and any
 ///      generic-parameter list.
 ///   2. `let x = T::assoc(...)` — no `type` field; the initializer's callee
 ///      must be a `scoped_identifier` (`T::assoc`, or `mod::T::assoc`), and
@@ -221,23 +260,87 @@ fn simple_identifier_name(source: &str, pattern: Node) -> Option<String> {
 /// A bare `let x = make();` (callee has no `::`) or any other initializer
 /// shape (`let x = 5;`, `let x = other_call();` with a non-scoped callee)
 /// returns `None` — "un initialiseur non typable", plan §2.2.
-fn binding_declared_type(source: &str, binding_node: Node) -> Option<String> {
+fn binding_declared_type(source: &str, binding_node: Node, full_path: bool) -> Option<String> {
     if let Some(ty) = binding_node.child_by_field_name(TYPE_FIELD) {
-        return type_last_segment(source, ty);
+        return type_name(source, ty, full_path);
     }
     if binding_node.kind() != "let_declaration" {
         return None;
     }
     let value = binding_node.child_by_field_name(VALUE_FIELD)?;
-    if value.kind() != "call_expression" {
-        return None;
-    }
-    let func = value.child_by_field_name(FUNCTION_FIELD)?;
+    let (call, unwrapped) = constructor_call(source, value, full_path)?;
+    let func = call.child_by_field_name(FUNCTION_FIELD)?;
     if func.kind() != "scoped_identifier" {
         return None;
     }
+    if unwrapped && !is_known_constructor(source, func) {
+        return None;
+    }
     let path = func.child_by_field_name(PATH_FIELD)?;
-    expr_path_last_segment(source, path)
+    expr_path_name(source, path, full_path)
+}
+
+// source: std constructors that return `Self`, or `Result<Self, _>` through
+// `io::Result`: `File::create`, `File::open`, `BufWriter::new`,
+// `Vec::with_capacity`, `TcpStream::connect` (https://doc.rust-lang.org/std/).
+const KNOWN_CONSTRUCTORS: [&str; 6] = [
+    "new",
+    "create",
+    "create_new",
+    "open",
+    "with_capacity",
+    "connect",
+];
+// source: `Result::unwrap` and `Result::expect` return the `Ok` value, the
+// same type `?` yields.
+const RESULT_UNWRAPPERS: [&str; 2] = ["unwrap", "expect"];
+
+/// The call a `let` initialiser is. With `through_results` (the macro
+/// destination lookup, issue #339) it looks through `?`, `.unwrap()` and
+/// `.expect(..)` and reports that it did; any other wrapper, `x.map(..)` for
+/// one, ends the search.
+fn constructor_call<'t>(
+    source: &str,
+    value: Node<'t>,
+    through_results: bool,
+) -> Option<(Node<'t>, bool)> {
+    let mut node = value;
+    let mut unwrapped = false;
+    loop {
+        let inner = match node.kind() {
+            "call_expression" if through_results => unwrapped_receiver(source, node),
+            "try_expression" if through_results => Some(node.named_child(0)?),
+            "call_expression" => return Some((node, unwrapped)),
+            _ => return None,
+        };
+        match inner {
+            Some(next) => {
+                node = next;
+                unwrapped = true;
+            }
+            None => return Some((node, unwrapped)),
+        }
+    }
+}
+
+/// `x` of `x.unwrap()` or `x.expect(..)`.
+fn unwrapped_receiver<'t>(source: &str, call: Node<'t>) -> Option<Node<'t>> {
+    let function = call.child_by_field_name(FUNCTION_FIELD)?;
+    if function.kind() != "field_expression" {
+        return None;
+    }
+    let field = node_text(source, function.child_by_field_name("field")?);
+    if !RESULT_UNWRAPPERS.contains(&field.as_str()) {
+        return None;
+    }
+    function.child_by_field_name(VALUE_FIELD)
+}
+
+/// True when the associated function of `T::assoc` is a known constructor.
+fn is_known_constructor(source: &str, scoped: Node) -> bool {
+    scoped
+        .child_by_field_name(NAME_FIELD)
+        .is_some_and(|n| KNOWN_CONSTRUCTORS.contains(&node_text(source, n).as_str()))
 }
 
 /// A TYPE expression's last segment with generics stripped: unwraps
@@ -246,12 +349,13 @@ fn binding_declared_type(source: &str, binding_node: Node) -> Option<String> {
 /// `scoped_type_identifier`'s own `name` field (`mod::Type` -> `Type`).
 /// Anything else (tuple types, slice/array types, `dyn Trait`, primitive
 /// types, ...) is not a plain named type this rule covers: `None`.
-fn type_last_segment(source: &str, node: Node) -> Option<String> {
+fn type_name(source: &str, node: Node, full_path: bool) -> Option<String> {
     match node.kind() {
         "reference_type" | "generic_type" => node
             .child_by_field_name(TYPE_FIELD)
-            .and_then(|n| type_last_segment(source, n)),
+            .and_then(|n| type_name(source, n, full_path)),
         "type_identifier" => Some(node_text(source, node)),
+        "scoped_type_identifier" if full_path => Some(node_text(source, node)),
         "scoped_type_identifier" => node
             .child_by_field_name(NAME_FIELD)
             .map(|n| node_text(source, n)),
@@ -259,22 +363,23 @@ fn type_last_segment(source: &str, node: Node) -> Option<String> {
     }
 }
 
-/// An EXPRESSION path's last segment (mirrors `type_last_segment` for the
+/// An EXPRESSION path's last segment (mirrors `type_name` for the
 /// `T::assoc(...)` constructor-call form, whose callee is parsed as an
 /// expression path, not a type path): a bare `identifier` (`T::assoc`'s
 /// path IS `T`) verbatim, a `scoped_identifier`'s own `name` field
 /// (`mod::T::assoc`'s path is itself `mod::T`, whose last segment is `T`),
 /// or a `generic_type` path's `type` field recursively (turbofish-shaped
 /// paths, rare in this position). Anything else: `None`.
-fn expr_path_last_segment(source: &str, node: Node) -> Option<String> {
+fn expr_path_name(source: &str, node: Node, full_path: bool) -> Option<String> {
     match node.kind() {
         "identifier" => Some(node_text(source, node)),
+        "scoped_identifier" if full_path => Some(node_text(source, node)),
         "scoped_identifier" => node
             .child_by_field_name(NAME_FIELD)
             .map(|n| node_text(source, n)),
         "generic_type" => node
             .child_by_field_name(TYPE_FIELD)
-            .and_then(|n| expr_path_last_segment(source, n)),
+            .and_then(|n| expr_path_name(source, n, full_path)),
         _ => None,
     }
 }
