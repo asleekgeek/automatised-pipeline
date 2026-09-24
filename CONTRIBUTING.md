@@ -14,7 +14,7 @@ LadybugDB (a property-graph engine the project builds from C++ source),
 resolves cross-file imports + calls, detects functional communities via
 Louvain + C2 repair, traces execution flows, and exposes hybrid
 BM25 + sparse TF-IDF + RRF search. Read-only intelligence — never
-writes code, never opens PRs. See [README](README.md) for the full
+writes code, never opens PRs. See [docs/architecture.md](docs/architecture.md) for the
 architecture.
 
 ---
@@ -43,9 +43,9 @@ Code automatically when you open the directory.
 you develop against a marketplace-installed plugin (so you can dogfood the
 exact install path other users hit), the plugin cache's binary digest pin
 will reject your rebuilds unless you opt out with
-`AI_ARCHITECT_SOURCE_CHECKOUT=1` — see [README §Developer escape
-hatch](README.md#developer-escape-hatch-running-a-local-dev-build-in-place-of-the-release)
-for the two accepted checkout shapes, what the flag does and does not skip,
+`AI_ARCHITECT_SOURCE_CHECKOUT=1`. See [docs/install.md, developer escape
+hatch](docs/install.md#developer-escape-hatch-running-a-local-dev-build-in-place-of-the-release)
+for the two accepted checkout layouts, what the flag skips and keeps,
 and the non-interactive-shell gotcha (`~/.zshenv`, not `~/.zshrc`).
 
 ---
@@ -101,8 +101,8 @@ Each new tool must:
 4. **Have an integration test** that exercises the full stdio path
    (request envelope → JSON-RPC frame → handler → response). Unit tests
    alone are insufficient.
-5. **Be documented in the README's tool table** + the relevant pipeline
-   stage.
+5. **Be documented in the README's tool table** (`## 26 MCP Tools`), which
+   `scripts/check_doc_claims.py` checks by name.
 
 Reference: look at `src/handlers/health_check.rs` for the simplest tool
 shape, `src/handlers/index_codebase.rs` for the canonical heavy-lifting
