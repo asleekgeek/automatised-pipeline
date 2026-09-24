@@ -8,6 +8,53 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A Rust receiver initialised by a free function is now resolved statically
+  (#348, #349). `let s = make(); s.answer(1)` left the call unresolved although
+  `fn make() -> Set` names the type, and so did the `Option` forms
+  `let Some(s) = build() else { .. }` and `build().expect(..)`. The parser now
+  reads the return type of the free function of the same file that initialised
+  the local, and the resolver binds the call at a new tier,
+  `resolution_method: "receiver-return-type"` at 0.85, one step below
+  `"receiver-local-binding"` (0.87). An `Option` or `Result` is unwrapped only
+  through `let Some(..)` or `let Ok(..)` with an `else`, `.expect(..)`,
+  `.unwrap()` or `?`. It declines on doubt: two functions of the name, a `use`,
+  tuple struct, `const` or `static` of that name, a local of that name, a
+  generic, `impl Trait` or `dyn Trait` return, a return type with a path or that
+  is a `type` alias or is renamed by `use x::Real as Local`, or a name bound more
+  than once in the function all leave the call unresolved. "Bound more than
+  once" counts every form: `let`, parameters, closure parameters, `if let`,
+  `while let`, `match` arms, `for` patterns, names a macro may bind, and a
+  `const`, `static`, const generic or `use` of the name; a `let` binds only in
+  its own block and after it. The same count now applies to a typed parameter or
+  typed `let`, which a pattern rebinding the name used to leave typed
+  (`let s: Set = ..; if let Some(s) = o { s.m() }` got an edge to `Set::m`).
+  The name of a return type must be shown by the file, in the module of the
+  function, as Rust resolves it: a struct, enum or union of that name defined in
+  that module, an explicit `use` of it there, or only `use super::*;` globs
+  leading to one of those in the parent module. An explicit `use` binds the
+  name only by the last segment of its path or the leaf of its list
+  (`use Set::{A, B};` and `use ext::Set::Variant;` do not), and is trusted only
+  with evidence from the repository: a path starting with `crate`, `self` or
+  `super`, or with the name of a library crate of the workspace as
+  `cargo metadata --no-deps` reports it (`[lib] name` honoured, hyphens as
+  underscores, every workspace member). Any other `use` of a path outside the
+  repository, a repository without a readable `Cargo.toml`, and a graph indexed
+  by an older build give no edge. A crate of the repository that re-exports a
+  foreign type, a glob import and `extern crate x as y;` are not seen. A glob of
+  another path (`use a::*;`, `use a::{b::*, c};`, `use crate::x::*;`), no import
+  at all, a homonym defined only in a nested module or at the file root for a
+  function in `mod m`, and `super::*` at the root all decline, since the name
+  may come from somewhere the file does not show and the lookup by last segment
+  would pick any repository type of that name. The callee must be in the same
+  file; one in another file still waits for the language server. `CallSite`
+  gains a column, `receiver_hint_via`: `return-type` for such a hint, or
+  `return-type-import:<crate>` while the crate of its `use` is not yet shown to
+  belong to the repository (the indexer promotes it, the resolver declines it
+  otherwise), and empty for a hint written at the binding; a graph written by
+  an older build reads it as empty. On dy-wcet v4.1.6 the static run resolves 96
+  of the 99 `response_of` sites instead of 82, with no wrong target, and all 43
+  hints it adds pass the crate evidence (the package is `dy-wcet`, imported as
+  `dy_wcet`).
 - The release workflow no longer fails after a successful registry publish (v0.13.0).
   The last step checked the MCP Registry once, seconds after `mcp-publisher publish`,
   and the registry answered HTTP 500 to that single request: the empty body broke the

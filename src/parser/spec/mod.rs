@@ -29,10 +29,14 @@ mod registry;
 mod ruby;
 mod rust;
 mod rust_call_site;
+mod rust_item_binds;
+mod rust_macro_binds;
 mod rust_macro_calls;
 mod rust_macro_site;
 mod rust_receiver;
+mod rust_return_type;
 mod rust_scope;
+mod rust_type_scope;
 mod shallow;
 mod swift;
 mod typescript;
@@ -102,6 +106,10 @@ mod rust_parity_corpus;
 mod rust_parity_tests;
 #[cfg(test)]
 mod rust_receiver_tests;
+#[cfg(test)]
+mod rust_return_type_rebind_tests;
+#[cfg(test)]
+mod rust_return_type_tests;
 #[cfg(test)]
 mod rust_walker_tests;
 #[cfg(test)]

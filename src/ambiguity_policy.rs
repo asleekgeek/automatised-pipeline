@@ -54,6 +54,18 @@ pub enum Evidence {
     /// 6). source: ADR-<pending> carries the rationale (coordinator note
     /// 2026-09-09: wiki_adr unavailable this session, content in PR body).
     ReceiverLocalBinding,
+    /// A Rust local-variable receiver whose type is not written at its
+    /// binding but read off the declared return type of the free function
+    /// that initialised it (`let s = make();` with `fn make() -> Set`), also
+    /// through the explicit unwrapping forms of an `Option` or `Result`
+    /// (`let Some(s) = build() else { .. }`, `.expect(..)`, `.unwrap()`, `?`).
+    /// One inference step beyond `ReceiverLocalBinding`, which reads a type
+    /// written at the binding itself: the callee is found by name, in the
+    /// file, exactly once, then its signature is read. Produced by
+    /// `resolver::receiver::resolve_local_receiver_bound`, whose result the
+    /// call gate relabels when the parser marked the hint as return-type
+    /// derived (issues #348 and #349).
+    ReceiverReturnType,
     /// Exactly one candidate's qualified name is defined in the caller's
     /// own file.
     SameFileUnique,
@@ -83,6 +95,17 @@ pub fn confidence_for(evidence: Evidence) -> f64 {
         Evidence::ReceiverBound => 0.93,
         Evidence::ImportMatch => 0.9,
         Evidence::ReceiverLocalBinding => 0.87,
+        // source: issues #348 and #349, measured and not derived. On dy-wcet
+        // v4.1.6 (statics only) the tier added 43 per-site rows, none of the
+        // existing rows changed, each to the target the language-server run of
+        // the official 0.13.0 binary names for that site (an earlier
+        // measurement, checked site by site). That supports a tier close to the
+        // local-binding one (0.87), which reads a type written at the binding,
+        // and the extra inference step (the callee's signature is read, not the
+        // binding) puts it below. It ties `SameFileUnique` at 0.85; the two
+        // never compete for one site, because this tier applies only to a
+        // receiver call (`x.m()`) and that one to a bare-name lookup.
+        Evidence::ReceiverReturnType => 0.85,
         Evidence::SameFileUnique => 0.85,
         Evidence::PackageProximity => 0.7,
         // source: issue #339 — the macro tiers sit at or below the
@@ -178,6 +201,7 @@ pub fn resolution_label(evidence: Evidence) -> &'static str {
         Evidence::ReceiverBound => "receiver-type",
         Evidence::ImportMatch => "import-scope-lookup",
         Evidence::ReceiverLocalBinding => "receiver-local-binding",
+        Evidence::ReceiverReturnType => "receiver-return-type",
         Evidence::SameFileUnique => "same-file-unique",
         Evidence::PackageProximity => "package-proximity",
         // source: stages/stage-3b-v2.md §5 Layer 4 — the macro layer's own

@@ -25,6 +25,17 @@ const CLOSURE_KIND: &str = "closure_expression";
 /// `let_declaration` both declare a required `pattern` field).
 const BINDING_KINDS: [&str; 2] = ["parameter", "let_declaration"];
 
+/// Node kinds that bind names through a `pattern` field in addition to
+/// `BINDING_KINDS`: `if let` / `while let` (`let_condition`), a `match` arm and
+/// a `for` loop. Counted only where a name must be bound EXACTLY ONCE
+/// (`typed_local_map`, `once_bound_bindings`), so that a name rebound by one of
+/// them cannot keep the type of an earlier binding. `bound_names_in_scope`
+/// keeps its narrower set: adding names there would change which by-value
+/// arguments count as function references.
+/// source: tree-sitter-rust 0.24.2 src/node-types.json (`let_condition`,
+/// `match_arm` and `for_expression` each declare a `pattern` field).
+const EXTRA_BINDING_KINDS: [&str; 3] = ["let_condition", "match_arm", "for_expression"];
+
 /// A closure's parameter list. Its children are `parameter` (typed, `|x: T|`,
 /// already a `BINDING_KINDS` node) or a bare `_pattern` (untyped, `|x|`),
 /// which has no `pattern` field because it IS the pattern.
@@ -52,7 +63,7 @@ const BINDING_LEAF_KINDS: [&str; 2] = ["identifier", "shorthand_field_identifier
 pub(super) fn bound_names_in_scope(source: &str, call_node: Node) -> HashSet<String> {
     let mut names = HashSet::new();
     if let Some(scope) = enclosing_scope(call_node) {
-        for (_, pattern) in binding_patterns(scope) {
+        for (_, pattern) in binding_patterns(scope, false) {
             collect_identifiers(source, pattern, &mut names);
         }
     }
@@ -106,11 +117,13 @@ fn enclosing_scope(call_node: Node) -> Option<Node> {
 /// Every `(declaring node, pattern)` pair under `scope`: a `parameter` or
 /// `let_declaration` with its `pattern` field, and each untyped closure
 /// parameter, which is its own declaring node and pattern.
-fn binding_patterns(scope: Node) -> Vec<(Node, Node)> {
+fn binding_patterns(scope: Node, every_form: bool) -> Vec<(Node, Node)> {
     let mut out = Vec::new();
     let mut stack = vec![scope];
     while let Some(node) = stack.pop() {
-        if BINDING_KINDS.contains(&node.kind()) {
+        if BINDING_KINDS.contains(&node.kind())
+            || (every_form && EXTRA_BINDING_KINDS.contains(&node.kind()))
+        {
             if let Some(pattern) = node.child_by_field_name(PATTERN_FIELD) {
                 out.push((node, pattern));
             }
@@ -208,22 +221,72 @@ fn typed_local_map(source: &str, call_node: Node, full_path: bool) -> HashMap<St
     let Some(scope) = enclosing_scope(call_node) else {
         return HashMap::new();
     };
-    for (node, pattern) in binding_patterns(scope) {
+    for (node, pattern) in binding_patterns(scope, true) {
         let mut names = HashSet::new();
         collect_identifiers(source, pattern, &mut names);
         for name in &names {
             *counts.entry(name.clone()).or_insert(0) += 1;
         }
-        if let Some(simple_name) = simple_identifier_name(source, pattern) {
+        let reaches = node.kind() != "let_declaration"
+            || super::rust_item_binds::declaration_reaches(node, call_node);
+        if let Some(simple_name) = simple_identifier_name(source, pattern).filter(|_| reaches) {
             if let Some(ty) = binding_declared_type(source, node, full_path) {
                 typed.insert(simple_name, ty);
             }
         }
     }
+    let rebound = other_binders(source, scope);
     counts
         .into_iter()
-        .filter(|(_, n)| *n == 1)
+        .filter(|(name, n)| *n == 1 && !rebound.contains(name))
         .filter_map(|(name, _)| typed.remove(&name).map(|ty| (name, ty)))
+        .collect()
+}
+
+/// Names bound by something other than a pattern: an item of the function
+/// (`const`, `static`, const generic, `use`) or a macro that may bind it.
+fn other_binders(source: &str, scope: Node) -> HashSet<String> {
+    let mut names = super::rust_macro_binds::names_macros_may_rebind(source, scope);
+    names.extend(super::rust_item_binds::names_items_bind(source, scope));
+    names
+}
+
+/// One name bound exactly once in a scope, with the node that declares it and
+/// the pattern that names it.
+pub(super) struct OnceBound<'t> {
+    pub(super) name: String,
+    pub(super) declaration: Node<'t>,
+    pub(super) pattern: Node<'t>,
+}
+
+/// Every name bound EXACTLY ONCE in the function enclosing `call_node`, under
+/// any pattern shape, with its declaring node and pattern. The same count
+/// `typed_local_map` uses, so the two can never disagree about "bound once"
+/// (issues #348 and #349 read the initialiser, which `typed_local_map` does
+/// not keep).
+pub(super) fn once_bound_bindings<'t>(source: &str, call_node: Node<'t>) -> Vec<OnceBound<'t>> {
+    let Some(scope) = enclosing_scope(call_node) else {
+        return Vec::new();
+    };
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    let mut sites: Vec<(String, Node<'t>, Node<'t>)> = Vec::new();
+    for (declaration, pattern) in binding_patterns(scope, true) {
+        let mut names = HashSet::new();
+        collect_identifiers(source, pattern, &mut names);
+        for name in names {
+            *counts.entry(name.clone()).or_insert(0) += 1;
+            sites.push((name, declaration, pattern));
+        }
+    }
+    let rebound = other_binders(source, scope);
+    sites
+        .into_iter()
+        .filter(|(name, _, _)| counts.get(name) == Some(&1) && !rebound.contains(name))
+        .map(|(name, declaration, pattern)| OnceBound {
+            name,
+            declaration,
+            pattern,
+        })
         .collect()
 }
 
@@ -299,7 +362,7 @@ const RESULT_UNWRAPPERS: [&str; 2] = ["unwrap", "expect"];
 /// destination lookup, issue #339) it looks through `?`, `.unwrap()` and
 /// `.expect(..)` and reports that it did; any other wrapper, `x.map(..)` for
 /// one, ends the search.
-fn constructor_call<'t>(
+pub(super) fn constructor_call<'t>(
     source: &str,
     value: Node<'t>,
     through_results: bool,

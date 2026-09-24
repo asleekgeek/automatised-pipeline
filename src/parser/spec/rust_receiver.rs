@@ -61,6 +61,38 @@ pub(super) fn receiver_hint(source: &str, node: Node) -> Option<String> {
     super::rust_scope::typed_local_bindings(source, node).remove(&name)
 }
 
+/// A receiver hint and how it was derived.
+pub(super) struct DerivedHint {
+    pub(super) ty: String,
+    /// True when the type was read off a free function's declared return type
+    /// instead of off the binding (issues #348 and #349).
+    pub(super) via_return_type: bool,
+    /// The crate an explicit `use` names the return type through, when that is
+    /// the only thing showing where the type comes from.
+    pub(super) import_root: Option<String>,
+}
+
+/// `receiver_hint`, and when the binding writes no type, the type read off the
+/// declared return type of the free function that initialised it. The second
+/// source is tried only when the first has nothing, so no site the binding
+/// already types changes.
+pub(super) fn receiver_hint_with_origin(source: &str, node: Node) -> Option<DerivedHint> {
+    if let Some(ty) = receiver_hint(source, node) {
+        return Some(DerivedHint {
+            ty,
+            via_return_type: false,
+            import_root: None,
+        });
+    }
+    let receiver = receiver_identifier(node)?;
+    let found = super::rust_return_type::return_type_hint(source, node, receiver)?;
+    Some(DerivedHint {
+        ty: found.ty,
+        via_return_type: true,
+        import_root: found.import_root,
+    })
+}
+
 /// `receiver_hint` with the type as written, path included (`fmt::Formatter`).
 /// Only the macro-destination lookup uses it (issue #339): the qualifier is
 /// what tells a std type from a namesake.

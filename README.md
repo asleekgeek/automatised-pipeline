@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Rust-1.95.0_pinned-dea584.svg" alt="Rust 1.95.0, pinned by rust-toolchain.toml">
   <img src="https://img.shields.io/badge/Tools-26-orange" alt="26 MCP tools">
-  <img src="https://img.shields.io/badge/Tests-1900+_passing-brightgreen" alt="1900+ tests">
+  <img src="https://img.shields.io/badge/Tests-2100+_passing-brightgreen" alt="2100+ tests">
   <img src="https://img.shields.io/badge/Coverage-92%25-brightgreen" alt="92% line coverage">
   <a href="https://www.bestpractices.dev/projects/13845"><img src="https://www.bestpractices.dev/projects/13845/badge" alt="OpenSSF Best Practices"></a>
   <img src="https://img.shields.io/badge/Languages-11-blueviolet" alt="11 languages">
@@ -274,8 +274,12 @@ Since 0.12.0 the static resolver binds `self.m()` and `Self::m()` in Rust,
 `self.m()` in Python and `this.m()` in TypeScript to the enclosing type's
 method (`resolution_method: "receiver-type"`). In Rust it also binds `x.m()`
 when `x` is bound once in the enclosing function by a typed parameter, a typed
-`let`, or `let x = T::assoc(..)` (`"receiver-local-binding"`). A receiver it
-cannot type is left unresolved; it never falls back to a lookup by bare name.
+`let`, or `let x = T::assoc(..)` (`"receiver-local-binding"`). It also
+types `x` from the declared return type of a free function of the same file
+that initialised it (`let x = make();`, and an `Option` or `Result` unwrapped by
+`let Some(x) = .. else`, `.expect(..)`, `.unwrap()` or `?`), at a lower
+confidence (`"receiver-return-type"`, 0.85). A receiver it cannot type is left
+unresolved; it never falls back to a lookup by bare name.
 
 ### Query truncation and paging
 
@@ -394,7 +398,7 @@ In this codebase:
 
 ```bash
 cargo build --release
-cargo test                                            # full suite (1900+ tests)
+cargo test                                            # full suite (2100+ tests)
 cargo test --test graph_accuracy                      # structural accuracy gate
 cargo clippy --all-targets -- -D warnings             # zero warnings, enforced in CI
 python3 scripts/check_doc_claims.py                   # README numbers against their sources

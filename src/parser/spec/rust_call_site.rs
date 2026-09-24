@@ -14,6 +14,13 @@ use tree_sitter::Node;
 use super::conventions::CallEntry;
 use super::rust::RustConventions;
 
+/// The end of a call's span and the receiver hint derived for it, grouped so
+/// `with_hint_origin` stays within the four-parameter cap.
+pub(super) struct HintedSpan {
+    pub(super) end_byte: u64,
+    pub(super) derived: Option<super::rust_receiver::DerivedHint>,
+}
+
 impl RustConventions {
     /// Shapes one `CallSite` keyed on `span_node`'s source span. Chained calls
     /// share a start byte (`input.trim().to_string()`), so the (start, end) byte
@@ -33,13 +40,50 @@ impl RustConventions {
         caller_qn: &str,
         source: &str,
     ) -> CallEntry {
-        Self::call_site_spanning(
+        let derived = super::rust_receiver::receiver_hint_with_origin(source, span_node);
+        Self::with_hint_origin(
             callee,
             span_node,
-            span_node.end_byte() as u64,
             caller_qn,
-            super::rust_receiver::receiver_hint(source, span_node),
+            HintedSpan {
+                end_byte: span_node.end_byte() as u64,
+                derived,
+            },
         )
+    }
+
+    /// `call_site_spanning` for a hint that may have been read off a return
+    /// type: the origin is recorded beside the hint, as `receiver_hint_via`.
+    pub(super) fn with_hint_origin(
+        callee: &str,
+        start_node: Node,
+        caller_qn: &str,
+        hinted: HintedSpan,
+    ) -> CallEntry {
+        let via = hinted
+            .derived
+            .as_ref()
+            .and_then(|d| match (d.via_return_type, &d.import_root) {
+                (false, _) => None,
+                (true, Some(root)) => Some(format!(
+                    "{}{root}",
+                    crate::graph_store::RECEIVER_HINT_VIA_IMPORT_PREFIX
+                )),
+                (true, None) => Some(crate::graph_store::RECEIVER_HINT_VIA_RETURN_TYPE.to_string()),
+            });
+        let mut entry = Self::call_site_spanning(
+            callee,
+            start_node,
+            hinted.end_byte,
+            caller_qn,
+            hinted.derived.map(|d| d.ty),
+        );
+        if let Some(via) = via {
+            entry
+                .properties
+                .push(("receiver_hint_via".to_string(), via));
+        }
+        entry
     }
 
     /// Same shape as `call_site`, but the span's end byte and the
