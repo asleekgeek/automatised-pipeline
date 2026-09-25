@@ -8,6 +8,63 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `get_impact` tells production callers from test, bench and example callers
+  (#354). Until now the list held every caller of a function in one list and
+  `callers_total` counted them all, so on a well-tested function most of the
+  number was test code. Each caller now carries a `context`: `production`,
+  `test`, `bench`, `example`, `proof`, or `unknown`. Two facts decide, and a
+  caller is non-production when either says so. The source: a function is `test`
+  code when it has a test attribute (`#[test]`, `#[rstest]`, `#[test_case]`,
+  `#[wasm_bindgen_test]`, or the `test` macro of `tokio`, `async_std`,
+  `actix_rt`, `actix_web`, `sqlx`, `test_log`, `futures_test` or `smol_potat`,
+  with or without arguments; a `#[other::test]` from a crate not in that list
+  stays unmarked, because calling production code a test would hide its callers)
+  or when a `#[cfg]` that reaches it requires
+  `cfg(test)` (an item, `mod`, `impl` or `fn` under `#[cfg(test)]`, an inner
+  `#![cfg(test)]`, `cfg(all(test, ..))`); `#[bench]` marks `bench`,
+  `#[kani::proof]` marks `proof`; a function nested in one of those belongs to
+  it. `cfg(any(test, ..))`, `cfg(not(test))` and `cfg_attr(test, ..)` decide
+  nothing. The Cargo package: from `cargo metadata` and the module tree, a file
+  is `test`, `bench` or `example` when it is reached only from `tests/`,
+  `benches/` or `examples/` targets and the modules they declare, or only through
+  a `#[cfg(test)] mod x;`; it is `production` when a lib, bin or build target
+  reaches it, and any production path wins. A file called `tests.rs` that
+  `lib.rs` declares as a plain `mod tests;` is production: no name is guessed.
+  Nothing is decided by reachability, so a helper that production and test code
+  both call keeps the context of where it lives. The answer adds
+  `callers_by_context` (a count per context), `callers_production_total` and
+  `dependents_production_total`, and `code_context_basis` (`cargo+source`,
+  `source_only` when there is no Cargo map, `absent` on a graph without the
+  columns). `callers`, `callers_total`, `dependents_total` and `counts` keep their
+  meaning and still count every caller; the tabular projection of every section
+  gains a last column, `context`, null outside `callers`. `unknown` (nothing
+  decided: a Python or TypeScript caller, a Rust file no target reaches, a
+  `kani/` directory outside every target) counts as production in
+  `callers_production_total`, so the count only shrinks when a caller is proven
+  non-production, never on missing evidence. The reproduction of the issue
+  (`fx2b`) now gives `callers_total: 7`, `callers_production_total: 1`.
+  `entry_kind` now also marks `#[tokio::test]` and the other test attributes
+  (with or without arguments), so those functions are entry points of the test
+  processes like a plain `#[test]`; helpers keep an empty `entry_kind`. The
+  graph gains `Function.code_context`, `Method.code_context` and
+  `File.target_context`, and a `code_context_form` marker row written last by a
+  full index. **A graph written by an earlier build needs a full reindex before
+  an incremental refresh or a bootstrap fill** (the tool says so and refuses),
+  because an unchanged file would keep an empty `code_context`; `get_impact` on
+  such a graph still answers, with `code_context_basis: "absent"` and every
+  caller `unknown`. `File.target_context` is rewritten on every index pass, so
+  a `Cargo.toml` edit that adds a test target changes it without touching a
+  file. `#[cfg(test)]` modules declared inline inside another inline module are
+  not followed for the file class (the source still marks their functions).
+  Limits: a file that lib code pulls in through `include!` or `cfg_if!` and
+  that a `tests/` file also loads with `#[path]` is classed as test, because
+  the lib path is not followed, so its production callers would be counted as
+  non-production; the module walk follows `mod x;` declarations only. Each
+  caller now carries a `context` string, so a byte-capped page of `callers`
+  holds fewer callers than before; the totals and `next_offset` are computed
+  before the cap and stay correct. An incremental pass over no Rust file
+  clears `File.target_context`, and every caller then reads as `unknown`,
+  which counts as production.
 - A receiver name bound more than once in a function is typed through the
   binding that is live at the call (#350). `let s = Set::new(); ..; let s =
   Set::new(); s.answer(3)` was left unresolved by the static pass even when
