@@ -8,6 +8,44 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A receiver that spells its own type is typed statically (#355). The static
+  resolver typed a receiver bound by `let t = Type::new(..)` but not a tuple
+  constructor `Tier(1)`, a struct literal `Named { n: 3 }`, or a receiver written
+  in place (`Tier(1).join(..)`, `Tier::new(1).join(..)`, `Named { n: 3 }.get()`),
+  although the type is in the expression; `lsp_resolve` resolved them all. The
+  parser now reads the type off the expression, as a third source tried after
+  the binding and the return type of a free function. A tuple constructor or a
+  struct literal, bound by one untyped `let` or written in place, resolves at
+  `receiver-local-binding` (0.87). `Type::assoc(..)` written in place resolves at
+  `receiver-return-type` (0.85), only when the file holds exactly one inherent
+  impl of the type with exactly one function of that name, not `async`, declared
+  to return `Self` or the type. For an in-place receiver the resolver reads the
+  method name after the last dot of the callee text, and only when the hint
+  comes from this source. Everything here declines on doubt: the type must be
+  defined once in the file, in a scope the call sees (the caller's module, an
+  enclosing block, or the parent module through `use super::*;`), with no type
+  parameters, and with no function, `const`, `static`, alias, `use`, local
+  binding or macro that may bind the same name. A struct reached only through a
+  `use`, a path before the name, `Self`, an enum variant, a turbofish, a trait
+  impl, an impl in another file, or an associated function returning
+  `Option<Self>`, `Result<Self, _>`, `Box<Self>` or another type gives no hint.
+  For this source the resolver keeps a candidate only when it is a `Method` whose
+  owner, the qualified name before the last `::`, is a `Struct` or `Enum` defined
+  in the caller's own file, because the hint is the last path segment (#368): a
+  namesake type in another file, a `trait Tier { fn join }` or a `mod Tier` of
+  the same file, and an `impl other::Tier` are never candidates. The price is
+  recall: an impl in a module other than the one that defines the type, an impl
+  in another file, and a `union` are not resolved by this source (the language
+  server still resolves them). The method of a trait implemented for the struct
+  in the same file is a method of that struct and resolves. Two structs of the
+  name in one file decline in the parser. A site of these shapes had no hint before, and its callee text (`t.join`, `Tier(1).join`, `Tier::new(1).join`) names no entry by
+  name, so the by-name path had no target to give it. A hint that finds no
+  candidate ends the resolution of the site, as for every other hint. Inside a macro argument (`assert_eq!(Tier(1).join(..), 3)`) the scan
+  rebuilds `(1).join` from the token tree and finds no receiver, so those sites
+  stay unresolved. `let t = Tier::new(..)` is unchanged (its type is still taken
+  from the path alone, #370). Files that did not change keep the empty hint they
+  were indexed with until a full reindex, because an incremental refresh is keyed
+  on the content hash: edges are missing on them, none is wrong.
 - `get_impact` tells production callers from test, bench and example callers
   (#354). Until now the list held every caller of a function in one list and
   `callers_total` counted them all, so on a well-tested function most of the
