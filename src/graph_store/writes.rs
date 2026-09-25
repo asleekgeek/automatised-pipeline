@@ -325,4 +325,24 @@ impl GraphStore {
         }
         Ok(())
     }
+
+    /// Sets `is_resolved = false` on every `CallSite` in `ids`. A site that a
+    /// resolve pass leaves open keeps whatever flag an earlier pass or an
+    /// incremental refresh left (a target purged with its file leaves a stale
+    /// `true`); the caller that knows the site is open says so here (issue #353,
+    /// a call whose candidates are all `#[cfg]` twins).
+    pub(crate) fn mark_callsites_unresolved(&self, ids: &[&str]) -> Result<(), String> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let cypher = "UNWIND $rows AS rid MATCH (n:CallSite {id: rid}) SET n.is_resolved = false";
+        for chunk in ids.chunks(BULK_BATCH_SIZE) {
+            let values: Vec<Value> = chunk
+                .iter()
+                .map(|id| Value::String((*id).to_string()))
+                .collect();
+            self.run_prepared(cypher, Value::List(LogicalType::String, values))?;
+        }
+        Ok(())
+    }
 }

@@ -8,6 +8,42 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Two Rust items of one name under mutually exclusive `#[cfg]` predicates are
+  two nodes, and a call to that name is no longer resolved to either (#353,
+  first of two changes). A file with `#[cfg(feature = "fast")] fn pick` and
+  `#[cfg(not(feature = "fast"))] fn pick` used to give one `pick` node (the
+  first) and an edge at 0.95 from every caller to it, whichever twin the build
+  compiles. Now each twin is a node whose id ends in `#cfg(<gate>)` (for
+  example `src/lib.rs::pick#cfg(not(feature=fast))`) and carries a new
+  `cfg_gate` column. The gate is the item's own `#[cfg]` together with those of
+  its enclosing `mod`, `impl`, `trait` and `fn` and the inner `#![cfg]` of its
+  file or module, in a canonical order, without comments; `cfg_attr` is not
+  expanded. Only items that collide in one file are renamed. The parse output of
+  a file without twins is unchanged. A check that is run by hand shows it:
+  `python3 scripts/check_parse_identity.py` fingerprints the 406 Rust files of
+  `src/`, `tests/` and `crates/` with the parser of main and with this one and
+  finds no difference; `--mutate` alters one file and makes it fail. An earlier
+  ad hoc run also walked `benches/`, `benchmarks/`, `fuzz/` and `scripts/` and
+  counted 424; the script fixes the corpus so the number is reproducible. It is
+  not part of CI, because it needs a worktree of the base ref and two builds. A
+  unit test shows that the twin logic does nothing on those files. What does change for every graph is that each node of
+  ten tables gains the `cfg_gate` column, empty unless the node is a twin, and a
+  `GraphMarker` table records the version of the canonical form of the gates.
+  A call whose candidates are all twins of one
+  item gets no edge and the reason `cfg_twins` on its call site, and so does
+  every other edge that a name lookup would have pointed at the first twin
+  (`Implements`, `Uses`); an `impl` for a twin type owns its methods only when
+  its own gate is exactly the gate of one twin. A graph indexed before this
+  change has already lost its twins, and one with the columns but no current
+  marker names them by an older form, so an incremental refresh of it, an
+  artifact import and a re-index over its directory ask for a full reindex
+  (`index_codebase` with `full: true`). A call site whose resolution edge the incremental purge takes away (its
+  target file deleted, renamed or rewritten without the target) is now reopened
+  by the purge itself, in the same refresh; a site with no edge but a legitimate
+  resolution (a tuple-struct constructor call, a macro or language-server site)
+  keeps its flag. Choosing the twin the build compiles
+  is left to the second change.
+
 - A graph queried before `lsp_resolve` no longer loses the rows the pass writes
   (#352). The read cache keeps a graph handle open between requests, and a
   write tool opened its own handle to the same graph in the same process.

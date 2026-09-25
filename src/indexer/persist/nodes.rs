@@ -178,6 +178,13 @@ fn build_node_properties(node: &parser::ExtractedNode, language: &str) -> Vec<(S
         props.push(("visibility".to_string(), cypher_str(&node.visibility)));
     }
     append_label_properties(&mut props, node);
+    // Issue #353: the gate of a twin item, '' for every other item.
+    if crate::graph_store::CFG_GATE_LABELS.contains(&node.label.as_str()) {
+        props.push((
+            "cfg_gate".to_string(),
+            cypher_str(&find_property(node, "cfg_gate")),
+        ));
+    }
     if has_language_col(&node.label) {
         props.push(("language".to_string(), cypher_str(language)));
     }

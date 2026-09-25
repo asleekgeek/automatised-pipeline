@@ -14,7 +14,6 @@ mod batch;
 pub mod cargo_attribution;
 mod cargo_features;
 pub mod cargo_targets;
-mod cfg_expr;
 pub mod coverage;
 mod feature_gated;
 mod iac;
@@ -156,7 +155,16 @@ pub fn index_codebase_with_language(
 ) -> Result<IndexResult, String> {
     let start = Instant::now();
     let store = GraphStore::open_or_create(graph_path)?;
+    // An old graph directory keeps its tables (IF NOT EXISTS): refuse it with the
+    // remedy up front (#353). A new directory has no `Function` table yet.
+    let existing = store.has_node_table("Function")?;
     store.create_schema()?;
+    if existing {
+        store.require_cfg_gate_metadata()?;
+    }
+    // No current marker while this index runs: a failure leaves a graph that the
+    // next incremental refresh refuses (#353).
+    store.clear_canonical_marker()?;
 
     // Coverage-honesty accounting (issue #57): note every File node, and record
     // the parse-incomplete / skipped / quarantined gaps as they occur. Created
@@ -282,6 +290,7 @@ pub fn index_codebase_with_language(
     // are kept only for a crate of this workspace (issues #348 and #349).
     incremental::verify_import_roots(&store, &crate_names);
 
+    store.write_canonical_marker()?;
     let node_count = store.node_count()?;
     let edge_count = store.edge_count()?;
     let elapsed_ms = start.elapsed().as_millis() as u64;

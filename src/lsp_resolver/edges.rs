@@ -67,7 +67,7 @@ pub(super) fn try_add_lsp_edge(
 /// the next run — and two sites in one caller reaching the same callee
 /// duplicate within a single run. An edge that is already there counts as
 /// resolved, which is what it is.
-fn insert_lsp_edge(
+pub(super) fn insert_lsp_edge(
     store: &GraphStore,
     rel_type: &str,
     site: &UnresolvedCallSite,
@@ -143,9 +143,12 @@ fn find_node_at_position<'a>(
 /// segment of its `id`, which the indexer sets equal to `qualified_name`)
 /// must equal the identifier the call site actually asked about, or this is
 /// that same collision wearing an exact-match line instead of a fuzzy one.
-fn resolved_target_matches(target: &NodePosition, site: &UnresolvedCallSite) -> bool {
-    let target_name = target.id.rsplit("::").next().unwrap_or(&target.id);
-    target_name == site.identifier_name()
+pub(super) fn resolved_target_matches(target: &NodePosition, site: &UnresolvedCallSite) -> bool {
+    // A twin item (issue #353) carries `#cfg(..)` on its last segment
+    // (`pick#cfg(not(feature=fast))`); the call spells only `pick`.
+    let last =
+        crate::graph_store::strip_cfg_gates(target.id.rsplit("::").next().unwrap_or(&target.id));
+    last == site.identifier_name()
 }
 
 #[cfg(test)]

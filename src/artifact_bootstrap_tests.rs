@@ -174,3 +174,80 @@ fn accept_stale_imports_as_is_and_reports_staleness() {
         "accept_stale must NOT fill — the stale graph lacks the new commit's symbol"
     );
 }
+
+/// Indexes a one-commit repo, optionally rewrites the graph into the shape a
+/// build from before #353 wrote (no `cfg_gate` column), and exports the artifact.
+/// The archive format and `SCHEMA_VERSION` do not change with the column, so the
+/// artifact of an older build imports cleanly; only the guard can refuse it.
+fn exported_repo(old_shape: bool, spoil: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::Builder::new()
+        .prefix("artifact_cfg_gate_")
+        .tempdir()
+        .expect("tempdir");
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(repo.join("src")).expect("mk src");
+    fs::write(repo.join("src/main.rs"), SRC).expect("write src");
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.email", "t@ap.dev"]);
+    git(&repo, &["config", "user.name", "AP"]);
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "--no-gpg-sign", "-m", "initial"]);
+    let out = tmp.path().join("out");
+    let graph = out.join("graph");
+    fs::create_dir_all(&out).expect("mk out");
+    let manifest_path = indexer::manifest::manifest_path(&out);
+    let result = indexer::index_codebase(&repo, &graph).expect("index");
+    indexer::write_full_manifest(&repo, &manifest_path, &indexer::IndexOptions::default())
+        .expect("manifest");
+    if let Some(cypher) = spoil {
+        let store = graph_store::GraphStore::open_or_create(&graph).expect("open");
+        store.execute_query(cypher).expect("spoil the marker");
+    }
+    if old_shape {
+        let store = graph_store::GraphStore::open_or_create(&graph).expect("open");
+        for label in graph_store::CFG_GATE_LABELS {
+            store
+                .execute_query(&format!("ALTER TABLE {label} DROP cfg_gate"))
+                .expect("drop cfg_gate");
+        }
+    }
+    artifact::export_artifact(
+        &graph,
+        &repo,
+        result.node_count,
+        result.edge_count,
+        Some(&manifest_path),
+        None,
+    )
+    .expect("export");
+    (tmp, repo)
+}
+
+#[test]
+fn an_artifact_exported_before_the_gate_column_is_refused_on_import() {
+    let (tmp, repo) = exported_repo(true, None);
+    let fresh = tmp.path().join("fresh").join("graph");
+    fs::create_dir_all(fresh.parent().unwrap()).expect("mk fresh");
+    let refused = import_compatible_artifact(&repo, &fresh)
+        .expect_err("an old-shape artifact must be refused");
+    assert!(refused.contains("full reindex required"), "{refused}");
+}
+
+#[test]
+fn an_artifact_exported_with_the_gate_column_is_accepted_on_import() {
+    let (tmp, repo) = exported_repo(false, None);
+    let fresh = tmp.path().join("fresh").join("graph");
+    fs::create_dir_all(fresh.parent().unwrap()).expect("mk fresh");
+    import_compatible_artifact(&repo, &fresh).expect("a current artifact imports");
+}
+
+/// The columns are there but the marker of the canonical form is not (a graph
+/// from an earlier commit of this work): the artifact is refused all the same.
+#[test]
+fn an_artifact_with_the_columns_but_no_canonical_marker_is_refused_on_import() {
+    let (tmp, repo) = exported_repo(false, Some("MATCH (m:GraphMarker) DELETE m"));
+    let fresh = tmp.path().join("fresh").join("graph");
+    fs::create_dir_all(fresh.parent().unwrap()).expect("mk fresh");
+    let refused = import_compatible_artifact(&repo, &fresh).expect_err("no marker");
+    assert!(refused.contains("full reindex required"), "{refused}");
+}

@@ -29,6 +29,7 @@ mod registry;
 mod ruby;
 mod rust;
 mod rust_call_site;
+pub(crate) mod rust_cfg_gate;
 mod rust_item_binds;
 mod rust_macro_binds;
 mod rust_macro_calls;
@@ -99,6 +100,12 @@ mod python_parity_tests;
 #[cfg(test)]
 mod rust_call_shape_tests;
 #[cfg(test)]
+mod rust_cfg_canonical_tests;
+#[cfg(test)]
+mod rust_cfg_twin_tests;
+#[cfg(test)]
+mod rust_identity_tests;
+#[cfg(test)]
 mod rust_nested_fn_tests;
 #[cfg(test)]
 mod rust_parity_corpus;
@@ -135,3 +142,5 @@ pub(crate) use shallow::parse_shallow;
 pub(crate) use swift::SWIFT_SPEC;
 pub(crate) use typescript::TS_SPEC;
 pub(crate) use walkers::parse_with_spec;
+#[cfg(test)]
+pub(crate) use walkers::parse_with_spec_no_twins;

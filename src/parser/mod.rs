@@ -10,7 +10,11 @@
 
 // Table-driven extraction (ADR-0055). Migrated languages route through the
 // generic spec walkers; the rest stay on the hand-written modules above.
+pub(crate) mod cfg_expr;
+mod cfg_lex;
 mod spec;
+#[cfg(test)]
+pub(crate) use spec::rust_cfg_gate::TWIN_MARK as CFG_TWIN_MARK;
 
 // source: H2 fix — per-file tree-sitter parse timeout. 5 seconds is ~100x
 // the typical parse time for a 1 MB source file on an M-series Mac (measured
