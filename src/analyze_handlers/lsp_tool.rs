@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
-use super::{lsp_coverage, lsp_outcome};
+use super::{lsp_coverage, lsp_durability, lsp_outcome};
 
 pub(crate) fn run_lsp_resolve(arguments: &Value) -> Value {
     match do_lsp_resolve(arguments) {
@@ -157,8 +157,11 @@ pub(crate) fn do_lsp_resolve(arguments: &Value) -> Result<Value, String> {
         req.lsp_command,
         req.timeout,
     )?;
+    let persisted = lsp_durability::verify_after_reopen(store, req.graph_path)?;
     let coverage_merge = lsp_coverage::merge_into_sidecar(req.graph_path, &result.unlinked_check);
-    Ok(lsp_resolve_envelope(&result, coverage_merge))
+    let mut envelope = lsp_resolve_envelope(&result, coverage_merge);
+    envelope["persisted"] = json!({ "lsp_rows": persisted });
+    Ok(envelope)
 }
 
 /// Detect the dominant language from file extensions in a codebase.

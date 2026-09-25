@@ -71,6 +71,42 @@ impl GraphStore {
         })
     }
 
+    /// Rows written by `method` (the `resolution_method` column), across the
+    /// relationship tables that declare that column and exist in this graph.
+    /// A query that fails on such a table is an error, never a zero: a count
+    /// that hides schema drift would hide a real loss from the durability
+    /// check of #352. A declared table missing from an older graph has no rows
+    /// by construction and is skipped.
+    pub fn count_edges_by_method(&self, method: &str) -> Result<u64, String> {
+        let existing = self.existing_rel_tables()?;
+        let mut total = 0_u64;
+        for &(rel, _, _) in REL_TABLES {
+            let declares_method = super::edge_column_types(rel)
+                .iter()
+                .any(|(name, _)| *name == "resolution_method");
+            if !declares_method || !existing.contains(rel) {
+                continue;
+            }
+            let cypher = format!(
+                "MATCH ()-[r:{rel}]->() WHERE r.resolution_method = {} RETURN count(r)",
+                super::cypher_str(method)
+            );
+            let mut result = self
+                .run(&cypher)
+                .map_err(|e| format!("count of {rel} rows by method failed: {e}"))?;
+            if let Some(row) = result.next() {
+                total += value_to_u64(&row[0]);
+            }
+        }
+        Ok(total)
+    }
+
+    /// Names of the relationship tables the catalog holds.
+    fn existing_rel_tables(&self) -> Result<std::collections::HashSet<String>, String> {
+        let listed = self.execute_query("CALL show_tables() RETURN *")?;
+        Ok(listed.rows.into_iter().flatten().collect())
+    }
+
     /// `(graph edges, per-site target rows)`. A table that cannot be queried
     /// counts as empty, as `edge_count` always has: a graph written by an older
     /// schema legitimately lacks some tables, so a failed count cannot be told
@@ -131,6 +167,67 @@ mod tests {
             let &(_, from, to) = declared.expect("declared in REL_TABLES");
             assert_eq!((from, to), (NODE_CALL_SITE, target), "{rel}");
         }
+    }
+
+    /// #352: the count reads the method column of every table that has one and
+    /// leaves the others out.
+    #[test]
+    fn rows_are_counted_by_the_method_that_wrote_them() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let store = GraphStore::open_or_create(&tmp.path().join("g")).expect("open");
+        store.create_schema().expect("schema");
+        for id in ["a", "b"] {
+            store
+                .execute_query(&format!("CREATE (:Function {{id: '{id}', name: '{id}'}})"))
+                .expect("node");
+        }
+        let edge = |method: &str| {
+            format!(
+                "MATCH (a:Function {{id: 'a'}}), (b:Function {{id: 'b'}}) \
+                 CREATE (a)-[:Calls_Function_Function {{confidence: 0.9, resolution_method: '{method}'}}]->(b)"
+            )
+        };
+        store.execute_query(&edge("lsp-definition")).expect("edge");
+        store.execute_query(&edge("lsp-definition")).expect("edge");
+        store
+            .execute_query(&edge("import-scope-lookup"))
+            .expect("edge");
+        assert_eq!(store.count_edges_by_method("lsp-definition"), Ok(2));
+        assert_eq!(store.count_edges_by_method("import-scope-lookup"), Ok(1));
+        assert_eq!(store.count_edges_by_method("absent"), Ok(0));
+    }
+
+    /// #352: a graph whose table lacks the method column is an error, not a
+    /// zero, so the durability check cannot pass on a drifted schema.
+    #[test]
+    fn a_count_that_fails_on_a_declared_table_is_an_error_not_zero() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let store = GraphStore::open_or_create(&tmp.path().join("g")).expect("open");
+        store.create_schema().expect("schema");
+        store
+            .execute_query("DROP TABLE Calls_Function_Function")
+            .expect("drop");
+        store
+            .execute_query(
+                "CREATE REL TABLE Calls_Function_Function(FROM Function TO Function, confidence DOUBLE)",
+            )
+            .expect("recreate without the method column");
+        let err = store
+            .count_edges_by_method("lsp-definition")
+            .expect_err("drift must not read as zero");
+        assert!(err.contains("Calls_Function_Function"), "{err}");
+    }
+
+    /// A declared table that an older graph never had is skipped.
+    #[test]
+    fn a_declared_table_missing_from_an_older_graph_is_skipped() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let store = GraphStore::open_or_create(&tmp.path().join("g")).expect("open");
+        store.create_schema().expect("schema");
+        store
+            .execute_query("DROP TABLE Calls_CallSite_StdlibSymbol")
+            .expect("drop");
+        assert_eq!(store.count_edges_by_method("lsp-definition"), Ok(0));
     }
 
     /// A table that has a `CallSite` as target keeps counting as an edge.

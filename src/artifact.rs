@@ -341,6 +341,7 @@ pub fn import_artifact(repo_path: &Path, graph_path: &Path) -> Result<ArtifactMe
         File::open(&src).map_err(|e| format!("artifact import: open {}: {e}", src.display()))?;
     let decoder =
         zstd::Decoder::new(file).map_err(|e| format!("artifact import: zstd init: {e}"))?;
+    crate::graph_store::release_open_handles(graph_path)?;
     // Cap the decoded stream so a crafted artifact cannot exhaust disk.
     let mut archive = tar::Archive::new(decoder.take(MAX_DECOMPRESSED_BYTES));
     // tar-rs rejects absolute paths and `..` components on unpack by default,
