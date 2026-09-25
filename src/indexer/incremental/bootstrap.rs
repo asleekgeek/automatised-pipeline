@@ -67,6 +67,7 @@ pub fn fill_after_bootstrap(
     let store = GraphStore::open_or_create(graph_dir)?;
     store.require_entry_metadata()?;
     store.require_cfg_gate_metadata()?;
+    store.ensure_cfg_active_columns()?;
     let walk_opts = WalkOptions {
         language_filter: options.language_filter,
         dependency_scope,
@@ -119,7 +120,7 @@ pub fn fill_after_bootstrap(
     // plus this pass's walk-level excluded/unreadable directories, save.
     let mut merged_gaps = reparsed_gaps;
     merged_gaps.extend(walk_gaps);
-    let crate_names = save_incremental_coverage(
+    let facts = save_incremental_coverage(
         codebase,
         graph_dir,
         &current,
@@ -128,7 +129,7 @@ pub fn fill_after_bootstrap(
         walk_pruned,
         "bootstrap_fill",
     );
-    super::verify_import_roots(&store, &crate_names);
+    super::apply_cargo_facts(&store, &facts);
 
     Ok(FillResult {
         result: IncrementalResult {
