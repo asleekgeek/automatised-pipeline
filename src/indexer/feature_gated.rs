@@ -162,13 +162,16 @@ impl ModuleTree<'_> {
             return Vec::new();
         }
         let owns_directory = self.crate_entries.contains(file) || file.ends_with("mod.rs");
-        rust_mod_decls::mod_decls(&source)
-            .into_iter()
-            .filter_map(|decl| {
-                let target = module_file(file, owns_directory, &decl, self.indexed)?;
-                Some((decl, target))
-            })
-            .collect()
+        let mut out = Vec::new();
+        for decl in rust_mod_decls::mod_decls(&source) {
+            for alternative in alternatives(&decl) {
+                if let Some(target) = module_file(file, owns_directory, &alternative, self.indexed)
+                {
+                    out.push((alternative, target));
+                }
+            }
+        }
+        out
     }
 }
 
@@ -181,6 +184,46 @@ fn reach(
     live.entry(file.to_path_buf())
         .or_default()
         .insert(features.clone())
+}
+
+/// The files one declaration can name, each with the gate under which it does
+/// (issue #366): one declaration per `cfg_attr(pred, path = ..)`, reaching the
+/// file `path` names under the declaration's own `cfg` AND `pred`, then the
+/// declaration itself, reaching its `#[path]` or default-name file under its
+/// own `cfg` AND the negation of every such `pred` (the file is used only when
+/// no `cfg_attr` path applies). A gate one part of which did not parse is
+/// undecidable (`None`). A declaration without `cfg_attr` paths is returned as
+/// it is.
+fn alternatives(decl: &ModDecl) -> Vec<ModDecl> {
+    let gated = |extra: Option<CfgPredicate>| -> Option<Vec<CfgPredicate>> {
+        let mut all = decl.cfg.clone()?;
+        all.push(extra?);
+        Some(all)
+    };
+    let mut out: Vec<ModDecl> = decl
+        .alt_paths
+        .iter()
+        .map(|alt| ModDecl {
+            name: decl.name.clone(),
+            path_attr: Some(alt.path.clone()),
+            cfg: gated(alt.pred.clone()),
+            cfg_text: decl.cfg_text.clone(),
+            alt_paths: Vec::new(),
+        })
+        .collect();
+    let fallback_cfg = || -> Option<Vec<CfgPredicate>> {
+        let mut all = decl.cfg.clone()?;
+        for alt in &decl.alt_paths {
+            all.push(CfgPredicate::Not(Box::new(alt.pred.clone()?)));
+        }
+        Some(all)
+    };
+    out.push(ModDecl {
+        cfg: fallback_cfg(),
+        alt_paths: Vec::new(),
+        ..decl.clone()
+    });
+    out
 }
 
 /// The cfg gate of a declaration: `all` of its `cfg` attributes, `Unknown`
