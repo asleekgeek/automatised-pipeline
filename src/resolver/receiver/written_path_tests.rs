@@ -56,6 +56,25 @@ fn two_crates() -> CrateEvidence {
     }
 }
 
+/// `WrittenPath::of` with no `use` declaration anywhere.
+fn of<'e>(
+    idx: &'e SymbolIndex,
+    evidence: &'e CrateEvidence,
+    caller: &str,
+    hint: &str,
+) -> Option<WrittenPath<'e>> {
+    let imports: &'static ModuleImports = Box::leak(Box::default());
+    WrittenPath::of(
+        &PathFacts {
+            idx,
+            evidence,
+            imports,
+        },
+        caller,
+        hint,
+    )
+}
+
 /// A caller and the path its binding writes.
 struct Site<'a> {
     caller: &'a str,
@@ -64,7 +83,7 @@ struct Site<'a> {
 
 fn admits(ev: &CrateEvidence, idx: &SymbolIndex, site: Site, method: &str) -> bool {
     let Site { caller, hint } = site;
-    WrittenPath::of(idx, ev, caller, hint)
+    of(idx, ev, caller, hint)
         .unwrap_or_else(|| panic!("{hint} from {caller} declined"))
         .admits(&entry("Method", method))
 }
@@ -280,15 +299,15 @@ fn super_climbs_out_of_the_caller_inline_module() {
 #[test]
 fn super_from_the_root_of_a_file_declines() {
     let (ev, idx) = (unknown(), index(&["src/lib.rs::c"]));
-    assert!(WrittenPath::of(&idx, &ev, "src/lib.rs::run", "super::a::Set").is_none());
-    assert!(WrittenPath::of(&idx, &ev, "src/lib.rs::c::run", "super::super::Set").is_none());
+    assert!(of(&idx, &ev, "src/lib.rs::run", "super::a::Set").is_none());
+    assert!(of(&idx, &ev, "src/lib.rs::c::run", "super::super::Set").is_none());
 }
 
 #[test]
 fn a_method_caller_is_not_mistaken_for_a_module() {
     // `src/lib.rs::Set::run`: `Set` is the impl type, not a module.
     let (ev, idx) = (unknown(), index(&[]));
-    assert!(WrittenPath::of(&idx, &ev, "src/lib.rs::Set::run", "super::Set").is_none());
+    assert!(of(&idx, &ev, "src/lib.rs::Set::run", "super::Set").is_none());
 }
 
 #[test]
@@ -303,11 +322,64 @@ fn self_reads_like_a_relative_path_and_an_empty_rest_declines() {
         },
         "src/b.rs::Set::m"
     ));
-    assert!(WrittenPath::of(&idx, &ev, "src/lib.rs::run", "crate::").is_none());
+    assert!(of(&idx, &ev, "src/lib.rs::run", "crate::").is_none());
 }
 
 #[test]
 fn path_segments_drop_generic_arguments() {
     assert_eq!(path_segments("a::Gen<a::B>::C"), ["a", "Gen", "C"]);
     assert_eq!(path_segments("::std::fmt"), ["std", "fmt"]);
+}
+
+#[test]
+fn self_is_read_exactly_at_the_caller_module() {
+    // A suffix `b::Set` would also match `x::b::Set`; `self::` names one module.
+    let (ev, idx) = (unknown(), index(&["src/lib.rs::c"]));
+    let site = || Site {
+        caller: "src/lib.rs::run",
+        hint: "self::b::Set",
+    };
+    assert!(!admits(&ev, &idx, site(), "src/x/b.rs::Set::m"));
+    assert!(admits(
+        &ev,
+        &idx,
+        Site {
+            caller: "src/lib.rs::c::run",
+            hint: "self::Set"
+        },
+        "src/lib.rs::c::Set::m"
+    ));
+    assert!(!admits(
+        &ev,
+        &idx,
+        Site {
+            caller: "src/lib.rs::c::run",
+            hint: "self::Set"
+        },
+        "src/lib.rs::Set::m"
+    ));
+}
+
+#[test]
+fn super_climbs_out_of_a_file_module() {
+    let (ev, idx) = (unknown(), index(&[]));
+    assert!(admits(
+        &ev,
+        &idx,
+        Site {
+            caller: "src/a.rs::run",
+            hint: "super::Set"
+        },
+        "src/lib.rs::Set::m"
+    ));
+    assert!(admits(
+        &ev,
+        &idx,
+        Site {
+            caller: "src/a/b.rs::run",
+            hint: "super::Set"
+        },
+        "src/a/mod.rs::Set::m"
+    ));
+    assert!(of(&idx, &ev, "src/a.rs::run", "super::super::Set").is_none());
 }

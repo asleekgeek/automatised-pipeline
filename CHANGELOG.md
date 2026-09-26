@@ -8,6 +8,36 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A receiver whose type the caller's module names through a `use` resolves to
+  the owner that `use` names (#380, #373). `use b::Set;` next to an inline
+  `mod a { struct Set }` of the same file resolved `s.m()` to `a::Set::m`
+  through the same-file preference; the one-segment hint (`Set`, `S` for
+  `use b::Set as S`) is now read as the path of the `use` of the caller's
+  module, from that module, with no same-file preference, for a type written
+  at the binding, in `Type::assoc(..)` or in a constructor. A return type keeps
+  its own rules, since it is named in the module of its function. An exact path
+  (`crate::Set`, `super::..`, `<lib>::Set`, or one read from a `use`) now
+  follows the `use` declarations of the module it ends in: `pub use task::Set;`
+  at the root makes `crate::Set` and `fx::Set` the type of `task`, a glob adds
+  its path beside the definition, and `pub use ext::Set;` leads to a crate the
+  repository does not hold, so a library module's `use crate::Set;` (on a
+  binding or a return type) no longer reaches an unrelated `Set` of the
+  repository. The name is read in Rust's order, from the caller's module
+  outwards: a type the module defines keeps the lookup by name; one explicit
+  `use` gives its path; two distinct explicit `use`s (two `#[cfg]` arms)
+  decline; only `use super::*` globs read the parent module the same way; other
+  globs (`use b::*;`) give `b::Set` when exactly one glob has a candidate and
+  decline when two do; when none does, the lookup by name is kept only if
+  every glob reads a module of the repository, and a glob of a crate outside
+  it (`use ext::*;`, which may give the name) declines (a tree without Cargo
+  facts keeps the lookup by name). `super::`
+  and `self::` are read from the caller's module, file module included:
+  `super::Set` in `src/a.rs` names the root's `Set`, and `self::b::Set` names
+  one module, not every module ending in `b`. A tree without Cargo facts keeps
+  its old lookup when a `use` starts with a name that may be a crate. `CRATE_EVIDENCE_FORM` goes to 4, so a
+  graph needs one full reindex before an incremental refresh. Not covered:
+  `use` inside a function body (not indexed), `#[path]` layouts.
+
 - Twin items spread over two files that one `mod` declaration picks between are
   now recognised as twins (#366, part B). `#[cfg(unix)] #[path = "unix.rs"] mod
   imp;` next to `#[cfg(windows)] #[path = "windows.rs"] mod imp;` gives two items
