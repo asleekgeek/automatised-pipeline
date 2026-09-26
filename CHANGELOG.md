@@ -8,6 +8,34 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A graph whose totals cannot be read is no longer reported as an empty one
+  (#361), and the note on the handle refusal says what each tool has already
+  written when it arrives (#363). `index_status` read its counts through a
+  helper that turned any failure into zeros, so while a running request held
+  the graph's handle it answered `status: ok` with `node_count`, `edge_count`
+  and `call_site_target_count` at 0. It now fails with the reason (the
+  refusal code opens it); the bootstrap responses of `index_codebase` report
+  `counts_unavailable` with the reason instead of zeros, and the incremental
+  export skips the artifact rather than record zero totals in it. The note
+  appended to the schema of the tools that can be refused said that nothing
+  was written: that holds for the eight tools that open the graph once,
+  before any write, but `analyze_codebase` can be refused when its resolve
+  stage opens the graph (the graph is then indexed but unresolved) or at its
+  final LSP check (after every stage wrote), and `lsp_resolve` when it
+  reopens the graph to count its rows; each now says so. The list of those
+  tools was kept by hand and did not include `index_status`; a test now holds
+  a handle on a real graph, calls every graph tool through the dispatch table
+  and requires the tools that return the refusal to be exactly the listed
+  ones. That test found `ingest_traces` writing its `OBSERVED_CALLS` edges
+  through the read cache's shared handle, the one a running request may hold,
+  instead of the guarded open every other write tool uses, so it was never
+  refused. It now opens the graph like the other write tools and is refused
+  while another request holds the handle. The read cache's open is the only
+  other open that does not release the cache, and every tool that uses it
+  only reads. The probed tools are those whose input schema names or builds a
+  graph, read from the registry, so a new graph tool without probe arguments
+  fails the test instead of being skipped; the list and each tool's note are
+  one table.
 - `get_impact` points at the call sites that sit outside every compiled Cargo
   target even when the symbol has resolved callers (#318). The entry of
   `next_steps` that names them was only reached when `callers` was empty, so on
