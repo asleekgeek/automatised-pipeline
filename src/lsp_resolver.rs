@@ -33,6 +33,10 @@ use unlinked::FileRef;
 mod cfg_twin_tests;
 
 #[cfg(test)]
+#[path = "lsp_resolver/cfg_twin_pass_tests.rs"]
+mod cfg_twin_pass_tests;
+
+#[cfg(test)]
 #[path = "lsp_resolver/purge_reset_tests.rs"]
 mod purge_reset_tests;
 
@@ -97,6 +101,8 @@ pub fn resolve_with_lsp(
     let canonical_root =
         std::fs::canonicalize(codebase_path).unwrap_or_else(|_| codebase_path.to_path_buf());
     let node_index = build_node_position_index(store)?;
+    // Issue #366: the twins the default build compiles out, read once.
+    let twins = crate::resolver::cfg_verdict::TwinView::load(store);
     // Issue #284 (lot 5): discovered once per pass, never per file — the
     // same map every file's outside-target check reads. `TargetMap::Unknown`
     // (no Cargo.toml, `cargo` missing, or a workspace that fails to load —
@@ -111,6 +117,7 @@ pub fn resolve_with_lsp(
         ctx: SiteContext {
             node_index: &node_index,
             canonical_root: &canonical_root,
+            twins: &twins,
         },
         target_map: &target_map,
     };

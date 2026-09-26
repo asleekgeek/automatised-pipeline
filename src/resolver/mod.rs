@@ -16,6 +16,7 @@ use std::time::Instant;
 mod calls;
 mod cfg_select;
 mod cfg_twins;
+pub(crate) mod cfg_verdict;
 mod extends;
 mod implements;
 mod imports;
@@ -251,6 +252,9 @@ pub fn resolve_graph(store: &GraphStore) -> Result<ResolutionResult, String> {
     store.reset_call_rows(crate::ambiguity_policy::resolution_label(
         crate::ambiguity_policy::Evidence::ReceiverReturnType,
     ))?;
+    // Likewise a language-server row to a twin the build now compiles out
+    // (issue #366): the same verdict the LSP pass applies before writing.
+    cfg_verdict::reset_compiled_out_lsp_rows(store)?;
     let existing = load_existing_edges(store)?;
     let mut buf = EdgeBuffer::new(existing);
 
@@ -474,3 +478,6 @@ fn determine_caller_label(idx: &SymbolIndex, caller_qn: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod lsp_twin_reset_tests;
