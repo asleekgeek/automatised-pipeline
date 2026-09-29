@@ -51,6 +51,38 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A C++ member call is bound only through a receiver whose type the source
+  states (#406). The parser reduced `p->empty()`, `ru.empty()` and `width(1U)`
+  to a bare name, so each bound to any method of that name in the repository:
+  on ETLCPP, `pb->empty()` bound to `umap::empty`, and `width(2)` in a free
+  function bound to `bloom::width`. The parser now records the receiver as
+  `receiver_hint` with `receiver_hint_via`: `cpp-this` (`this`, `*this`),
+  `cpp-declared` (a parameter, local, range variable or condition declared
+  with a written type; `auto`, fields and globals give none) and
+  `cpp-qualifier` (`a::b::f`). The resolver then follows C++ lookup: through
+  `this` or a declared type only the methods of that class and of its bases
+  (by name, at any depth) can be named; an unqualified call names a method of
+  the caller's own class or of one of its bases, else a function or a
+  constructor, never a method of another class; a qualified call names no
+  method of a class the qualifier does not designate. A member call on a
+  receiver of unknown type stays open as `no_receiver_type`, a call the scope
+  refuses as `declined_by_scope` (`cpp_receiver_class`, `cpp_unqualified_call`,
+  `cpp_qualifier`). The graph holds no arity, so overloads of one class stay
+  `ambiguous_candidates`. A receiver declared with a `using` alias or a
+  `typedef` reaches the class the alias names, through chains of aliases, an
+  alias of the caller's own file winning over a namesake elsewhere. To make
+  that possible the C++ parser now records what an alias names: `using X = T;`
+  wrote it under `type_annotation`, a column `TypeAlias` does not have, so it
+  was dropped (it is `target_type`); `typedef T X;` gains `type_annotation`
+  when `T` is a written class name. A base written `public_base` or
+  `virtual_base` is no longer read as an access specifier. A qualified free
+  function (`std::next(...)`, `ranges::next(...)`) binds only to a function of
+  the namespace the qualifier names, where it used to bind to the only function
+  of that name in any namespace. Measured on ETLCPP (oracle 61045 call edges):
+  52390 after; the removed edges are calls the graph no longer guesses (fields,
+  chains, `auto`, and the classes of headers that tree-sitter recovers badly
+  around macros, which lose their namespace and class scope); FreeRTOS is
+  unchanged at 3829.
 - A C or C++ `static` function is named by the files that include the file it
   is defined in, not by the extension of that file (#404). The rule made every
   `static` in a header visible to every file, so two headers each defining a

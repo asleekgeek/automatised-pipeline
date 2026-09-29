@@ -52,7 +52,7 @@
 //     `add(T item)` / `get(int i)` -> `add` / `get`.
 //   - `enum Color { ... }` and `enum class Status { ... }` -> an `Enum` plus one
 //     `Constant` (`enum_entry=true`) per member (#124.1).
-//   - `typedef int Length;` -> `Constant` (`typedef=true`). `using Distance =
+//   - `typedef int Length;` -> `Constant` (`typedef=true`; `type_annotation` only when the type is a written class name, which `int` is not). `using Distance =
 //     double;` is an `alias_declaration` -> `TypeAlias` carrying the aliased type
 //     (#124.3).
 //   - `#include <iostream>` / `#include "myheader.h"` / `#include <sys/types.h>`
@@ -183,7 +183,7 @@ pub(super) fn expected_node_records() -> Vec<&'static str> {
         "CallSite|call|app/main.cpp::freeFunction#17::call@75:5#21|75|75|public|[(\"callee_name\", \"call\"), (\"lsp_col\", \"4\"), (\"callee_shape\", \"member\")]",
         "CallSite|compute|app/main.cpp::geometry::Shape::getId#8::call@27:26#9|27|27|public|[(\"callee_name\", \"compute\"), (\"lsp_col\", \"25\"), (\"callee_shape\", \"direct\")]",
         "CallSite|helper|app/main.cpp::gated#25::call@86:12#26|86|86|public|[(\"callee_name\", \"helper\"), (\"lsp_col\", \"11\"), (\"callee_shape\", \"direct\")]",
-        "CallSite|identity|app/main.cpp::freeFunction#17::call@76:5#20|76|76|public|[(\"callee_name\", \"identity\"), (\"lsp_col\", \"4\"), (\"callee_shape\", \"direct\")]",
+        "CallSite|identity|app/main.cpp::freeFunction#17::call@76:5#20|76|76|public|[(\"callee_name\", \"identity\"), (\"lsp_col\", \"4\"), (\"callee_shape\", \"direct\"), (\"receiver_hint\", \"geometry\"), (\"receiver_hint_via\", \"cpp-qualifier\")]",
         "CallSite|method|app/main.cpp::freeFunction#17::call@74:5#22|74|74|public|[(\"callee_name\", \"method\"), (\"lsp_col\", \"4\"), (\"callee_shape\", \"member\")]",
         "CallSite|printf|app/main.cpp::freeFunction#17::call@73:5#23|73|73|public|[(\"callee_name\", \"printf\"), (\"lsp_col\", \"4\"), (\"callee_shape\", \"direct\")]",
         "Constant|BLUE|app/main.cpp::geometry::Color::BLUE|49|49|public|[(\"enum_entry\", \"true\")]",
@@ -230,7 +230,7 @@ pub(super) fn expected_node_records() -> Vec<&'static str> {
         "Struct|Shape|app/main.cpp::geometry::Shape|21|30|public|[(\"is_class\", \"true\")]",
         "Struct|Value|app/main.cpp::geometry::Value|44|47|public|[]",
         "Struct|geometry|app/main.cpp::geometry|8|65|public|[(\"is_namespace\", \"true\")]",
-        "TypeAlias|Distance|app/main.cpp::geometry::Distance|11|11|public|[(\"type_annotation\", \"double\")]",
+        "TypeAlias|Distance|app/main.cpp::geometry::Distance|11|11|public|[(\"target_type\", \"double\")]",
     ]
 }
 
