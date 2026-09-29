@@ -51,6 +51,25 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A C or C++ call through a function pointer is a call site again, left open
+  as `indirect_call` (#401). The parsers dropped every callee that was not a
+  name, so `(*fp)()` and `table[i]()` left no trace in the graph; and in C,
+  which has no methods, `s->cb()` was cut down to `cb` and could bind by bare
+  name to an unrelated repository function `cb`. Every C and C++ call site now
+  records `CallSite.callee_shape` (`direct`, `member` or `indirect`); an
+  indirect call, and in C a member call, stays open with the reason
+  `indirect_call` (detail: the shape), counted among the reasons no static
+  resolver should resolve. C++ member calls resolve as before (their precision
+  is #406). The reason set changed, so `callsite_reason_form` is now 2: a graph
+  resolved before reads its reasons as not recorded until the next full index.
+  The site of an indirect callee takes a per-file sequence number, so the ids
+  of later definitions in the same file move by one on reindex. A cast, a
+  literal or an assembler operand in call position is not a call site: the
+  grammar reads `(T)(x)` with an undeclared `T` as a call, so a parenthesized
+  name followed by one operand is a call only if the file declares that name
+  (`(name)(x)` with `name` declared only in a header stays unrecorded, as
+  before).
+
 - A C++ library whose headers are `.h` is indexed as C++ (#399). Every `.h`
   was parsed with the C grammar by default, and `language: "cpp"` dropped
   `.h` files from the walk entirely, although the docs recommended it for
