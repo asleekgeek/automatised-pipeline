@@ -79,6 +79,13 @@ pub struct ImpactResult {
     /// carries (issue #393); a site with no recorded reason counts as
     /// `not_recorded`, and the values sum to that count.
     pub unresolved_callsites_by_reason: std::collections::BTreeMap<String, u64>,
+    /// Open call sites with this target's bare name that are NOT counted in
+    /// `unresolved_callsites_naming_target` because their spelling names another
+    /// owner: a path to another type (`Vec::new`, `io::BufWriter::new` for
+    /// `TaskSet::new`) or a receiver hint of another type. Only a Rust method of
+    /// a struct or enum of the repository is filtered; a site with an unknown
+    /// receiver is kept. Issue #392.
+    pub unresolved_callsites_excluded_other_owner: u64,
     /// The twins of the target, itself included, with their gate and whether the
     /// default build compiles them; empty when the target is not a twin.
     /// Issue #353.
@@ -100,29 +107,8 @@ pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResu
     let communities = collect_communities(store, qualified_name);
     let processes = collect_processes(store, qualified_name);
 
-    // Reverse-dependency traversal — the actual blast radius. The tool is
-    // named for impact analysis but previously returned only community +
-    // process membership; the set of symbols that DEPEND ON the target
-    // (callers, importers, users, implementors) is what a "what breaks if I
-    // change this?" query needs. Each is a re-queryable handle so the caller
-    // can keep walking the graph through MCP rather than stopping at a digest.
-    let mut callers = reverse_dependents(store, &esc, "Calls_");
-    let code_context_basis = impact_context::attach(store, &mut callers);
-    let importers = reverse_dependents(store, &esc, "Imports_");
-    let users = reverse_dependents(store, &esc, "Uses_");
-    let implementors = reverse_dependents(store, &esc, "Implements_");
-    // Doc/script cross-references (issue #205) — kept separate from
-    // `importers` since these are file-level References_File_File edges, not
-    // a code dependency.
-    let references = reverse_dependents(store, &esc, "References_");
-
-    let deps = ReverseDependents {
-        callers: &callers,
-        importers: &importers,
-        users: &users,
-        implementors: &implementors,
-        references: &references,
-    };
+    let (dependents, code_context_basis) = collect_dependents(store, &esc);
+    let deps = dependents.as_view();
     let Epistemics {
         attribution,
         reasons: epistemic_reasons,
@@ -133,11 +119,11 @@ pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResu
     Ok(ImpactResult {
         communities,
         processes,
-        callers,
-        importers,
-        users,
-        implementors,
-        references,
+        callers: dependents.callers,
+        importers: dependents.importers,
+        users: dependents.users,
+        implementors: dependents.implementors,
+        references: dependents.references,
         epistemic,
         epistemic_reasons,
         unresolved_callsites_naming_target: attribution.total,
@@ -145,9 +131,53 @@ pub fn get_impact(store: &GraphStore, qualified_name: &str) -> Result<ImpactResu
         unresolved_callsite_outside_target_files: attribution.outside_target_files,
         unresolved_callsites_cfg_twins: attribution.cfg_twins,
         unresolved_callsites_by_reason: attribution.by_reason,
+        unresolved_callsites_excluded_other_owner: attribution.excluded_other_owner,
         cfg_twins,
         code_context_basis,
     })
+}
+
+/// The five reverse-dependency sections of one target, owned.
+struct OwnedDependents {
+    callers: Vec<ImpactNode>,
+    importers: Vec<ImpactNode>,
+    users: Vec<ImpactNode>,
+    implementors: Vec<ImpactNode>,
+    references: Vec<ImpactNode>,
+}
+
+impl OwnedDependents {
+    fn as_view(&self) -> ReverseDependents<'_> {
+        ReverseDependents {
+            callers: &self.callers,
+            importers: &self.importers,
+            users: &self.users,
+            implementors: &self.implementors,
+            references: &self.references,
+        }
+    }
+}
+
+/// Reverse-dependency traversal — the actual blast radius. The tool is named
+/// for impact analysis but previously returned only community + process
+/// membership; the set of symbols that DEPEND ON the target (callers,
+/// importers, users, implementors) is what a "what breaks if I change this?"
+/// query needs. Each is a re-queryable handle so the caller can keep walking
+/// the graph through MCP rather than stopping at a digest. Doc/script
+/// cross-references (issue #205) stay separate from `importers`: they are
+/// file-level References_File_File edges, not a code dependency. Also returns
+/// the basis the callers' code context was attached under.
+fn collect_dependents(store: &GraphStore, esc: &str) -> (OwnedDependents, &'static str) {
+    let mut callers = reverse_dependents(store, esc, "Calls_");
+    let code_context_basis = impact_context::attach(store, &mut callers);
+    let dependents = OwnedDependents {
+        callers,
+        importers: reverse_dependents(store, esc, "Imports_"),
+        users: reverse_dependents(store, esc, "Uses_"),
+        implementors: reverse_dependents(store, esc, "Implements_"),
+        references: reverse_dependents(store, esc, "References_"),
+    };
+    (dependents, code_context_basis)
 }
 
 /// Communities (`MemberOf_<Label>_Community`) the target symbol belongs to,
@@ -193,7 +223,7 @@ fn resolve_epistemic(
     Vec<String>,
     Boundary,
 ) {
-    let attribution = impact_reasons::unresolved_callsite_attribution(store, target_bare_name);
+    let attribution = impact_reasons::unresolved_callsite_attribution(store, esc, target_bare_name);
     let epistemic_reasons = impact_reasons::build_epistemic_reasons(store, esc, &attribution, deps);
     let epistemic = if epistemic_reasons.is_empty() {
         Boundary::Exact
