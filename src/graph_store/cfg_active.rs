@@ -10,10 +10,12 @@
 // written before the column existed. Every reader treats a missing column and
 // `''` as `unknown`, never as `active`.
 //
-// The value belongs to the DEFAULT build profile only (default features, the
-// features `cargo metadata` reports). It says nothing about `cfg(kani)`, `test`
-// or a target; those stay `unknown` because the source alone does not decide
-// them. `indexer::cfg_active` documents where a second profile would plug in.
+// The value belongs to the DEFAULT build profile only: the features `cargo
+// metadata` reports, and the options no plain build sets (`kani`, `miri`, `doc`,
+// `doctest` are false, issue #391). It says nothing about `test` or a target
+// (`unix`, `target_os`); those stay `unknown` because the source alone does not
+// decide them. `indexer::cfg_active` documents where a second profile would plug
+// in.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -303,6 +305,27 @@ impl GraphStore {
         let rows = self.query_prepared_params(&in_files, vec![("files", files)])?;
         out.extend(rows.rows.into_iter().map(pair));
         Ok(out)
+    }
+
+    /// The ids of the functions and methods under a `#[cfg]` whose id carries no
+    /// twin suffix (issue #419): the parser records their gate in `cfg_gate`
+    /// though the id does not spell it. Read-only: a label without the column
+    /// contributes none.
+    pub fn gated_callable_ids(&self) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        for label in ["Function", "Method"] {
+            if !self.node_column_exists(label, "cfg_gate").unwrap_or(false) {
+                continue;
+            }
+            let cypher = format!(
+                "MATCH (n:{label}) WHERE n.cfg_gate <> '' AND NOT n.id CONTAINS {} RETURN n.id",
+                cypher_str(TWIN_MARK)
+            );
+            if let Ok(rows) = self.execute_query(&cypher) {
+                out.extend(rows.rows.into_iter().map(|r| r[0].clone()));
+            }
+        }
+        out
     }
 
     /// `id -> cfg_active` of every twin node, normalized. Read-only: a label
